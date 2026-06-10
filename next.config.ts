@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    serverActions: {
+      // Subida de imágenes (avatar, banner, portadas, referencias) en base64
+      bodySizeLimit: "12mb",
+    },
+  },
 };
 
 export default nextConfig;

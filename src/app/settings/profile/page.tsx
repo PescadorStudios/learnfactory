@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import { Loader2, Camera, ImageIcon, Check, ArrowLeft } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getMyProfile, updateProfile, uploadProfileImage } from "@/app/socialActions";
+import { fileToResizedDataUrl } from "@/lib/imageUtils";
 
 function ProfileSettings() {
   const router = useRouter();
@@ -60,20 +61,28 @@ function ProfileSettings() {
 
   const handleImage = async (kind: "avatar" | "banner", e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ""; // permite re-seleccionar el mismo archivo
     if (!file || !token) return;
     setUploading(kind);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const res = await uploadProfileImage(token, kind, String(reader.result));
-      setUploading(null);
+    setError("");
+    try {
+      // Redimensionar en el navegador: avatar 512px, banner 1920px de ancho
+      const base64 =
+        kind === "avatar"
+          ? await fileToResizedDataUrl(file, 512, 512)
+          : await fileToResizedDataUrl(file, 1920, 1080);
+      const res = await uploadProfileImage(token, kind, base64);
       if (res.ok && res.url) {
         if (kind === "avatar") setAvatarUrl(res.url);
         else setBannerUrl(res.url);
       } else {
         setError(res.error || "No se pudo subir la imagen.");
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setError("No se pudo procesar la imagen. Intenta con otra foto.");
+    } finally {
+      setUploading(null);
+    }
   };
 
   if (loading || !session || !loaded) {

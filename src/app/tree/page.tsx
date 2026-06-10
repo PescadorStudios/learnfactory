@@ -58,6 +58,7 @@ function KnowledgeTree() {
   const [showCelebration, setShowCelebration] = useState(false);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [stalledPolls, setStalledPolls] = useState(0);
 
   const load = useCallback(async () => {
     if (!token || !routeId) return;
@@ -87,6 +88,16 @@ function KnowledgeTree() {
       return () => clearTimeout(t);
     }
   }, [completedNode]);
+
+  // Cola parada: hay lecciones en cola pero ninguna se está generando.
+  // Se confirma en 2 sondeos seguidos (~10 s) para no saltar justo al crear la ruta.
+  useEffect(() => {
+    if (!route) return;
+    const states = Object.values(route.nodes);
+    const hasPending = states.some(n => n.status === "pending");
+    const activelyGenerating = states.some(n => n.status === "generating" && !n.stale);
+    setStalledPolls(c => (hasPending && !activelyGenerating ? c + 1 : 0));
+  }, [route]);
 
   if (authLoading || !session) return <TreeLoading />;
   if (notFound) {
@@ -134,6 +145,7 @@ function KnowledgeTree() {
     if (!token) return;
     setResuming(true);
     await resumeRoute(token, routeId);
+    setStalledPolls(0); // ocultar el aviso; si sigue parada, reaparece en ~10 s
     await load();
     setResuming(false);
   };
@@ -142,6 +154,9 @@ function KnowledgeTree() {
   const recoverableCount = Object.values(route.nodes).filter(
     n => n.status === "error" || (n.status === "generating" && n.stale)
   ).length;
+  // Cola en pausa confirmada: pendientes sin actividad durante 2+ sondeos.
+  const queueStalled = stalledPolls >= 2;
+  const showResume = recoverableCount > 0 || queueStalled;
 
   return (
     <main className="min-h-screen bg-zinc-950 p-6 md:p-12 relative overflow-y-auto">
@@ -203,7 +218,7 @@ function KnowledgeTree() {
             Ruta de <span className="text-primary">{route.topic}</span>
           </motion.h1>
 
-          {stillGenerating > 0 && recoverableCount === 0 && (
+          {stillGenerating > 0 && !showResume && (
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -214,7 +229,7 @@ function KnowledgeTree() {
             </motion.p>
           )}
 
-          {recoverableCount > 0 && (
+          {showResume && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -222,7 +237,9 @@ function KnowledgeTree() {
             >
               <p className="text-rose-400/90 text-sm flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4" />
-                {recoverableCount} {recoverableCount === 1 ? "lección se interrumpió" : "lecciones se interrumpieron"} al generar.
+                {recoverableCount > 0
+                  ? `${recoverableCount} ${recoverableCount === 1 ? "lección se interrumpió" : "lecciones se interrumpieron"} al generar.`
+                  : "La generación quedó en pausa con lecciones en cola."}
               </p>
               <button
                 onClick={handleResume}

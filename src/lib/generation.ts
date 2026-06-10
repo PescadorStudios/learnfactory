@@ -222,10 +222,19 @@ async function synthesizeSpeechOnce(text: string): Promise<{ wav: Buffer; durati
 //  GENERACIÓN DE PORTADAS (Gemini Image — "Nano Banana")
 // ──────────────────────────────────────────────────
 
-// Modelo de imagen configurable por env. Default seguro: Nano Banana (2.5).
-// Para "Nano Banana 2" usar GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview (si está disponible).
-const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
-const IMAGE_TIMEOUT_MS = 120_000;
+// Modelo de imagen configurable por env. Default: "Nano Banana 2"
+// (gemini-3-pro-image-preview); si no está disponible para la API key,
+// se hace fallback automático a Nano Banana clásico (gemini-2.5-flash-image).
+const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview";
+const IMAGE_MODEL_FALLBACK = "gemini-2.5-flash-image";
+const IMAGE_TIMEOUT_MS = 150_000;
+
+/** Imagen de referencia para la generación (p. ej., foto del autor). */
+export interface ReferenceImage {
+  mimeType: string;
+  /** Base64 puro, sin prefijo data URL. */
+  data: string;
+}
 
 /** Construye un prompt de portada elegante a partir del tema y la tesis global. */
 export function buildCoverPrompt(topic: string, tesisGlobal?: string): string {
@@ -234,51 +243,86 @@ export function buildCoverPrompt(topic: string, tesisGlobal?: string): string {
 }
 
 /**
- * Genera una imagen de portada con Gemini y devuelve el PNG/JPEG como Buffer.
- * Sigue el mismo patrón REST que el TTS. Devuelve null si falla.
+ * Genera una imagen de portada con Gemini (Nano Banana) y devuelve el binario.
+ * - Fuerza relación de aspecto 16:9 vía `imageConfig` (tamaño exacto de tarjeta).
+ * - Acepta imágenes de referencia (p. ej., foto del autor) como `inlineData`.
+ * - Intenta primero IMAGE_MODEL (Nano Banana 2) y cae a IMAGE_MODEL_FALLBACK.
  */
-export async function generateCoverImage(prompt: string): Promise<Buffer | null> {
+export async function generateCoverImage(
+  prompt: string,
+  referenceImages: ReferenceImage[] = []
+): Promise<Buffer | null> {
   if (!apiKey) return null;
+
+  const models = [...new Set([IMAGE_MODEL, IMAGE_MODEL_FALLBACK])];
+  for (const model of models) {
+    const result = await generateCoverImageOnce(model, prompt, referenceImages);
+    if (result) return result;
+    console.warn(`[Cover] ${model} no produjo imagen; ${model === models[models.length - 1] ? "sin más modelos" : "probando fallback"}...`);
+  }
+  return null;
+}
+
+async function generateCoverImageOnce(
+  model: string,
+  prompt: string,
+  referenceImages: ReferenceImage[]
+): Promise<Buffer | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
   try {
-    console.log(`[Cover] Generando portada (${IMAGE_MODEL})...`);
+    console.log(`[Cover] Generando portada (${model}, ${referenceImages.length} ref)...`);
+
+    // Las referencias van primero como inlineData; el texto al final.
+    const parts: Array<Record<string, unknown>> = referenceImages.map(img => ({
+      inlineData: { mimeType: img.mimeType, data: img.data },
+    }));
+    parts.push({ text: prompt });
+
+    // imageConfig fija la relación de aspecto exacta de la portada (16:9).
+    // imageSize ("2K") solo lo soporta Nano Banana 2 (gemini-3-*).
+    const imageConfig: Record<string, unknown> = { aspectRatio: "16:9" };
+    if (model.startsWith("gemini-3")) imageConfig.imageSize = "2K";
+
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${IMAGE_MODEL}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseModalities: ["IMAGE"] },
+          contents: [{ parts }],
+          generationConfig: {
+            responseModalities: ["TEXT", "IMAGE"],
+            imageConfig,
+          },
         }),
       }
     );
 
     if (!res.ok) {
-      console.error(`[Cover] HTTP ${res.status}:`, (await res.text()).slice(0, 500));
+      console.error(`[Cover] ${model} HTTP ${res.status}:`, (await res.text()).slice(0, 500));
       return null;
     }
 
     const data = await res.json();
-    const parts = data?.candidates?.[0]?.content?.parts;
-    const imgPart = Array.isArray(parts)
-      ? parts.find((p: { inlineData?: { data?: string } }) => p?.inlineData?.data)
+    const respParts = data?.candidates?.[0]?.content?.parts;
+    const imgPart = Array.isArray(respParts)
+      ? respParts.find((p: { inlineData?: { data?: string } }) => p?.inlineData?.data)
       : null;
     const b64 = imgPart?.inlineData?.data;
     if (!b64) {
-      console.error("[Cover] La respuesta no contiene imagen.");
+      console.error(`[Cover] ${model}: la respuesta no contiene imagen.`);
       return null;
     }
     const buf = Buffer.from(b64, "base64");
-    console.log(`[Cover] ✓ Portada generada (${(buf.length / 1024).toFixed(0)} KB)`);
+    console.log(`[Cover] ✓ Portada generada con ${model} (${(buf.length / 1024).toFixed(0)} KB)`);
     return buf;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      console.error(`[Cover] Abortado por timeout (${IMAGE_TIMEOUT_MS / 1000}s).`);
+      console.error(`[Cover] ${model} abortado por timeout (${IMAGE_TIMEOUT_MS / 1000}s).`);
     } else {
-      console.error("[Cover] Error:", error);
+      console.error(`[Cover] ${model} error:`, error);
     }
     return null;
   } finally {

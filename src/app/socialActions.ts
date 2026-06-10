@@ -547,12 +547,32 @@ export async function updateRouteDescription(token: string, routeId: string, des
   return { ok: true };
 }
 
-/** Regenera la portada con IA a partir de un prompt del usuario (síncrono: devuelve la URL nueva). */
-export async function generateRouteCover(token: string, routeId: string, prompt: string): Promise<{ ok: boolean; coverUrl?: string; error?: string }> {
+/**
+ * Regenera la portada con IA a partir de un prompt del usuario (síncrono:
+ * devuelve la URL nueva). Acepta una imagen de referencia opcional (base64,
+ * con o sin prefijo data URL) — p. ej., la foto del autor para integrarla.
+ */
+export async function generateRouteCover(
+  token: string,
+  routeId: string,
+  prompt: string,
+  referenceBase64?: string
+): Promise<{ ok: boolean; coverUrl?: string; error?: string }> {
   const owner = await assertOwner(token, routeId);
   if (!owner) return { ok: false, error: "No autorizado" };
 
-  const img = await generateCoverImage(prompt.trim().slice(0, 600));
+  let references: Array<{ mimeType: string; data: string }> = [];
+  let finalPrompt = prompt.trim().slice(0, 600);
+  if (referenceBase64) {
+    const { buffer, contentType } = decodeImage(referenceBase64);
+    if (buffer.length > MAX_IMAGE_BYTES) return { ok: false, error: "La imagen de referencia supera el límite de 8 MB." };
+    if (buffer.length > 0) {
+      references = [{ mimeType: contentType, data: buffer.toString("base64") }];
+      finalPrompt += "\n\nUsa la imagen adjunta como referencia e intégrala de forma elegante y protagonista en la portada (por ejemplo, si es la foto del autor, que aparezca bien integrado en la composición).";
+    }
+  }
+
+  const img = await generateCoverImage(finalPrompt, references);
   if (!img) return { ok: false, error: "No se pudo generar la portada. Inténtalo de nuevo." };
 
   const sb = supabaseAdmin();

@@ -322,29 +322,21 @@ async function generateOneLesson(
   }
 }
 
-/** Reintenta la generación de una lección fallida (en background; el cliente hace polling). */
+/**
+ * Reintenta la generación de una lección fallida y CONTINÚA la cola completa:
+ * relanza el loop de la ruta, que regenera esa lección y todas las que sigan
+ * pendientes (así un reintento nunca deja el resto de la cola huérfana).
+ */
 export async function retryLesson(token: string, routeId: string, nodeId: string): Promise<{ ok: boolean }> {
   const user = await getUserFromToken(token);
   if (!user) return { ok: false };
 
   const sb = supabaseAdmin();
-  const { data: route } = await sb.from("routes").select("topic, sintesis, tree").eq("id", routeId).single();
+  const { data: route } = await sb.from("routes").select("id").eq("id", routeId).single();
   if (!route) return { ok: false };
 
-  const tree = route.tree as Tree;
-  const nodes = flattenNodes(tree);
-  const node = nodes.find(n => n.id === nodeId);
-  if (!node) return { ok: false };
-
-  // Conceptos estudiados = los de todos los nodos anteriores en el árbol
-  const studied: string[] = [];
-  for (const n of nodes) {
-    if (n.id === nodeId) break;
-    for (const c of n.conceptIds || []) if (!studied.includes(c)) studied.push(c);
-  }
-
   await sb.from("lessons").update({ status: "pending", error: null }).eq("route_id", routeId).eq("node_id", nodeId);
-  after(() => generateOneLesson(routeId, route.topic, route.sintesis as Sintesis, node, studied));
+  after(() => generateRouteLessons(routeId));
   return { ok: true };
 }
 
