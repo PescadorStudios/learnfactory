@@ -17,6 +17,8 @@ import type {
   BossExamData,
   LessonStep,
   MicroLessonData,
+  MicroLessonResponse,
+  AttentionQuestion,
 } from "@/lib/types";
 
 // Inicializar SDK
@@ -92,6 +94,86 @@ function parseJsonResponse(text: string) {
   } catch {
     const clean = text.replace(/```json/g, "").replace(/```/g, "").trim();
     return JSON.parse(clean);
+  }
+}
+
+// ── TTS (Gemini Speech Generation) ──
+
+const TTS_MODEL = "gemini-2.5-flash-preview-tts";
+const TTS_VOICE = "Charon"; // voz madura de adulto joven
+const TTS_SAMPLE_RATE = 24000;
+
+/** Envuelve PCM 16-bit mono en un contenedor WAV (header de 44 bytes) */
+function pcmToWav(pcm: Buffer, sampleRate = TTS_SAMPLE_RATE): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // tamaño del subchunk fmt
+  header.writeUInt16LE(1, 20); // formato PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28); // byte rate (16-bit mono)
+  header.writeUInt16LE(2, 32); // block align
+  header.writeUInt16LE(16, 34); // bits por muestra
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
+/** Genera narración de voz con Gemini TTS (con 1 reintento). Devuelve WAV en base64 + duración exacta. */
+async function synthesizeSpeech(text: string): Promise<{ wavBase64: string; durationSeconds: number } | null> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const result = await synthesizeSpeechOnce(text);
+    if (result) return result;
+    if (attempt === 1) {
+      console.warn("[TTS] Reintentando síntesis...");
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  return null;
+}
+
+async function synthesizeSpeechOnce(text: string): Promise<{ wavBase64: string; durationSeconds: number } | null> {
+  try {
+    console.log(`[TTS] Sintetizando ${text.length} caracteres...`);
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: TTS_VOICE } },
+            },
+          },
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      console.error(`[TTS] HTTP ${res.status}:`, (await res.text()).slice(0, 500));
+      return null;
+    }
+
+    const data = await res.json();
+    const b64 = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!b64) {
+      console.error("[TTS] La respuesta no contiene audio.");
+      return null;
+    }
+
+    const pcm = Buffer.from(b64, "base64");
+    const durationSeconds = pcm.length / (TTS_SAMPLE_RATE * 2);
+    console.log(`[TTS] ✓ Audio generado: ${durationSeconds.toFixed(1)}s (${(pcm.length / 1024 / 1024).toFixed(1)} MB)`);
+    return { wavBase64: pcmToWav(pcm).toString("base64"), durationSeconds };
+  } catch (error) {
+    console.error("[TTS] Error:", error);
+    return null;
   }
 }
 
@@ -456,11 +538,11 @@ export async function generateMicroLesson(
   sintesis: Sintesis | null = null,
   conceptIds: string[] = [],
   studiedConceptIds: string[] = []
-): Promise<MicroLessonData> {
+): Promise<MicroLessonResponse> {
   if (!apiKey || !sintesis) {
     console.log("No GEMINI_API_KEY or no sintesis. Returning mock lesson data.");
     await new Promise((resolve) => setTimeout(resolve, 2000));
-    return generateMockLesson(topic, nodeTitle, studiedConceptIds);
+    return { lesson: generateMockLesson(topic, nodeTitle), audioWavBase64: null };
   }
 
   try {
@@ -471,8 +553,8 @@ export async function generateMicroLesson(
       : "";
 
     const recapInstruction = studiedConceptIds.length
-      ? `2. { "kind": "recap", "emoji": "🧠", "title": "Anteriormente...", "text": "Conecta lo que ya aprendió (conceptos: ${studiedConceptIds.join(", ")}) con lo que viene en esta lección" }`
-      : `(NO incluyas tarjeta "recap": el estudiante aún no ha completado ninguna lección)`;
+      ? `En el segmento 2, conecta brevemente lo que el estudiante ya aprendió (conceptos: ${studiedConceptIds.join(", ")}) con lo que viene.`
+      : "";
 
     const prompt = `
 Actúa como tutor experto en la academia "LearnFactory".
@@ -484,16 +566,13 @@ Crea una microlección sobre "${nodeTitle}" (tema general: "${topic}").${practic
 
 La lección tiene DOS partes:
 
-PARTE A — "briefing": 4-6 tarjetas estilo "stories" que dan contexto ANTES de la lección a alguien que llega desde cero. Reglas del briefing:
-- Una sola idea por tarjeta. El campo "text" de cada tarjeta NO debe superar 280 caracteres.
-- Tono cercano, chispeante y en segunda persona ("¿Sabías que...?", "Imagina que..."). Nada de muros de texto.
-- Fiel a la síntesis: nada inventado.
-- Orden y tipos de tarjeta:
-1. { "kind": "hook", "emoji": "🤔", "title": "...", "text": "Un dato sorprendente o pregunta intrigante DEL MATERIAL que despierte curiosidad" }
-${recapInstruction}
-3. { "kind": "context", "emoji": "🗺️", "title": "El panorama", "text": "Dónde encaja esta lección dentro de la tesis global del material, como si señalaras un punto en un mapa" }
-4. { "kind": "vocab", "emoji": "📖", "title": "Palabras clave", "terms": [{ "termino": "...", "definicion": "una línea" }] } (2-3 términos que aparecerán en la lección)
-5. { "kind": "predict", "emoji": "🔮", "title": "Tu predicción", "question": "Pregunta que invite a apostar una respuesta ANTES de aprender", "options": ["2-3 opciones plausibles"], "correctIndex": 0, "reveal": "Revela la respuesta en 1-2 oraciones que generen ganas de seguir, SIN destripar toda la lección" }
+PARTE A — "guion": el guion de un mini-podcast de ~3 minutos que da TODO el contexto de esta lección a alguien que llega desde cero. Exactamente 6 segmentos. Reglas:
+- Cada segmento: 70-85 palabras de narración continua. Tono de narrador de podcast entusiasta y cercano, en segunda persona. Cuenta el contexto como una historia: gancho → panorama → conceptos → ejemplos → por qué importa.
+- Fiel a la síntesis: nada inventado. ${recapInstruction}
+- El texto se leerá en voz alta TAL CUAL: nada de markdown, emojis, títulos ni acotaciones; solo prosa hablada natural con transiciones fluidas entre segmentos.
+- Cada segmento incluye UNA "pregunta" de atención sobre un dato CONCRETO que el segmento menciona. La pregunta NO evalúa comprensión profunda: solo comprueba que el oyente está prestando atención (ej.: si el segmento dice "la bola roja iba rodando", la pregunta es "¿De qué color era la bola?" con opciones ["Roja", "Verde"]).
+- REGLA CRÍTICA: el dato que responde la pregunta debe mencionarse en la PRIMERA MITAD del segmento.
+- Cada pregunta: máx 10 palabras, exactamente 2 opciones cortas (máx 4 palabras), una correcta y una claramente incorrecta.
 
 PARTE B — "steps": exactamente estos 5 pasos:
 1. { "type": "theory", "title": "...", "content": "Explicación fiel a la síntesis (máx 3 oraciones)", "cita": "Cita textual de la síntesis que la respalda" }
@@ -503,18 +582,79 @@ PARTE B — "steps": exactamente estos 5 pasos:
 5. { "type": "quiz", "title": "Comprueba tu comprensión", "question": "...", "options": ["A", "B", "C", "D"], "correctAnswer": 0, "explicacion": "Por qué es correcta, apoyándote en la síntesis", "conceptId": "id del concepto focal evaluado" }
 
 Devuelve SOLO este JSON, sin texto adicional ni markdown:
-{ "briefing": [...], "steps": [...] }
+{
+  "guion": [
+    { "texto": "70-85 palabras de narración...", "pregunta": { "question": "...", "options": ["...", "..."], "correctIndex": 0 } }
+  ],
+  "steps": [...]
+}
 `;
 
     const result = await model.generateContent(prompt);
     const parsed = parseJsonResponse(result.response.text());
-    if (!Array.isArray(parsed?.briefing) || !Array.isArray(parsed?.steps) || parsed.steps.length === 0) {
-      throw new Error("La lección no tiene la estructura {briefing, steps} esperada.");
+    if (!Array.isArray(parsed?.steps) || parsed.steps.length === 0) {
+      throw new Error("La lección no tiene pasos válidos.");
     }
-    return parsed as MicroLessonData;
+
+    const steps = parsed.steps as LessonStep[];
+    const guion: Array<{ texto: string; pregunta: { question: string; options: string[]; correctIndex: number } }> =
+      Array.isArray(parsed.guion) ? parsed.guion.filter((s: { texto?: string; pregunta?: { options?: string[] } }) => s?.texto && s?.pregunta?.options?.length === 2) : [];
+
+    // Sintetizar el podcast y calcular cuándo aparece cada pregunta
+    let lesson: MicroLessonData = { audioIntro: null, steps };
+    let audioWavBase64: string | null = null;
+
+    if (guion.length < 4) {
+      console.warn(`[MicroLesson] Guion inválido (${guion.length} segmentos válidos): la lección irá sin intro de audio.`);
+    }
+
+    if (guion.length >= 4) {
+      const fullScript = guion.map(s => s.texto.trim()).join("\n\n");
+      const speech = await synthesizeSpeech(
+        `Narra en español con voz de adulto joven: tono maduro, claro, cálido y profesional, como un narrador de documentales cercano:\n\n${fullScript}`
+      );
+
+      if (speech) {
+        // Timing proporcional por caracteres: la pregunta aparece al ~70% de su
+        // segmento (el dato ya fue narrado porque va en la primera mitad)
+        const totalChars = fullScript.length;
+        const questions: AttentionQuestion[] = [];
+        let offset = 0;
+        for (const seg of guion) {
+          const texto = seg.texto.trim();
+          const charPoint = offset + texto.length * 0.7;
+
+          // Barajar las opciones: el modelo tiende a poner la correcta siempre primero
+          let options = seg.pregunta.options;
+          let correctIndex = seg.pregunta.correctIndex === 1 ? 1 : 0;
+          if (Math.random() < 0.5) {
+            options = [options[1], options[0]];
+            correctIndex = correctIndex === 0 ? 1 : 0;
+          }
+
+          questions.push({
+            atSeconds: Math.round((charPoint / totalChars) * speech.durationSeconds * 10) / 10,
+            question: seg.pregunta.question,
+            options,
+            correctIndex,
+          });
+          offset += texto.length + 2; // separador "\n\n"
+        }
+
+        lesson = {
+          audioIntro: { durationSeconds: speech.durationSeconds, questions },
+          steps,
+        };
+        audioWavBase64 = speech.wavBase64;
+      } else {
+        console.warn("[MicroLesson] TTS no disponible: la lección continúa sin intro de audio.");
+      }
+    }
+
+    return { lesson, audioWavBase64 };
   } catch (error) {
     console.error("[MicroLesson] Error:", error);
-    return generateMockLesson(topic, nodeTitle, studiedConceptIds);
+    return { lesson: generateMockLesson(topic, nodeTitle), audioWavBase64: null };
   }
 }
 
@@ -807,48 +947,7 @@ function generateMockStudyPack(topic: string): StudyPack {
   };
 }
 
-function generateMockLesson(topic: string, nodeTitle: string, studiedConceptIds: string[] = []): MicroLessonData {
-  const briefing: MicroLessonData["briefing"] = [
-    {
-      kind: "hook",
-      emoji: "🤔",
-      title: "¿Sabías que...?",
-      text: `La mayoría de la gente cree dominar ${topic}... hasta que alguien le pide explicar ${nodeTitle} con sus propias palabras.`,
-    },
-    ...(studiedConceptIds.length
-      ? [{
-          kind: "recap" as const,
-          emoji: "🧠",
-          title: "Anteriormente...",
-          text: `Ya viste los fundamentos de ${topic}. Hoy vas a conectarlos con ${nodeTitle}: todo lo que aprendiste cobra sentido aquí.`,
-        }]
-      : []),
-    {
-      kind: "context",
-      emoji: "🗺️",
-      title: "El panorama",
-      text: `${nodeTitle} es una pieza central del argumento completo de ${topic}: sin ella, el resto del material se queda cojo.`,
-    },
-    {
-      kind: "vocab",
-      emoji: "📖",
-      title: "Palabras clave",
-      terms: [
-        { termino: "Fundamento", definicion: "El principio base sobre el que se construye todo lo demás." },
-        { termino: "Contexto", definicion: "El argumento completo que da sentido a cada fragmento." },
-      ],
-    },
-    {
-      kind: "predict",
-      emoji: "🔮",
-      title: "Tu predicción",
-      question: `¿Qué crees que pasa si estudias ${nodeTitle} solo con fragmentos sueltos?`,
-      options: ["Aprendo más rápido", "Puedo llegar a conclusiones erróneas"],
-      correctIndex: 1,
-      reveal: "Exacto: un fragmento aislado puede decir lo contrario que el texto completo. En esta lección verás cómo evitarlo.",
-    },
-  ];
-
+function generateMockLesson(topic: string, nodeTitle: string): MicroLessonData {
   const steps: LessonStep[] = [
     {
       type: "theory",
@@ -884,7 +983,7 @@ function generateMockLesson(topic: string, nodeTitle: string, studiedConceptIds:
     }
   ];
 
-  return { briefing, steps };
+  return { audioIntro: null, steps };
 }
 
 function generateMockEvaluation(): SocraticEvaluation {

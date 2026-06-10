@@ -19,7 +19,7 @@ export const XP = {
   bossPass: 200,
   reviewSession: 40,
   dailyStreakBonus: 20,
-  predictCorrect: 5,
+  audioFocusPass: 15,
 };
 
 export const REVIEW_AFTER_DAYS = 4;

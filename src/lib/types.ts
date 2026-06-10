@@ -76,37 +76,29 @@ export interface QuizStep {
 
 export type LessonStep = ContentStep | OpenQuestionStep | QuizStep;
 
-// ── Briefing estilo "stories" (contexto previo a la lección) ──
+// ── Intro de audio con juego de atención ──
 
-export interface InfoBriefingCard {
-  kind: "hook" | "recap" | "context";
-  emoji: string;
-  title: string;
-  text: string;
-}
-
-export interface VocabBriefingCard {
-  kind: "vocab";
-  emoji: string;
-  title: string;
-  terms: Array<{ termino: string; definicion: string }>;
-}
-
-export interface PredictBriefingCard {
-  kind: "predict";
-  emoji: string;
-  title: string;
+export interface AttentionQuestion {
+  atSeconds: number; // momento del audio en que aparece
   question: string;
-  options: string[];
+  options: string[]; // exactamente 2
   correctIndex: number;
-  reveal: string;
 }
 
-export type BriefingCard = InfoBriefingCard | VocabBriefingCard | PredictBriefingCard;
+export interface AudioIntroData {
+  durationSeconds: number;
+  questions: AttentionQuestion[];
+}
 
 export interface MicroLessonData {
-  briefing: BriefingCard[];
+  audioIntro: AudioIntroData | null; // null = sin audio (TTS falló o sin API key)
   steps: LessonStep[];
+}
+
+/** Respuesta completa de la action (el base64 NO se guarda en localStorage) */
+export interface MicroLessonResponse {
+  lesson: MicroLessonData;
+  audioWavBase64: string | null;
 }
 
 // ── Evaluación socrática ──
