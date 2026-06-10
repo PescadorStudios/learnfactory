@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
-import { getRoute, retryLesson } from "../routeActions";
+import { getRoute, retryLesson, resumeRoute } from "../routeActions";
 import type { RouteDetail, TreeNode, NodeState } from "@/lib/types";
 
 const NODE_TYPE_LABELS: Record<string, string> = {
@@ -57,6 +57,7 @@ function KnowledgeTree() {
   const [notFound, setNotFound] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
 
   const load = useCallback(async () => {
     if (!token || !routeId) return;
@@ -129,6 +130,19 @@ function KnowledgeTree() {
     setRetrying(null);
   };
 
+  const handleResume = async () => {
+    if (!token) return;
+    setResuming(true);
+    await resumeRoute(token, routeId);
+    await load();
+    setResuming(false);
+  };
+
+  // Lecciones recuperables: en error o atascadas (proceso huérfano).
+  const recoverableCount = Object.values(route.nodes).filter(
+    n => n.status === "error" || (n.status === "generating" && n.stale)
+  ).length;
+
   return (
     <main className="min-h-screen bg-zinc-950 p-6 md:p-12 relative overflow-y-auto">
       <div className="fixed top-0 inset-x-0 h-96 bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
@@ -186,7 +200,7 @@ function KnowledgeTree() {
             Ruta de <span className="text-primary">{route.topic}</span>
           </motion.h1>
 
-          {stillGenerating > 0 && (
+          {stillGenerating > 0 && recoverableCount === 0 && (
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -195,6 +209,27 @@ function KnowledgeTree() {
               <Loader2 className="w-4 h-4 animate-spin" />
               Generando {stillGenerating} {stillGenerating === 1 ? "lección" : "lecciones"} con audio en segundo plano...
             </motion.p>
+          )}
+
+          {recoverableCount > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="mb-4 flex flex-col items-center gap-2"
+            >
+              <p className="text-rose-400/90 text-sm flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                {recoverableCount} {recoverableCount === 1 ? "lección se interrumpió" : "lecciones se interrumpieron"} al generar.
+              </p>
+              <button
+                onClick={handleResume}
+                disabled={resuming}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full font-bold text-sm bg-rose-500 text-white hover:bg-rose-400 transition-all disabled:opacity-60"
+              >
+                {resuming ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                Reanudar generación
+              </button>
+            </motion.div>
           )}
 
           {/* Barra de progreso global */}
@@ -244,13 +279,15 @@ function KnowledgeTree() {
 
                   <div className="grid gap-4 sm:grid-cols-2">
                     {level.nodes.map((node) => {
-                      const state: NodeState = route.nodes[node.id] || { status: "pending", error: null, bestStars: null, attemptCount: 0, mastery: null, reviewDue: false };
+                      const state: NodeState = route.nodes[node.id] || { status: "pending", error: null, bestStars: null, attemptCount: 0, mastery: null, reviewDue: false, stale: false };
                       const uiStatus = nodeUiStatus(node);
                       const isCompleted = uiStatus === "completed";
                       const isUnlocked = uiStatus === "unlocked";
                       const isReady = state.status === "ready";
-                      const isGen = state.status === "pending" || state.status === "generating";
+                      const isStale = state.status === "generating" && state.stale;
+                      const isGen = (state.status === "pending" || state.status === "generating") && !isStale;
                       const isError = state.status === "error";
+                      const isRecoverable = isError || isStale;
                       const clickable = (isUnlocked || isCompleted) && isReady;
 
                       return (
@@ -294,7 +331,7 @@ function KnowledgeTree() {
                                 <span className="text-xs text-zinc-600">{state.attemptCount} {state.attemptCount === 1 ? "intento" : "intentos"}</span>
                               </div>
                             )}
-                            {isError && (
+                            {isRecoverable && (
                               <span
                                 role="button"
                                 tabIndex={0}
@@ -302,7 +339,7 @@ function KnowledgeTree() {
                                 className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-rose-400 hover:text-rose-300 cursor-pointer"
                               >
                                 {retrying === node.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                                Error al generar — Reintentar
+                                {isStale ? "Se quedó atascada — Reintentar" : "Error al generar — Reintentar"}
                               </span>
                             )}
                           </div>
@@ -312,6 +349,7 @@ function KnowledgeTree() {
                             {isCompleted && !state.reviewDue && <CheckCircle2 className="w-6 h-6 text-primary" />}
                             {isUnlocked && isReady && <Play className="w-6 h-6 text-white" />}
                             {isUnlocked && isGen && <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />}
+                            {isUnlocked && isRecoverable && <AlertTriangle className="w-5 h-5 text-rose-500" />}
                             {uiStatus === "locked" && <Lock className="w-5 h-5 text-zinc-600" />}
                           </div>
                         </motion.button>

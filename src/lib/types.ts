@@ -200,6 +200,8 @@ export interface NodeState {
   attemptCount: number;
   mastery: number | null;
   reviewDue: boolean;
+  /** true si lleva demasiado tiempo en "generating" (proceso huérfano): se puede reintentar. */
+  stale: boolean;
 }
 
 export interface RouteDetail {

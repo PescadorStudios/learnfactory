@@ -2,10 +2,10 @@
 
 import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Loader2, AlertTriangle, Mic } from "lucide-react";
+import { Loader2, AlertTriangle, Mic, RefreshCw } from "lucide-react";
 import type { AttemptInput, LessonData } from "@/lib/types";
 import { useRequireAuth } from "@/lib/useAuth";
-import { getLesson, saveAttempt } from "../routeActions";
+import { getLesson, saveAttempt, retryLesson } from "../routeActions";
 import { getAudio, putAudio } from "@/lib/audioCache";
 import MicroLesson from "./MicroLesson";
 import DebateNode from "./DebateNode";
@@ -33,11 +33,22 @@ function LessonDispatcher() {
   const [audioLoading, setAudioLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const fetchedAudioFor = useRef<string | null>(null);
 
   const goToTree = useCallback(() => {
     router.push(`/tree?route=${routeId}`);
   }, [router, routeId]);
+
+  const handleRetry = useCallback(async () => {
+    if (!token || !routeId || !nodeId) return;
+    setRetrying(true);
+    await retryLesson(token, routeId, nodeId);
+    // Refrescar para reflejar "pending" y dejar que el polling siga
+    const data = await getLesson(token, routeId, nodeId);
+    if (data) setLesson(data);
+    setRetrying(false);
+  }, [token, routeId, nodeId]);
 
   const load = useCallback(async () => {
     if (!token || !routeId || !nodeId) return;
@@ -129,9 +140,19 @@ function LessonDispatcher() {
         <p className="text-zinc-400 max-w-md">
           Esta lección se está generando con su narración de voz. Suele tardar 1-2 minutos; la página se actualizará sola.
         </p>
-        <button onClick={goToTree} className="mt-8 text-zinc-500 hover:text-white transition-colors text-sm">
-          Volver al árbol mientras tanto
-        </button>
+        <div className="mt-8 flex flex-col items-center gap-3">
+          <button
+            onClick={handleRetry}
+            disabled={retrying}
+            className="inline-flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-sm disabled:opacity-60"
+          >
+            {retrying ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            ¿Lleva demasiado? Reiniciar la generación
+          </button>
+          <button onClick={goToTree} className="text-zinc-600 hover:text-zinc-400 transition-colors text-sm">
+            Volver al árbol mientras tanto
+          </button>
+        </div>
       </div>
     );
   }
@@ -141,10 +162,20 @@ function LessonDispatcher() {
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
         <AlertTriangle className="w-12 h-12 text-rose-500 mb-4" />
         <h2 className="text-2xl font-bold mb-2">Esta lección falló al generarse</h2>
-        <p className="text-zinc-400 mb-6 max-w-md">Vuelve al árbol y usa &quot;Reintentar&quot; en la lección.</p>
-        <button onClick={goToTree} className="px-8 py-4 rounded-2xl font-bold bg-primary text-white hover:bg-primary-hover transition-all">
-          Volver al árbol
-        </button>
+        {lesson.error && <p className="text-zinc-500 mb-4 max-w-md text-sm">{lesson.error}</p>}
+        <div className="flex flex-col items-center gap-3">
+          <button
+            onClick={handleRetry}
+            disabled={retrying}
+            className="inline-flex items-center gap-2 px-8 py-4 rounded-2xl font-bold bg-rose-500 text-white hover:bg-rose-400 transition-all disabled:opacity-60"
+          >
+            {retrying ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
+            Reintentar generación
+          </button>
+          <button onClick={goToTree} className="text-zinc-500 hover:text-white transition-colors text-sm">
+            Volver al árbol
+          </button>
+        </div>
       </div>
     );
   }

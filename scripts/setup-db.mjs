@@ -41,8 +41,11 @@ create table if not exists public.lessons (
   audio_path text,
   status text not null default 'pending',
   error text,
+  generating_at timestamptz,
   unique(route_id, node_id)
 );
+-- Para instalaciones existentes (idempotente):
+alter table public.lessons add column if not exists generating_at timestamptz;
 
 create table if not exists public.attempts (
   id uuid primary key default gen_random_uuid(),

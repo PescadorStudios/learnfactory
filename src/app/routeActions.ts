@@ -29,6 +29,13 @@ import type {
 const AUDIO_BUCKET = "lesson-audio";
 const REVIEW_AFTER_DAYS = 4;
 const REVIEW_MASTERY_THRESHOLD = 80;
+// Una lección "generating" más vieja que esto se considera huérfana (su proceso
+// murió, p.ej. reinicio del server): se puede reclamar y reintentar.
+const STALE_GENERATING_MS = 5 * 60 * 1000;
+
+// Evita que dos loops de generación corran a la vez sobre la misma ruta en este
+// proceso (createRoute + resumeRoute, o varios resumes seguidos).
+const activeRouteGen = new Set<string>();
 
 // ──────────────────────────────────────────────────
 //  AUTH / PERFIL
@@ -121,8 +128,18 @@ export async function createRoute(
   return { routeId: route.id };
 }
 
-/** Loop secuencial: genera contenido + audio de cada lección y lo persiste. */
+/**
+ * Loop secuencial: genera contenido + audio de cada lección pendiente y lo
+ * persiste. Reclama lecciones huérfanas ("generating" viejas) y reintenta las
+ * que quedaron en "error", de modo que relanzarlo reanuda la cola completa.
+ */
 async function generateRouteLessons(routeId: string) {
+  if (activeRouteGen.has(routeId)) {
+    console.log(`[RouteGen] Ruta ${routeId} ya tiene un loop activo; no se relanza.`);
+    return;
+  }
+  activeRouteGen.add(routeId);
+
   const sb = supabaseAdmin();
   try {
     const { data: route } = await sb.from("routes").select("topic, sintesis, tree").eq("id", routeId).single();
@@ -131,6 +148,16 @@ async function generateRouteLessons(routeId: string) {
     const tree = route.tree as Tree;
     const sintesis = route.sintesis as Sintesis;
     const nodes = flattenNodes(tree);
+
+    await sb.from("routes").update({ status: "generating" }).eq("id", routeId);
+
+    // Reclamar lecciones huérfanas (generating viejas) y reintentar las que
+    // están en error: vuelven a "pending" para que el loop las regenere.
+    const staleCutoff = new Date(Date.now() - STALE_GENERATING_MS).toISOString();
+    await sb.from("lessons").update({ status: "pending", error: null })
+      .eq("route_id", routeId).eq("status", "error").neq("node_type", "debate");
+    await sb.from("lessons").update({ status: "pending", error: null })
+      .eq("route_id", routeId).eq("status", "generating").lt("generating_at", staleCutoff);
 
     const studiedSoFar: string[] = [];
 
@@ -160,6 +187,8 @@ async function generateRouteLessons(routeId: string) {
   } catch (e) {
     console.error(`[RouteGen] Error fatal en ruta ${routeId}:`, e);
     await sb.from("routes").update({ status: "ready" }).eq("id", routeId); // las lecciones en error se reintentan individualmente
+  } finally {
+    activeRouteGen.delete(routeId);
   }
 }
 
@@ -173,7 +202,9 @@ async function generateOneLesson(
   const sb = supabaseAdmin();
   const focal = node.conceptIds || [];
 
-  await sb.from("lessons").update({ status: "generating", error: null }).eq("route_id", routeId).eq("node_id", node.id);
+  await sb.from("lessons")
+    .update({ status: "generating", error: null, generating_at: new Date().toISOString() })
+    .eq("route_id", routeId).eq("node_id", node.id);
   console.log(`[RouteGen] Generando ${node.type} "${node.title}" (${node.id})...`);
 
   try {
@@ -250,6 +281,23 @@ export async function retryLesson(token: string, routeId: string, nodeId: string
 
   await sb.from("lessons").update({ status: "pending", error: null }).eq("route_id", routeId).eq("node_id", nodeId);
   after(() => generateOneLesson(routeId, route.topic, route.sintesis as Sintesis, node, studied));
+  return { ok: true };
+}
+
+/**
+ * Reanuda la generación de una ruta entera: relanza el loop, que reclama las
+ * lecciones huérfanas/en error y completa las pendientes. Útil si el proceso de
+ * background murió (reinicio del server) y la cola se cortó.
+ */
+export async function resumeRoute(token: string, routeId: string): Promise<{ ok: boolean }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false };
+
+  const sb = supabaseAdmin();
+  const { data: route } = await sb.from("routes").select("owner_id").eq("id", routeId).single();
+  if (!route || route.owner_id !== user.id) return { ok: false };
+
+  after(() => generateRouteLessons(routeId));
   return { ok: true };
 }
 
@@ -340,7 +388,7 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
   if (!route || route.owner_id !== user.id) return null;
 
   const [{ data: lessons }, { data: attempts }, { data: mastery }, { data: allUserAttempts }] = await Promise.all([
-    sb.from("lessons").select("node_id, status, error").eq("route_id", routeId),
+    sb.from("lessons").select("node_id, status, error, generating_at").eq("route_id", routeId),
     sb.from("attempts").select("node_id, stars, passed, xp, created_at").eq("route_id", routeId).eq("user_id", user.id),
     sb.from("concept_mastery").select("concept_id, score, last_reviewed").eq("route_id", routeId).eq("user_id", user.id),
     sb.from("attempts").select("created_at").eq("user_id", user.id),
@@ -372,6 +420,10 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
       reviewDue = now - lastTouched > REVIEW_AFTER_DAYS * 86400000;
     }
 
+    const stale =
+      lesson?.status === "generating" &&
+      (!lesson.generating_at || now - new Date(lesson.generating_at).getTime() > STALE_GENERATING_MS);
+
     nodes[node.id] = {
       status: (lesson?.status as LessonGenStatus) || "pending",
       error: lesson?.error || null,
@@ -379,6 +431,7 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
       attemptCount: nodeAttempts.length,
       mastery: avgMastery,
       reviewDue,
+      stale,
     };
   }
 

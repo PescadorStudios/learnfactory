@@ -30,9 +30,31 @@ const fileManager = apiKey ? new GoogleAIFileManager(apiKey) : null;
 
 export const AUDIO_QUESTION_COUNT = 11;
 
+// Timeouts (ms): si Gemini/TTS se cuelgan, la promesa se rechaza y el loop
+// de generación continúa con la siguiente lección en vez de quedar bloqueado.
+const TEXT_TIMEOUT_MS = 90_000;   // generación de texto/JSON
+const TTS_TIMEOUT_MS = 180_000;   // síntesis de ~3 min de audio (más lenta)
+
 // ──────────────────────────────────────────────────
 //  HELPERS
 // ──────────────────────────────────────────────────
+
+/**
+ * Rechaza la promesa si excede `ms`. Universal: aunque el fetch subyacente
+ * siga vivo, el caller deja de esperar y puede continuar / marcar error.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} excedió el tiempo límite (${Math.round(ms / 1000)}s)`)),
+      ms
+    );
+    promise.then(
+      v => { clearTimeout(timer); resolve(v); },
+      e => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
 
 function extractDriveId(url: string): string | null {
   const patterns = [
@@ -146,6 +168,8 @@ export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer; dur
 }
 
 async function synthesizeSpeechOnce(text: string): Promise<{ wav: Buffer; durationSeconds: number } | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
   try {
     console.log(`[TTS] Sintetizando ${text.length} caracteres...`);
     const res = await fetch(
@@ -153,6 +177,7 @@ async function synthesizeSpeechOnce(text: string): Promise<{ wav: Buffer; durati
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           contents: [{ parts: [{ text }] }],
           generationConfig: {
@@ -182,8 +207,14 @@ async function synthesizeSpeechOnce(text: string): Promise<{ wav: Buffer; durati
     console.log(`[TTS] ✓ Audio generado: ${durationSeconds.toFixed(1)}s (${(pcm.length / 1024 / 1024).toFixed(1)} MB)`);
     return { wav: pcmToWav(pcm), durationSeconds };
   } catch (error) {
-    console.error("[TTS] Error:", error);
+    if (error instanceof Error && error.name === "AbortError") {
+      console.error(`[TTS] Abortado por timeout (${TTS_TIMEOUT_MS / 1000}s).`);
+    } else {
+      console.error("[TTS] Error:", error);
+    }
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -486,7 +517,7 @@ SOLO devuelve el JSON, sin formato markdown ni texto adicional:
     parts.push({ text: promptText });
 
     console.log(`[StudyPack] Generando con ${processed.files.length} archivo(s) y ${processed.textContext.length} chars de contexto...`);
-    const result = await model.generateContent(parts);
+    const result = await withTimeout(model.generateContent(parts), TEXT_TIMEOUT_MS, "Generación de la síntesis maestra");
     const parsed = parseJsonResponse(result.response.text());
 
     if (!parsed?.sintesis?.conceptos?.length || !parsed?.tree?.levels?.length) {
@@ -568,7 +599,11 @@ Devuelve SOLO este JSON, sin texto adicional ni markdown:
 }
 `;
 
-  const result = await model.generateContent(prompt);
+  const result = await withTimeout(
+    model.generateContent(prompt),
+    TEXT_TIMEOUT_MS,
+    "Generación del guion de la lección"
+  );
   const parsed = parseJsonResponse(result.response.text());
   if (!Array.isArray(parsed?.steps) || parsed.steps.length === 0) {
     throw new Error("La lección no tiene pasos válidos.");
@@ -662,7 +697,7 @@ SOLO devuelve el JSON, sin texto adicional:
 (puntuacion: escala 0-5. 0 = no responde la pregunta, 1 = muy débil, 2 = comprensión parcial, 3 = comprensión aceptable, 4 = comprensión sólida, 5 = excelente con razonamiento propio. Usa toda la escala con criterio.)
 `;
 
-    const result = await model.generateContent(prompt);
+    const result = await withTimeout(model.generateContent(prompt), TEXT_TIMEOUT_MS, "Evaluación socrática");
     const parsed = parseJsonResponse(result.response.text());
     return {
       puntuacion: Math.max(0, Math.min(5, Number(parsed.puntuacion) || 0)),
@@ -725,7 +760,7 @@ SOLO devuelve el JSON, sin texto adicional:
 ("feedbackFinal" SOLO cuando esCierre es true; omítelo en los demás turnos. puntuacion: escala 0-5 según la calidad argumentativa global del estudiante.)
 `;
 
-    const result = await model.generateContent(prompt);
+    const result = await withTimeout(model.generateContent(prompt), TEXT_TIMEOUT_MS, "Turno de debate");
     const parsed = parseJsonResponse(result.response.text());
     return {
       mensajeIA: parsed.mensajeIA || "",
@@ -787,7 +822,7 @@ SOLO devuelve el JSON, sin texto adicional:
 }
 `;
 
-    const result = await model.generateContent(prompt);
+    const result = await withTimeout(model.generateContent(prompt), TEXT_TIMEOUT_MS, "Generación del quiz");
     const parsed = parseJsonResponse(result.response.text());
     if (!Array.isArray(parsed?.preguntas) || parsed.preguntas.length === 0) {
       throw new Error("El quiz no contiene preguntas válidas.");
@@ -831,7 +866,7 @@ SOLO devuelve el JSON, sin texto adicional:
 }
 `;
 
-    const result = await model.generateContent(prompt);
+    const result = await withTimeout(model.generateContent(prompt), TEXT_TIMEOUT_MS, "Generación del examen boss");
     const parsed = parseJsonResponse(result.response.text());
     if (!Array.isArray(parsed?.preguntas) || !parsed?.preguntaAbierta?.prompt) {
       throw new Error("El examen no tiene la estructura esperada.");
