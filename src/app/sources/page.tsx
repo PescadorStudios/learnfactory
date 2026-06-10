@@ -4,14 +4,18 @@ import { Suspense, useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2 } from "lucide-react";
+import { useRequireAuth } from "@/lib/useAuth";
+import { createRoute } from "../routeActions";
 
 function Sources() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const topic = searchParams.get("topic") || "";
-  
+  const { token } = useRequireAuth();
+
   const [sources, setSources] = useState<{ id: string; type: string; name: string; content?: string }[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [genError, setGenError] = useState("");
 
   // States for inputs
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -47,14 +51,24 @@ function Sources() {
     }
   };
 
-  const handleGenerateKnowledge = () => {
+  const handleGenerateKnowledge = async () => {
+    if (!token) return;
     setIsGenerating(true);
-    // Convert sources to a query param or pass via localStorage/state
+    setGenError("");
     const sourcesStr = sources.map(s => s.name).join(",");
-    setTimeout(() => {
+    try {
+      // Crea la ruta (síntesis + árbol) y arranca la pregeneración en background
+      const result = await createRoute(token, topic, sourcesStr);
+      if (result.routeId) {
+        router.push(`/tree?route=${result.routeId}`);
+      } else {
+        setGenError(result.error || "No se pudo crear la ruta.");
+        setIsGenerating(false);
+      }
+    } catch {
+      setGenError("Error de conexión al crear la ruta.");
       setIsGenerating(false);
-      router.push(`/tree?topic=${encodeURIComponent(topic)}&sources=${encodeURIComponent(sourcesStr)}`);
-    }, 500);
+    }
   };
 
   return (
@@ -187,6 +201,7 @@ function Sources() {
               ))}
             </ul>
 
+            {genError && <p className="text-rose-400 text-sm mb-3 text-center">{genError}</p>}
             <button
               onClick={handleGenerateKnowledge}
               disabled={isGenerating}
@@ -195,11 +210,11 @@ function Sources() {
               {isGenerating ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  Extrayendo Knowledge DNA...
+                  Leyendo tus fuentes y construyendo la ruta... (~1 min)
                 </>
               ) : (
                 <>
-                  Generar Árbol de Conocimiento
+                  Generar Ruta de Aprendizaje
                   <ArrowRight className="w-5 h-5" />
                 </>
               )}

@@ -14,7 +14,7 @@ interface Props {
 }
 
 const QUESTION_LIFETIME = 7; // segundos que vive cada pregunta
-const PASS_COUNT = 4; // aciertos necesarios para avanzar
+const PASS_RATIO = 0.7; // fracción de aciertos necesaria para avanzar (8 de 11)
 
 type QuestionResult = "correct" | "wrong" | "missed" | null;
 type Phase = "start" | "playing" | "results";
@@ -35,6 +35,8 @@ export default function AudioIntroGame({ nodeTitle, audioBlob, intro, onFinish, 
   const audioUrl = useMemo(() => URL.createObjectURL(audioBlob), [audioBlob]);
   useEffect(() => () => URL.revokeObjectURL(audioUrl), [audioUrl]);
 
+  const totalQuestions = intro.questions.length;
+  const passCount = Math.ceil(totalQuestions * PASS_RATIO);
   const correctCount = results.filter(r => r === "correct").length;
 
   // Reloj del juego anclado al audio: pausar el audio congela preguntas y contadores
@@ -123,7 +125,7 @@ export default function AudioIntroGame({ nodeTitle, audioBlob, intro, onFinish, 
   };
 
   const progress = intro.durationSeconds > 0 ? (currentTime / intro.durationSeconds) * 100 : 0;
-  const passed = correctCount >= PASS_COUNT;
+  const passed = correctCount >= passCount;
 
   // Pregunta a renderizar (la activa, o la recién respondida durante su feedback)
   const cardIndex = justAnswered ? justAnswered.index : activeIndex;
@@ -180,11 +182,11 @@ export default function AudioIntroGame({ nodeTitle, audioBlob, intro, onFinish, 
             </div>
             <div className="flex items-center gap-3 text-sm text-zinc-300">
               <Zap className="w-4 h-4 text-amber-400 shrink-0" />
-              6 preguntas relámpago sobre lo que vas oyendo
+              {totalQuestions} preguntas relámpago sobre lo que vas oyendo
             </div>
             <div className="flex items-center gap-3 text-sm text-zinc-300">
               <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              Acierta {PASS_COUNT} para avanzar · 7 segundos por pregunta
+              Acierta {passCount} para avanzar · 7 segundos por pregunta
             </div>
           </div>
 
@@ -323,8 +325,8 @@ export default function AudioIntroGame({ nodeTitle, audioBlob, intro, onFinish, 
             {passed ? "¡Atención comprobada!" : "Tu mente se distrajo 😅"}
           </h2>
           <p className="text-zinc-400 mb-6">
-            Acertaste <span className={`font-bold ${passed ? "text-emerald-400" : "text-rose-400"}`}>{correctCount}</span> de {intro.questions.length}
-            {passed ? " · +15 XP" : ` · necesitas ${PASS_COUNT}`}
+            Acertaste <span className={`font-bold ${passed ? "text-emerald-400" : "text-rose-400"}`}>{correctCount}</span> de {totalQuestions}
+            {passed ? " · +15 XP" : ` · necesitas ${passCount}`}
           </p>
 
           <div className="flex gap-2 mb-10">

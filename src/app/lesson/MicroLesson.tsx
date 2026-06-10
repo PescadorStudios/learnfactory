@@ -1,39 +1,30 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check, Loader2, Quote } from "lucide-react";
-import { generateMicroLesson, evaluateSocraticAnswer } from "../actions";
-import type { AudioIntroData, LessonStep, MicroLessonData, NodeResult, NodeType, Sintesis, SocraticEvaluation } from "@/lib/types";
-import { XP, getStudiedConceptIds } from "@/lib/gamification";
-import { getAudio, putAudio, base64ToWavBlob } from "@/lib/audioCache";
+import { evaluateSocraticAnswer } from "../actions";
+import type { AttemptInput, LessonData, SocraticEvaluation } from "@/lib/types";
+import { XP, starsForMicroLesson } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
 import QuizQuestion from "./QuizQuestion";
 import AudioIntroGame from "./AudioIntroGame";
 
 interface Props {
-  topic: string;
-  nodeId: string;
-  nodeTitle: string;
-  nodeType: NodeType;
-  sintesis: Sintesis;
-  conceptIds: string[];
-  onComplete: (result: NodeResult) => void;
+  routeId: string;
+  token: string;
+  lesson: LessonData;
+  audioBlob: Blob | null;
+  onComplete: (input: AttemptInput) => void;
   onExit: () => void;
 }
 
-// Deduplica generaciones concurrentes (React monta los efectos dos veces en dev):
-// sin esto se disparan dos llamadas a Gemini+TTS y la segunda puede pisar el caché
-const inflightLessons = new Map<string, Promise<{ lesson: MicroLessonData; blob: Blob | null }>>();
+export default function MicroLesson({ token, lesson, audioBlob, onComplete, onExit }: Props) {
+  const lessonSteps = lesson.steps || [];
+  const hasAudio = Boolean(lesson.audioIntro && audioBlob);
 
-export default function MicroLesson({ topic, nodeId, nodeTitle, nodeType, sintesis, conceptIds, onComplete, onExit }: Props) {
-  const [lessonSteps, setLessonSteps] = useState<LessonStep[]>([]);
-  const [audioIntro, setAudioIntro] = useState<AudioIntroData | null>(null);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [phase, setPhase] = useState<"audio" | "steps">("audio");
-  const [loading, setLoading] = useState(true);
-
+  const [phase, setPhase] = useState<"audio" | "steps">(hasAudio ? "audio" : "steps");
   const [currentStep, setCurrentStep] = useState(0);
   const [lives, setLives] = useState(3);
 
@@ -46,96 +37,32 @@ export default function MicroLesson({ topic, nodeId, nodeTitle, nodeType, sintes
   const [evaluating, setEvaluating] = useState(false);
   const [evaluation, setEvaluation] = useState<SocraticEvaluation | null>(null);
 
-  // Acumuladores del resultado del nodo
-  const xpEvents = useRef<Array<{ action: string; xp: number }>>([]);
+  // Acumuladores para el score final
+  const xpTotal = useRef(0);
+  const attention = useRef({ correct: 0, total: lesson.audioIntro?.questions.length ?? 0 });
+  const socraticScores = useRef<number[]>([]);
+  const quizCorrectRef = useRef(false);
   const masteryUpdates = useRef<Array<{ conceptId: string; delta: number }>>([]);
 
-  useEffect(() => {
-    let ignore = false;
-
-    const audioKey = `audio_${topic}_${nodeId}`;
-
-    function applyLesson(lesson: MicroLessonData, blob: Blob | null) {
-      setLessonSteps(lesson.steps);
-      setAudioIntro(lesson.audioIntro);
-      setAudioBlob(blob);
-      setPhase(lesson.audioIntro && blob ? "audio" : "steps");
-      setLoading(false);
-    }
-
-    async function generateAndCache(cacheKey: string): Promise<{ lesson: MicroLessonData; blob: Blob | null }> {
-      const { lesson, audioWavBase64 } = await generateMicroLesson(
-        topic, nodeTitle, nodeType, sintesis, conceptIds,
-        getStudiedConceptIds(topic, conceptIds)
-      );
-      let blob: Blob | null = null;
-      if (lesson.audioIntro && audioWavBase64) {
-        blob = base64ToWavBlob(audioWavBase64);
-        await putAudio(audioKey, blob);
-      }
-      // Cachear metadatos (sin el base64) solo si la lección quedó completa con audio:
-      // un resultado sin audio no debe quedar fijado (se reintenta en la próxima visita)
-      if (lesson.audioIntro) {
-        localStorage.setItem(cacheKey, JSON.stringify(lesson));
-      }
-      return { lesson, blob };
-    }
-
-    async function loadLesson() {
-      // Intentar cache primero (formatos viejos o sin audio se regeneran)
-      const cacheKey = `learnfactory_lesson_${topic}_${nodeId}`;
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        try {
-          const parsed: MicroLessonData = JSON.parse(cached);
-          if (parsed?.audioIntro && Array.isArray(parsed.steps) && parsed.steps.length > 0) {
-            // El WAV vive en IndexedDB; si falta, se regenera todo
-            const blob = await getAudio(audioKey);
-            if (blob) {
-              if (!ignore) applyLesson(parsed, blob);
-              return;
-            }
-          }
-        } catch {}
-      }
-
-      setLoading(true);
-      let pending = inflightLessons.get(cacheKey);
-      if (!pending) {
-        pending = generateAndCache(cacheKey);
-        inflightLessons.set(cacheKey, pending);
-        pending.finally(() => inflightLessons.delete(cacheKey));
-      }
-      const { lesson, blob } = await pending;
-      if (!ignore) {
-        applyLesson(lesson, blob);
-      }
-    }
-    loadLesson();
-
-    return () => { ignore = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, nodeId, nodeTitle, nodeType]);
-
-  if (loading || lessonSteps.length === 0) {
+  if (lessonSteps.length === 0) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white">
         <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
-        <p className="text-zinc-400">🎙️ Grabando tu podcast de contexto...</p>
-        <p className="text-zinc-600 text-sm mt-2">La IA está narrando esta lección con voz (puede tardar un poco)</p>
+        <p className="text-zinc-400">Esta lección no tiene contenido. Vuelve al árbol y reintenta.</p>
       </div>
     );
   }
 
   // Fase 1: podcast de contexto con juego de atención
-  if (phase === "audio" && audioIntro && audioBlob) {
+  if (phase === "audio" && lesson.audioIntro && audioBlob) {
     return (
       <AudioIntroGame
-        nodeTitle={nodeTitle}
+        nodeTitle={lesson.title}
         audioBlob={audioBlob}
-        intro={audioIntro}
-        onFinish={() => {
-          xpEvents.current.push({ action: "atencion_comprobada", xp: XP.audioFocusPass });
+        intro={lesson.audioIntro}
+        onFinish={(correctCount) => {
+          attention.current = { correct: correctCount, total: lesson.audioIntro!.questions.length };
+          xpTotal.current += XP.audioFocusPass;
           setPhase("steps");
         }}
         onExit={onExit}
@@ -158,8 +85,25 @@ export default function MicroLesson({ topic, nodeId, nodeTitle, nodeType, sintes
       setCurrentStep(c => c + 1);
       resetStepState();
     } else {
-      xpEvents.current.push({ action: "leccion_completada", xp: XP.lessonComplete });
-      onComplete({ xpEvents: xpEvents.current, masteryUpdates: masteryUpdates.current });
+      xpTotal.current += XP.lessonComplete;
+      const stars = starsForMicroLesson({
+        attentionCorrect: attention.current.correct,
+        attentionTotal: attention.current.total,
+        socraticScores: socraticScores.current,
+        quizCorrect: quizCorrectRef.current,
+      });
+      onComplete({
+        stars,
+        passed: true,
+        xp: xpTotal.current,
+        detail: {
+          attention: attention.current.total > 0 ? attention.current : undefined,
+          socratic: socraticScores.current,
+          quizCorrect: quizCorrectRef.current ? 1 : 0,
+          quizTotal: 1,
+        },
+        masteryUpdates: masteryUpdates.current,
+      });
     }
   };
 
@@ -167,9 +111,10 @@ export default function MicroLesson({ topic, nodeId, nodeTitle, nodeType, sintes
     if (stepData.type !== "quiz" || selectedOption === null) return;
     setIsAnswerChecked(true);
     const correct = selectedOption === stepData.correctAnswer;
-    const conceptId = stepData.conceptId || conceptIds[0] || "";
+    const conceptId = stepData.conceptId || lesson.conceptIds[0] || "";
     if (correct) {
-      xpEvents.current.push({ action: "quiz_correcto", xp: XP.quizCorrectFirstTry });
+      quizCorrectRef.current = true;
+      xpTotal.current += XP.quizCorrectFirstTry;
       if (conceptId) masteryUpdates.current.push({ conceptId, delta: 20 });
     } else {
       setLives(l => Math.max(0, l - 1));
@@ -181,15 +126,17 @@ export default function MicroLesson({ topic, nodeId, nodeTitle, nodeType, sintes
     if ((stepData.type !== "elaboration" && stepData.type !== "debate") || answerText.trim().length < 10) return;
     setEvaluating(true);
     const result = await evaluateSocraticAnswer(
+      token,
       stepData.prompt,
       answerText.trim(),
-      stepData.conceptContext || `Tema: ${topic}. Subtema: ${nodeTitle}.`
+      stepData.conceptContext || `Tema: ${lesson.topic}. Subtema: ${lesson.title}.`
     );
     setEvaluating(false);
     setEvaluation(result);
-    xpEvents.current.push({ action: "respuesta_socratica", xp: result.puntuacion * XP.perSocraticPoint });
-    for (const cid of conceptIds) {
-      masteryUpdates.current.push({ conceptId: cid, delta: 10 * result.puntuacion });
+    socraticScores.current.push(result.puntuacion);
+    xpTotal.current += result.puntuacion * XP.perSocraticPoint;
+    for (const cid of lesson.conceptIds) {
+      masteryUpdates.current.push({ conceptId: cid, delta: 6 * result.puntuacion });
     }
   };
 

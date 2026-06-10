@@ -1,20 +1,22 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Loader2, AlertTriangle } from "lucide-react";
-import type { NodeResult, NodeType, Sintesis } from "@/lib/types";
-import { completeNode } from "@/lib/gamification";
+import { Loader2, AlertTriangle, Mic } from "lucide-react";
+import type { AttemptInput, LessonData } from "@/lib/types";
+import { useRequireAuth } from "@/lib/useAuth";
+import { getLesson, saveAttempt } from "../routeActions";
+import { getAudio, putAudio } from "@/lib/audioCache";
 import MicroLesson from "./MicroLesson";
 import DebateNode from "./DebateNode";
 import QuizNode from "./QuizNode";
 import BossExam from "./BossExam";
 
-function LessonLoading() {
+function LessonLoading({ text = "Cargando..." }: { text?: string }) {
   return (
     <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white">
       <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
-      <p className="text-zinc-400">Cargando...</p>
+      <p className="text-zinc-400">{text}</p>
     </div>
   );
 }
@@ -22,79 +24,148 @@ function LessonLoading() {
 function LessonDispatcher() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const topic = searchParams.get("topic") || "Tema";
-  const nodeId = searchParams.get("node") || "1a";
-  const nodeTitle = searchParams.get("title") || `Concepto ${nodeId}`;
-  const nodeType = (searchParams.get("type") || "theory") as NodeType;
-  const conceptIds = (searchParams.get("concepts") || "").split(",").filter(Boolean);
-  const isReview = searchParams.get("review") === "1";
+  const routeId = searchParams.get("route") || "";
+  const nodeId = searchParams.get("node") || "";
 
-  const [sintesis, setSintesis] = useState<Sintesis | null>(null);
-  const [synthesisMissing, setSynthesisMissing] = useState(false);
+  const { token, loading: authLoading, session } = useRequireAuth();
+  const [lesson, setLesson] = useState<LessonData | null>(null);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const fetchedAudioFor = useRef<string | null>(null);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(`learnfactory_synthesis_${topic}`);
-      if (raw) {
-        setSintesis(JSON.parse(raw));
-        return;
-      }
-    } catch {}
-    setSynthesisMissing(true);
-  }, [topic]);
+  const goToTree = useCallback(() => {
+    router.push(`/tree?route=${routeId}`);
+  }, [router, routeId]);
 
-  const goToTree = () => router.push(`/tree?topic=${encodeURIComponent(topic)}`);
-
-  const handleComplete = (result: NodeResult) => {
-    const gained = completeNode(topic, nodeId, result);
-    if (result.passed === false) {
-      // Boss no superado: volver al árbol sin celebración
-      goToTree();
+  const load = useCallback(async () => {
+    if (!token || !routeId || !nodeId) return;
+    const data = await getLesson(token, routeId, nodeId);
+    if (!data) {
+      setNotFound(true);
       return;
     }
-    const params = new URLSearchParams({ topic, completedNode: nodeId, xp: String(gained) });
+    setLesson(data);
+  }, [token, routeId, nodeId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Polling mientras la lección se esté generando
+  useEffect(() => {
+    if (!lesson || lesson.status === "ready" || lesson.status === "error") return;
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
+  }, [lesson, load]);
+
+  // Descargar el audio (IndexedDB primero, luego Storage)
+  useEffect(() => {
+    if (!lesson || lesson.status !== "ready" || !lesson.audioIntro || !lesson.audioUrl) return;
+    const audioKey = `audio_${routeId}_${nodeId}`;
+    if (fetchedAudioFor.current === audioKey) return;
+    fetchedAudioFor.current = audioKey;
+
+    (async () => {
+      setAudioLoading(true);
+      let blob = await getAudio(audioKey);
+      if (!blob) {
+        try {
+          const res = await fetch(lesson.audioUrl!);
+          if (res.ok) {
+            blob = await res.blob();
+            await putAudio(audioKey, blob);
+          }
+        } catch {
+          blob = null;
+        }
+      }
+      setAudioBlob(blob);
+      setAudioLoading(false);
+    })();
+  }, [lesson, routeId, nodeId]);
+
+  const handleComplete = async (input: AttemptInput) => {
+    if (!token) return;
+    setSaving(true);
+    const result = await saveAttempt(token, routeId, nodeId, input);
+    const params = new URLSearchParams({ route: routeId });
+    if (input.passed) {
+      params.set("completedNode", nodeId);
+      params.set("xp", String(result.xpGained));
+      params.set("stars", String(input.stars));
+      if (result.newBest) params.set("best", "1");
+    }
     router.push(`/tree?${params.toString()}`);
   };
 
-  // La síntesis es la fuente de verdad de todas las experiencias: sin ella, volver
-  // al árbol para que se regenere (caches de versiones anteriores no la tienen)
-  if (synthesisMissing) {
+  if (authLoading || !session) return <LessonLoading />;
+
+  if (notFound) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
         <AlertTriangle className="w-12 h-12 text-amber-500 mb-4" />
-        <h2 className="text-2xl font-bold mb-2">Falta la Síntesis Maestra</h2>
-        <p className="text-zinc-400 mb-6 max-w-md">
-          Este curso fue creado con una versión anterior. Vuelve al árbol para regenerarlo a partir de tus fuentes.
-        </p>
-        <button
-          onClick={() => {
-            localStorage.removeItem(`learnfactory_tree_${topic}`);
-            goToTree();
-          }}
-          className="px-8 py-4 rounded-2xl font-bold text-lg bg-primary text-white hover:bg-primary-hover transition-all"
-        >
-          Regenerar curso
+        <h2 className="text-2xl font-bold mb-2">Lección no encontrada</h2>
+        <button onClick={goToTree} className="mt-4 px-8 py-4 rounded-2xl font-bold bg-primary text-white hover:bg-primary-hover transition-all">
+          Volver al árbol
         </button>
       </div>
     );
   }
 
-  if (!sintesis) {
-    return <LessonLoading />;
+  if (!lesson) return <LessonLoading />;
+
+  if (saving) return <LessonLoading text="Guardando tu resultado..." />;
+
+  // Lección aún cocinándose en el background
+  if (lesson.status === "pending" || lesson.status === "generating") {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
+        <div className="w-20 h-20 bg-primary/10 border border-primary/30 rounded-3xl flex items-center justify-center mb-6">
+          <Mic className="w-10 h-10 text-primary animate-pulse" />
+        </div>
+        <h2 className="text-2xl font-bold mb-2">🎙️ Tu podcast se está grabando...</h2>
+        <p className="text-zinc-400 max-w-md">
+          Esta lección se está generando con su narración de voz. Suele tardar 1-2 minutos; la página se actualizará sola.
+        </p>
+        <button onClick={goToTree} className="mt-8 text-zinc-500 hover:text-white transition-colors text-sm">
+          Volver al árbol mientras tanto
+        </button>
+      </div>
+    );
   }
 
-  const common = { topic, nodeId, nodeTitle, sintesis, conceptIds, onComplete: handleComplete, onExit: goToTree };
+  if (lesson.status === "error") {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
+        <AlertTriangle className="w-12 h-12 text-rose-500 mb-4" />
+        <h2 className="text-2xl font-bold mb-2">Esta lección falló al generarse</h2>
+        <p className="text-zinc-400 mb-6 max-w-md">Vuelve al árbol y usa &quot;Reintentar&quot; en la lección.</p>
+        <button onClick={goToTree} className="px-8 py-4 rounded-2xl font-bold bg-primary text-white hover:bg-primary-hover transition-all">
+          Volver al árbol
+        </button>
+      </div>
+    );
+  }
 
-  if (nodeType === "quiz") {
-    return <QuizNode {...common} isReview={isReview} />;
+  // Esperar el audio si la lección lo tiene
+  if (lesson.audioIntro && lesson.audioUrl && audioLoading) {
+    return <LessonLoading text="Descargando el podcast de la lección..." />;
   }
-  if (nodeType === "debate") {
-    return <DebateNode {...common} />;
-  }
-  if (nodeType === "boss") {
-    return <BossExam {...common} />;
-  }
-  return <MicroLesson {...common} nodeType={nodeType} />;
+
+  const common = {
+    routeId,
+    token: token!,
+    lesson,
+    onComplete: handleComplete,
+    onExit: goToTree,
+  };
+
+  if (lesson.nodeType === "quiz") return <QuizNode {...common} />;
+  if (lesson.nodeType === "debate") return <DebateNode {...common} />;
+  if (lesson.nodeType === "boss") return <BossExam {...common} />;
+  return <MicroLesson {...common} audioBlob={audioBlob} />;
 }
 
 export default function LessonPage() {

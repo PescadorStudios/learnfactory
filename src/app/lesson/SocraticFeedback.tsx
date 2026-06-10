@@ -11,9 +11,9 @@ export default function SocraticFeedback({ evaluation }: { evaluation: SocraticE
       animate={{ opacity: 1, y: 0 }}
       className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-5"
     >
-      {/* Puntuación en estrellas */}
+      {/* Puntuación en estrellas (0-5) */}
       <div className="flex items-center justify-center gap-2">
-        {[1, 2, 3].map((i) => (
+        {[1, 2, 3, 4, 5].map((i) => (
           <Star
             key={i}
             className={`w-8 h-8 ${i <= evaluation.puntuacion ? "text-amber-400 fill-current" : "text-zinc-700"}`}

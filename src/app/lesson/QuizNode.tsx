@@ -1,28 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Check, Loader2, RefreshCw, Trophy } from "lucide-react";
-import { generateQuizNode } from "../actions";
-import type { NodeResult, QuizQuestionData, Sintesis } from "@/lib/types";
-import { XP, getStudiedConceptIds } from "@/lib/gamification";
+import { X, Check, RefreshCw, Trophy } from "lucide-react";
+import type { AttemptInput, LessonData } from "@/lib/types";
+import { XP, starsForQuiz } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import QuizQuestion from "./QuizQuestion";
 
 interface Props {
-  topic: string;
-  nodeId: string;
-  nodeTitle: string;
-  sintesis: Sintesis;
-  conceptIds: string[];
-  isReview: boolean;
-  onComplete: (result: NodeResult) => void;
+  routeId: string;
+  token: string;
+  lesson: LessonData;
+  onComplete: (input: AttemptInput) => void;
   onExit: () => void;
 }
 
-export default function QuizNode({ topic, nodeId, nodeTitle, sintesis, conceptIds, isReview, onComplete, onExit }: Props) {
-  const [questions, setQuestions] = useState<QuizQuestionData[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function QuizNode({ lesson, onComplete, onExit }: Props) {
+  const questions = lesson.quiz?.preguntas || [];
 
   const [current, setCurrent] = useState(0);
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -31,51 +26,11 @@ export default function QuizNode({ topic, nodeId, nodeTitle, sintesis, conceptId
   const [results, setResults] = useState<boolean[]>([]);
   const [finished, setFinished] = useState(false);
 
-  const cacheKey = `learnfactory_quiznode_${topic}_${nodeId}`;
-
-  useEffect(() => {
-    let ignore = false;
-
-    async function loadQuiz() {
-      // En modo repaso siempre se generan preguntas frescas
-      if (!isReview) {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (!ignore && Array.isArray(parsed?.preguntas) && parsed.preguntas.length > 0) {
-              setQuestions(parsed.preguntas);
-              setLoading(false);
-              return;
-            }
-          } catch {}
-        }
-      }
-
-      const data = await generateQuizNode(
-        topic,
-        sintesis,
-        conceptIds,
-        isReview ? [] : getStudiedConceptIds(topic, conceptIds),
-        isReview
-      );
-      if (!ignore) {
-        setQuestions(data.preguntas);
-        setLoading(false);
-        if (!isReview) localStorage.setItem(cacheKey, JSON.stringify(data));
-      }
-    }
-    loadQuiz();
-
-    return () => { ignore = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, nodeId, isReview]);
-
-  if (loading || questions.length === 0) {
+  if (questions.length === 0) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white">
-        <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
-        <p className="text-zinc-400">{isReview ? "Preparando tu sesión de repaso..." : "Generando quiz de repaso acumulativo..."}</p>
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
+        <p className="text-zinc-400 mb-6">Este quiz no tiene preguntas. Vuelve al árbol y reintenta la generación.</p>
+        <button onClick={onExit} className="px-8 py-4 rounded-2xl font-bold bg-primary text-white">Volver</button>
       </div>
     );
   }
@@ -113,15 +68,17 @@ export default function QuizNode({ topic, nodeId, nodeTitle, sintesis, conceptId
 
   const handleFinish = () => {
     const masteryUpdates = questions.slice(0, results.length).map((q, i) => ({
-      conceptId: q.conceptId || conceptIds[0] || "",
+      conceptId: q.conceptId || lesson.conceptIds[0] || "",
       delta: results[i] ? 20 : -10,
     })).filter(u => u.conceptId);
 
-    const xpEvents = isReview
-      ? [{ action: "repaso_completado", xp: XP.reviewSession }]
-      : [{ action: "quiz_node_completado", xp: correctCount * XP.quizCorrectFirstTry }];
-
-    onComplete({ xpEvents, masteryUpdates, isReview });
+    onComplete({
+      stars: starsForQuiz(correctCount, questions.length),
+      passed: true,
+      xp: correctCount * XP.quizCorrectFirstTry,
+      detail: { quizCorrect: correctCount, quizTotal: questions.length },
+      masteryUpdates,
+    });
   };
 
   // ── Pantalla de resultados ──
@@ -137,7 +94,7 @@ export default function QuizNode({ topic, nodeId, nodeTitle, sintesis, conceptId
             <Trophy className={`w-10 h-10 ${failed ? "text-rose-500" : "text-emerald-500"}`} />
           </motion.div>
           <h2 className="text-3xl font-bold mb-2">
-            {failed ? "Te quedaste sin vidas" : isReview ? "¡Repaso completado!" : "¡Quiz completado!"}
+            {failed ? "Te quedaste sin vidas" : "¡Quiz completado!"}
           </h2>
           <p className="text-zinc-400 mb-8">
             Acertaste <span className="text-primary font-bold">{correctCount}</span> de {questions.length} preguntas.
@@ -173,7 +130,7 @@ export default function QuizNode({ topic, nodeId, nodeTitle, sintesis, conceptId
       <div className="flex-1 flex flex-col max-w-2xl w-full mx-auto p-6 md:p-12">
         <div className="text-center mb-4">
           <span className="uppercase tracking-widest text-sm font-bold text-primary">
-            {isReview ? "Repaso" : nodeTitle} · {current + 1}/{questions.length}
+            {lesson.title} · {current + 1}/{questions.length}
           </span>
         </div>
         <AnimatePresence mode="wait">

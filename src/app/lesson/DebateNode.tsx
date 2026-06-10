@@ -4,67 +4,40 @@ import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Loader2, Send, Swords } from "lucide-react";
 import { debateTurn } from "../actions";
-import type { DebateMessage, NodeResult, Sintesis, SocraticEvaluation } from "@/lib/types";
+import type { AttemptInput, DebateMessage, LessonData, SocraticEvaluation } from "@/lib/types";
 import { XP } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
 
 interface Props {
-  topic: string;
-  nodeId: string;
-  nodeTitle: string;
-  sintesis: Sintesis;
-  conceptIds: string[];
-  onComplete: (result: NodeResult) => void;
+  routeId: string;
+  token: string;
+  lesson: LessonData;
+  onComplete: (input: AttemptInput) => void;
   onExit: () => void;
-}
-
-interface DebateCache {
-  transcript: DebateMessage[];
-  feedbackFinal: SocraticEvaluation | null;
 }
 
 const MAX_STUDENT_TURNS = 3;
 
-export default function DebateNode({ topic, nodeId, nodeTitle, sintesis, conceptIds, onComplete, onExit }: Props) {
+export default function DebateNode({ token, lesson, onComplete, onExit }: Props) {
   const [transcript, setTranscript] = useState<DebateMessage[]>([]);
   const [feedbackFinal, setFeedbackFinal] = useState<SocraticEvaluation | null>(null);
   const [input, setInput] = useState("");
   const [thinking, setThinking] = useState(false);
   const [loading, setLoading] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  const cacheKey = `learnfactory_debate_${topic}_${nodeId}`;
+  const opened = useRef(false);
 
   useEffect(() => {
-    let ignore = false;
+    if (opened.current) return;
+    opened.current = true;
 
-    async function openDebate() {
-      // Si el debate ya se jugó, restaurarlo
-      const cached = localStorage.getItem(cacheKey);
-      if (cached) {
-        try {
-          const parsed: DebateCache = JSON.parse(cached);
-          if (!ignore && parsed.transcript?.length) {
-            setTranscript(parsed.transcript);
-            setFeedbackFinal(parsed.feedbackFinal);
-            setLoading(false);
-            return;
-          }
-        } catch {}
-      }
-
-      const turn = await debateTurn(topic, nodeTitle, sintesis, []);
-      if (!ignore) {
-        setTranscript([{ rol: "ia", texto: turn.mensajeIA }]);
-        setLoading(false);
-      }
-    }
-    openDebate();
-
-    return () => { ignore = true; };
+    debateTurn(token, lesson.topic, lesson.title, lesson.sintesis, []).then(turn => {
+      setTranscript([{ rol: "ia", texto: turn.mensajeIA }]);
+      setLoading(false);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, nodeId, nodeTitle]);
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -82,22 +55,24 @@ export default function DebateNode({ topic, nodeId, nodeTitle, sintesis, concept
     setInput("");
     setThinking(true);
 
-    const turn = await debateTurn(topic, nodeTitle, sintesis, updated);
+    const turn = await debateTurn(token, lesson.topic, lesson.title, lesson.sintesis, updated);
     const finalTranscript: DebateMessage[] = [...updated, { rol: "ia", texto: turn.mensajeIA }];
     setTranscript(finalTranscript);
     setThinking(false);
 
     if (turn.esCierre && turn.feedbackFinal) {
       setFeedbackFinal(turn.feedbackFinal);
-      localStorage.setItem(cacheKey, JSON.stringify({ transcript: finalTranscript, feedbackFinal: turn.feedbackFinal } satisfies DebateCache));
     }
   };
 
   const handleFinish = () => {
     const puntuacion = feedbackFinal?.puntuacion ?? 0;
     onComplete({
-      xpEvents: [{ action: "debate_completado", xp: XP.debateBase + puntuacion * XP.perSocraticPoint }],
-      masteryUpdates: conceptIds.map(conceptId => ({ conceptId, delta: 10 * puntuacion })),
+      stars: puntuacion, // el feedback ya es 0-5
+      passed: true,
+      xp: XP.debateBase + puntuacion * XP.perSocraticPoint,
+      detail: { socratic: [puntuacion] },
+      masteryUpdates: lesson.conceptIds.map(conceptId => ({ conceptId, delta: 6 * puntuacion })),
     });
   };
 
@@ -117,7 +92,7 @@ export default function DebateNode({ topic, nodeId, nodeTitle, sintesis, concept
       <div className="flex-1 flex flex-col max-w-2xl w-full mx-auto p-6 overflow-y-auto">
         <div className="text-center mb-6">
           <span className="inline-flex items-center gap-2 uppercase tracking-widest text-sm font-bold text-secondary">
-            <Swords className="w-4 h-4" /> Debate: {nodeTitle}
+            <Swords className="w-4 h-4" /> Debate: {lesson.title}
           </span>
           <p className="text-zinc-500 text-sm mt-2">
             La IA defenderá una postura. Rebátela usando lo que dice el material.

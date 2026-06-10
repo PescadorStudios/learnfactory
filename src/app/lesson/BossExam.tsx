@@ -1,32 +1,31 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Skull, Check, X, RefreshCw, Crown } from "lucide-react";
-import { generateBossExam, evaluateSocraticAnswer } from "../actions";
-import type { BossExamData, NodeResult, Sintesis, SocraticEvaluation } from "@/lib/types";
-import { XP } from "@/lib/gamification";
+import { evaluateSocraticAnswer } from "../actions";
+import { regenerateBoss } from "../routeActions";
+import type { AttemptInput, BossExamData, LessonData, SocraticEvaluation } from "@/lib/types";
+import { XP, starsForBoss } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
 import QuizQuestion from "./QuizQuestion";
 
 interface Props {
-  topic: string;
-  nodeId: string;
-  nodeTitle: string;
-  sintesis: Sintesis;
-  conceptIds: string[];
-  onComplete: (result: NodeResult) => void;
+  routeId: string;
+  token: string;
+  lesson: LessonData;
+  onComplete: (input: AttemptInput) => void;
   onExit: () => void;
 }
 
 const PASS_RATIO = 0.7;
+const OPEN_QUESTION_MAX = 5; // la pregunta abierta vale 0-5
 
-type Phase = "intro" | "exam" | "open" | "evaluating" | "results";
+type Phase = "intro" | "exam" | "open" | "evaluating" | "results" | "regenerating";
 
-export default function BossExam({ topic, nodeId, nodeTitle, sintesis, conceptIds, onComplete, onExit }: Props) {
-  const [exam, setExam] = useState<BossExamData | null>(null);
-  const [loading, setLoading] = useState(true);
+export default function BossExam({ routeId, token, lesson, onComplete, onExit }: Props) {
+  const [exam, setExam] = useState<BossExamData | null>(lesson.boss);
   const [phase, setPhase] = useState<Phase>("intro");
 
   const [current, setCurrent] = useState(0);
@@ -35,28 +34,16 @@ export default function BossExam({ topic, nodeId, nodeTitle, sintesis, conceptId
   const [openAnswer, setOpenAnswer] = useState("");
   const [openEvaluation, setOpenEvaluation] = useState<SocraticEvaluation | null>(null);
 
-  const loadExam = useCallback(async () => {
-    setLoading(true);
-    const data = await generateBossExam(topic, sintesis);
-    setExam(data);
-    setLoading(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic]);
-
-  useEffect(() => {
-    loadExam();
-  }, [loadExam]);
-
-  if (loading || !exam) {
+  if (!exam) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white">
-        <Loader2 className="w-12 h-12 text-rose-500 animate-spin mb-4" />
-        <p className="text-zinc-400">El Boss está preparando tu examen final...</p>
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
+        <p className="text-zinc-400 mb-6">El examen no está disponible. Vuelve al árbol y reintenta la generación.</p>
+        <button onClick={onExit} className="px-8 py-4 rounded-2xl font-bold bg-primary text-white">Volver</button>
       </div>
     );
   }
 
-  const totalPoints = exam.preguntas.length + 3; // 1 pt por MC + 0-3 de la abierta
+  const totalPoints = exam.preguntas.length + OPEN_QUESTION_MAX;
   const passPoints = Math.ceil(totalPoints * PASS_RATIO);
   const mcCorrect = answers.filter((a, i) => a === exam.preguntas[i].correctAnswer).length;
   const score = mcCorrect + (openEvaluation?.puntuacion ?? 0);
@@ -78,6 +65,7 @@ export default function BossExam({ topic, nodeId, nodeTitle, sintesis, conceptId
     if (openAnswer.trim().length < 10) return;
     setPhase("evaluating");
     const evaluation = await evaluateSocraticAnswer(
+      token,
       exam.preguntaAbierta.prompt,
       openAnswer.trim(),
       exam.preguntaAbierta.conceptContext
@@ -88,35 +76,58 @@ export default function BossExam({ topic, nodeId, nodeTitle, sintesis, conceptId
 
   const buildMasteryUpdates = () =>
     exam.preguntas.map((q, i) => ({
-      conceptId: q.conceptId || conceptIds[0] || "",
+      conceptId: q.conceptId || lesson.conceptIds[0] || "",
       delta: answers[i] === q.correctAnswer ? 20 : -10,
     })).filter(u => u.conceptId);
 
+  const buildDetail = () => ({
+    bossPoints: score,
+    bossTotal: totalPoints,
+    quizCorrect: mcCorrect,
+    quizTotal: exam.preguntas.length,
+    socratic: openEvaluation ? [openEvaluation.puntuacion] : [],
+  });
+
   const handleClaimVictory = () => {
     onComplete({
-      xpEvents: [{ action: "boss_derrotado", xp: XP.bossPass }],
-      masteryUpdates: buildMasteryUpdates(),
+      stars: starsForBoss(score, totalPoints),
       passed: true,
+      xp: XP.bossPass + mcCorrect * XP.quizCorrectFirstTry,
+      detail: buildDetail(),
+      masteryUpdates: buildMasteryUpdates(),
     });
   };
 
   const handleGiveUp = () => {
     onComplete({
-      xpEvents: [],
-      masteryUpdates: buildMasteryUpdates(),
+      stars: starsForBoss(score, totalPoints),
       passed: false,
+      xp: 0,
+      detail: buildDetail(),
+      masteryUpdates: buildMasteryUpdates(),
     });
   };
 
-  const handleRetry = () => {
-    setPhase("intro");
+  const handleRetry = async () => {
+    setPhase("regenerating");
+    const fresh = await regenerateBoss(token, routeId, lesson.nodeId);
     setCurrent(0);
     setSelectedOption(null);
     setAnswers([]);
     setOpenAnswer("");
     setOpenEvaluation(null);
-    loadExam(); // examen nuevo, preguntas frescas
+    if (fresh) setExam(fresh);
+    setPhase("intro");
   };
+
+  if (phase === "regenerating") {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white">
+        <Loader2 className="w-12 h-12 text-rose-500 animate-spin mb-4" />
+        <p className="text-zinc-400">El Boss está preparando preguntas nuevas...</p>
+      </div>
+    );
+  }
 
   // ── Intro ──
   if (phase === "intro") {
@@ -132,10 +143,10 @@ export default function BossExam({ topic, nodeId, nodeTitle, sintesis, conceptId
             <Skull className="w-12 h-12 text-rose-500" />
           </motion.div>
           <h1 className="text-4xl font-bold mb-3">Boss Battle</h1>
-          <p className="text-zinc-400 mb-2">{nodeTitle}: demuestra que dominas <span className="text-white font-semibold">todo</span> el material.</p>
+          <p className="text-zinc-400 mb-2">{lesson.title}: demuestra que dominas <span className="text-white font-semibold">todo</span> el material.</p>
           <ul className="text-zinc-500 text-sm space-y-1 mb-8">
             <li>{exam.preguntas.length} preguntas de opción múltiple (1 punto cada una)</li>
-            <li>1 pregunta abierta sobre la tesis global (hasta 3 puntos)</li>
+            <li>1 pregunta abierta sobre la tesis global (hasta {OPEN_QUESTION_MAX} puntos)</li>
             <li>Necesitas <span className="text-rose-400 font-bold">{passPoints} de {totalPoints} puntos</span> para vencer</li>
             <li>No verás las respuestas correctas hasta el final</li>
           </ul>
@@ -290,7 +301,7 @@ export default function BossExam({ topic, nodeId, nodeTitle, sintesis, conceptId
 
         {openEvaluation && (
           <div className="mb-8">
-            <h3 className="font-bold text-zinc-300 mb-3">Tu respuesta final ({openEvaluation.puntuacion}/3 puntos)</h3>
+            <h3 className="font-bold text-zinc-300 mb-3">Tu respuesta final ({openEvaluation.puntuacion}/{OPEN_QUESTION_MAX} puntos)</h3>
             <SocraticFeedback evaluation={openEvaluation} />
           </div>
         )}

@@ -178,10 +178,80 @@ export interface ProgressEntry {
   completedAt: string; // ISO
 }
 
+// ── Rutas y lecciones persistidas (Supabase) ──
+
+export type LessonGenStatus = "pending" | "generating" | "ready" | "error";
+
+export interface RouteSummary {
+  id: string;
+  topic: string;
+  status: string; // generating | ready | error
+  createdAt: string;
+  totalNodes: number;
+  readyNodes: number;
+  completedNodes: number;
+  avgStars: number | null;
+}
+
+export interface NodeState {
+  status: LessonGenStatus;
+  error: string | null;
+  bestStars: number | null;
+  attemptCount: number;
+  mastery: number | null;
+  reviewDue: boolean;
+}
+
+export interface RouteDetail {
+  id: string;
+  topic: string;
+  status: string;
+  sintesis: Sintesis;
+  tree: Tree;
+  nodes: Record<string, NodeState>;
+  xpTotal: number;
+  streakDays: number;
+}
+
+export interface LessonData {
+  nodeId: string;
+  nodeType: NodeType;
+  title: string;
+  conceptIds: string[];
+  status: LessonGenStatus;
+  error: string | null;
+  steps: LessonStep[] | null; // theory / practice
+  quiz: QuizNodeData | null; // nodos quiz
+  boss: BossExamData | null; // nodos boss
+  audioIntro: AudioIntroData | null;
+  audioUrl: string | null;
+  topic: string;
+  sintesis: Sintesis; // para debate y evaluaciones
+}
+
+// ── Intentos y puntuación ──
+
+export interface AttemptDetail {
+  attention?: { correct: number; total: number };
+  socratic?: number[]; // puntuaciones 0-5
+  quizCorrect?: number;
+  quizTotal?: number;
+  bossPoints?: number;
+  bossTotal?: number;
+}
+
 /** Resultado que cada experiencia de nodo entrega a onComplete */
-export interface NodeResult {
-  xpEvents: Array<{ action: string; xp: number }>;
+export interface AttemptInput {
+  stars: number; // 0-5 (medias permitidas)
+  passed: boolean;
+  xp: number;
+  detail: AttemptDetail;
   masteryUpdates: Array<{ conceptId: string; delta: number }>;
-  passed?: boolean; // solo boss: si no aprueba, el nodo no se completa
-  isReview?: boolean;
+}
+
+export interface SaveAttemptResult {
+  ok: boolean;
+  xpGained: number;
+  newBest: boolean;
+  bestStars: number;
 }
