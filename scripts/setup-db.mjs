@@ -16,6 +16,15 @@ create table if not exists public.profiles (
   role text not null default 'user',
   created_at timestamptz not null default now()
 );
+-- Perfil social (idempotente para instalaciones existentes):
+alter table public.profiles add column if not exists username text unique;
+alter table public.profiles add column if not exists display_name text;
+alter table public.profiles add column if not exists bio text;
+alter table public.profiles add column if not exists avatar_path text;
+alter table public.profiles add column if not exists banner_path text;
+alter table public.profiles add column if not exists plan text not null default 'free';
+alter table public.profiles add column if not exists route_quota int not null default 1;
+alter table public.profiles add column if not exists premium_since timestamptz;
 
 create table if not exists public.routes (
   id uuid primary key default gen_random_uuid(),
@@ -27,6 +36,17 @@ create table if not exists public.routes (
   status text not null default 'generating',
   created_at timestamptz not null default now()
 );
+-- Biblioteca pública + portada + contadores (idempotente):
+alter table public.routes add column if not exists visibility text not null default 'public';
+alter table public.routes add column if not exists description text;
+alter table public.routes add column if not exists cover_path text;
+alter table public.routes add column if not exists cover_prompt text;
+alter table public.routes add column if not exists rating_sum int not null default 0;
+alter table public.routes add column if not exists rating_count int not null default 0;
+alter table public.routes add column if not exists student_count int not null default 0;
+alter table public.routes add column if not exists favorite_count int not null default 0;
+create index if not exists routes_visibility_idx on public.routes(visibility);
+create index if not exists routes_owner_idx on public.routes(owner_id);
 
 create table if not exists public.lessons (
   id uuid primary key default gen_random_uuid(),
@@ -70,12 +90,64 @@ create table if not exists public.concept_mastery (
   primary key (user_id, route_id, concept_id)
 );
 
+-- ── Grafo social ──
+create table if not exists public.follows (
+  follower_id uuid not null references public.profiles(id) on delete cascade,
+  following_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (follower_id, following_id)
+);
+create index if not exists follows_following_idx on public.follows(following_id);
+
+create table if not exists public.favorites (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  route_id uuid not null references public.routes(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, route_id)
+);
+
+create table if not exists public.route_ratings (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  route_id uuid not null references public.routes(id) on delete cascade,
+  stars int not null check (stars between 1 and 5),
+  created_at timestamptz not null default now(),
+  primary key (user_id, route_id)
+);
+
+-- ── Pagos (Bold) ──
+create table if not exists public.payment_orders (
+  order_id text primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  amount int not null,
+  currency text not null default 'COP',
+  purpose text not null default 'premium',
+  status text not null default 'pending',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.bold_transactions (
+  id uuid primary key default gen_random_uuid(),
+  payment_id text unique not null,
+  transaction_type text not null,
+  amount_total numeric not null default 0,
+  amount_currency text default 'COP',
+  order_reference text,
+  raw_data jsonb not null,
+  customer_data jsonb,
+  created_at timestamptz not null default now()
+);
+
 -- RLS activado sin políticas: la API anónima queda bloqueada; el service role la salta.
 alter table public.profiles enable row level security;
 alter table public.routes enable row level security;
 alter table public.lessons enable row level security;
 alter table public.attempts enable row level security;
 alter table public.concept_mastery enable row level security;
+alter table public.follows enable row level security;
+alter table public.favorites enable row level security;
+alter table public.route_ratings enable row level security;
+alter table public.payment_orders enable row level security;
+alter table public.bold_transactions enable row level security;
 `;
 
 async function main() {
@@ -101,16 +173,22 @@ async function main() {
   );
 
   const { data: buckets } = await supabase.storage.listBuckets();
-  if (!buckets?.some(b => b.name === "lesson-audio")) {
-    const { error } = await supabase.storage.createBucket("lesson-audio", {
-      public: true,
-      fileSizeLimit: "20MB",
-      allowedMimeTypes: ["audio/wav"],
-    });
-    if (error) throw error;
-    console.log("✓ Bucket 'lesson-audio' creado (público)");
-  } else {
-    console.log("✓ Bucket 'lesson-audio' ya existía");
+  const existing = new Set((buckets || []).map(b => b.name));
+
+  const bucketSpecs = [
+    { name: "lesson-audio", opts: { public: true, fileSizeLimit: "20MB", allowedMimeTypes: ["audio/wav"] } },
+    { name: "avatars", opts: { public: true, fileSizeLimit: "5MB", allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"] } },
+    { name: "route-covers", opts: { public: true, fileSizeLimit: "10MB", allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"] } },
+  ];
+
+  for (const { name, opts } of bucketSpecs) {
+    if (!existing.has(name)) {
+      const { error } = await supabase.storage.createBucket(name, opts);
+      if (error) throw error;
+      console.log(`✓ Bucket '${name}' creado (público)`);
+    } else {
+      console.log(`✓ Bucket '${name}' ya existía`);
+    }
   }
 
   // 3) Usuario admin
@@ -137,9 +215,23 @@ async function main() {
 
   const { error: profErr } = await supabase
     .from("profiles")
-    .upsert({ id: adminUser.id, email: ADMIN_EMAIL, role: "admin" }, { onConflict: "id" });
+    .upsert(
+      { id: adminUser.id, email: ADMIN_EMAIL, role: "admin", plan: "premium", route_quota: 999 },
+      { onConflict: "id" }
+    );
   if (profErr) throw profErr;
-  console.log("✓ Profile de admin con role 'admin'");
+  console.log("✓ Profile de admin con role 'admin' (premium)");
+
+  // Backfill: asignar username al admin si no tiene
+  const { data: adminProfile } = await supabase
+    .from("profiles")
+    .select("username")
+    .eq("id", adminUser.id)
+    .single();
+  if (adminProfile && !adminProfile.username) {
+    await supabase.from("profiles").update({ username: "mauricio", display_name: "Mauricio" }).eq("id", adminUser.id);
+    console.log("✓ Username del admin: @mauricio");
+  }
 
   console.log("\nSetup completo ✅");
 }

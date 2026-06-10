@@ -3,19 +3,22 @@
 import { Suspense, useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2 } from "lucide-react";
+import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2, Globe, Lock, Crown, Check } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { createRoute } from "../routeActions";
+import PremiumCheckout from "@/components/PremiumCheckout";
 
 function Sources() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const topic = searchParams.get("topic") || "";
-  const { token } = useRequireAuth();
+  const { token, email } = useRequireAuth();
 
   const [sources, setSources] = useState<{ id: string; type: string; name: string; content?: string }[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [showPaywall, setShowPaywall] = useState(false);
 
   // States for inputs
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -58,9 +61,12 @@ function Sources() {
     const sourcesStr = sources.map(s => s.name).join(",");
     try {
       // Crea la ruta (síntesis + árbol) y arranca la pregeneración en background
-      const result = await createRoute(token, topic, sourcesStr);
+      const result = await createRoute(token, topic, sourcesStr, visibility);
       if (result.routeId) {
         router.push(`/tree?route=${result.routeId}`);
+      } else if (result.quotaReached) {
+        setShowPaywall(true);
+        setIsGenerating(false);
       } else {
         setGenError(result.error || "No se pudo crear la ruta.");
         setIsGenerating(false);
@@ -201,6 +207,38 @@ function Sources() {
               ))}
             </ul>
 
+            {/* Visibilidad: pública por defecto para crecer la biblioteca */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <button
+                type="button"
+                onClick={() => setVisibility("public")}
+                className={`p-4 rounded-xl border text-left transition-all ${
+                  visibility === "public" ? "bg-primary/10 border-primary" : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Globe className="w-4 h-4 text-primary" />
+                  <span className="font-bold text-sm text-white">Pública</span>
+                  {visibility === "public" && <Check className="w-4 h-4 text-primary ml-auto" />}
+                </div>
+                <p className="text-xs text-zinc-500">Aparece en la biblioteca. Otros pueden estudiarla y sumas estudiantes.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setVisibility("private")}
+                className={`p-4 rounded-xl border text-left transition-all ${
+                  visibility === "private" ? "bg-zinc-700/30 border-zinc-500" : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Lock className="w-4 h-4 text-zinc-400" />
+                  <span className="font-bold text-sm text-white">Privada</span>
+                  {visibility === "private" && <Check className="w-4 h-4 text-zinc-300 ml-auto" />}
+                </div>
+                <p className="text-xs text-zinc-500">Solo para ti. No aparece en la biblioteca pública.</p>
+              </button>
+            </div>
+
             {genError && <p className="text-rose-400 text-sm mb-3 text-center">{genError}</p>}
             <button
               onClick={handleGenerateKnowledge}
@@ -222,6 +260,37 @@ function Sources() {
           </motion.div>
         )}
       </div>
+
+      {/* Paywall Premium */}
+      <AnimatePresence>
+        {showPaywall && token && (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowPaywall(false)}>
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 w-full max-w-md relative"
+            >
+              <button onClick={() => setShowPaywall(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 mx-auto bg-amber-500/10 border border-amber-500/40 rounded-2xl flex items-center justify-center mb-4">
+                  <Crown className="w-8 h-8 text-amber-400" />
+                </div>
+                <h3 className="text-2xl font-bold mb-2">Hazte Premium</h3>
+                <p className="text-zinc-400 text-sm">
+                  Ya usaste tu ruta gratuita. Con Premium creas hasta <span className="text-white font-semibold">3 rutas</span> con IA.
+                  Estudiar la biblioteca siempre es gratis.
+                </p>
+                <div className="mt-4 text-3xl font-bold text-white">
+                  $23.900 <span className="text-base font-normal text-zinc-500">COP · pago único</span>
+                </div>
+              </div>
+              <PremiumCheckout token={token} email={email} />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

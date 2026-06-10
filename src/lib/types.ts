@@ -191,6 +191,92 @@ export interface RouteSummary {
   readyNodes: number;
   completedNodes: number;
   avgStars: number | null;
+  visibility: RouteVisibility;
+  coverUrl: string | null;
+  description: string | null;
+}
+
+// ── Social / biblioteca pública ──
+
+export type RouteVisibility = "public" | "private";
+export type Plan = "free" | "premium";
+
+export interface PlanState {
+  plan: Plan;
+  routeQuota: number;
+  routesUsed: number;
+  premiumSince: string | null;
+}
+
+/** Tarjeta de ruta para la biblioteca estilo Netflix. */
+export interface RouteCard {
+  id: string;
+  topic: string;
+  description: string | null;
+  coverUrl: string | null;
+  visibility: RouteVisibility;
+  ratingAvg: number | null;
+  ratingCount: number;
+  studentCount: number;
+  favoriteCount: number;
+  creator: { username: string | null; displayName: string | null; avatarUrl: string | null };
+}
+
+export interface LibrarySection {
+  key: string;
+  title: string;
+  routes: RouteCard[];
+}
+
+export interface FeaturedCreator {
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  routeCount: number;
+  studentTotal: number;
+}
+
+export interface ProfileStats {
+  routeCount: number;
+  studentTotal: number;
+  ratingAvg: number | null;
+  followers: number;
+  following: number;
+}
+
+export interface PublicProfile {
+  id: string;
+  username: string | null;
+  displayName: string | null;
+  bio: string | null;
+  avatarUrl: string | null;
+  bannerUrl: string | null;
+  plan: Plan;
+  isOwner: boolean;
+  isFollowing: boolean;
+  stats: ProfileStats;
+  routes: RouteCard[];
+}
+
+/** Ficha (landing) de una ruta antes de estudiarla. */
+export interface RouteLanding {
+  id: string;
+  topic: string;
+  description: string | null;
+  coverUrl: string | null;
+  visibility: RouteVisibility;
+  coverPrompt: string | null;
+  ratingAvg: number | null;
+  ratingCount: number;
+  studentCount: number;
+  favoriteCount: number;
+  completionAvg: number | null;
+  totalNodes: number;
+  creator: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+  myRating: number | null;
+  isFavorite: boolean;
+  isOwner: boolean;
+  myCompletedNodes: number;
 }
 
 export interface NodeState {
@@ -213,6 +299,10 @@ export interface RouteDetail {
   nodes: Record<string, NodeState>;
   xpTotal: number;
   streakDays: number;
+  visibility: RouteVisibility;
+  coverUrl: string | null;
+  description: string | null;
+  isOwner: boolean;
 }
 
 export interface LessonData {

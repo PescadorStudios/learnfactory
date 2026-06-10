@@ -11,6 +11,8 @@ import {
   generateLessonContent,
   generateQuizNode,
   generateBossExam,
+  generateCoverImage,
+  buildCoverPrompt,
 } from "@/lib/generation";
 import type {
   Tree,
@@ -27,6 +29,7 @@ import type {
 } from "@/lib/types";
 
 const AUDIO_BUCKET = "lesson-audio";
+const COVER_BUCKET = "route-covers";
 const REVIEW_AFTER_DAYS = 4;
 const REVIEW_MASTERY_THRESHOLD = 80;
 // Una lección "generating" más vieja que esto se considera huérfana (su proceso
@@ -41,9 +44,21 @@ const activeRouteGen = new Set<string>();
 //  AUTH / PERFIL
 // ──────────────────────────────────────────────────
 
-/** Registra un usuario (sin verificación de email) y crea su profile. */
-export async function registerUser(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
+/** Registra un usuario (sin verificación de email) y crea su profile con username. */
+export async function registerUser(email: string, password: string, username?: string): Promise<{ ok: boolean; error?: string }> {
   const sb = supabaseAdmin();
+
+  // Validar username si se provee (único)
+  let cleanUsername: string | null = null;
+  if (username) {
+    cleanUsername = username.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,20}$/.test(cleanUsername)) {
+      return { ok: false, error: "El usuario debe tener 3-20 caracteres: letras, números o guion bajo." };
+    }
+    const { data: taken } = await sb.from("profiles").select("id").eq("username", cleanUsername).maybeSingle();
+    if (taken) return { ok: false, error: "Ese nombre de usuario ya está en uso." };
+  }
+
   const { data, error } = await sb.auth.admin.createUser({
     email: email.trim().toLowerCase(),
     password,
@@ -53,7 +68,7 @@ export async function registerUser(email: string, password: string): Promise<{ o
     return { ok: false, error: error.message.includes("already") ? "Ese correo ya está registrado." : error.message };
   }
   await sb.from("profiles").upsert(
-    { id: data.user.id, email: data.user.email, role: "user" },
+    { id: data.user.id, email: data.user.email, role: "user", username: cleanUsername, display_name: cleanUsername },
     { onConflict: "id" }
   );
   return { ok: true };
@@ -81,16 +96,30 @@ function flattenNodes(tree: Tree): TreeNode[] {
 export async function createRoute(
   token: string,
   topic: string,
-  sourcesStr: string
-): Promise<{ routeId?: string; error?: string }> {
+  sourcesStr: string,
+  visibility: "public" | "private" = "public"
+): Promise<{ routeId?: string; error?: string; quotaReached?: boolean }> {
   const user = await getUserFromToken(token);
   if (!user) return { error: "Sesión inválida" };
 
   const sb = supabaseAdmin();
   await sb.from("profiles").upsert({ id: user.id, email: user.email }, { onConflict: "id", ignoreDuplicates: true });
 
+  // Cuota de creación: consumir es gratis, crear rutas con IA cuenta contra el plan.
+  const { data: profile } = await sb.from("profiles").select("route_quota").eq("id", user.id).single();
+  const quota = profile?.route_quota ?? 1;
+  const { count: routesUsed } = await sb
+    .from("routes")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", user.id);
+  if ((routesUsed ?? 0) >= quota) {
+    return { error: "quota", quotaReached: true };
+  }
+
   console.log(`[Route] Creando ruta "${topic}" para ${user.email}...`);
   const pack = await generateStudyPack(topic, sourcesStr);
+
+  const description = (pack.sintesis?.tesisGlobal || "").slice(0, 280) || null;
 
   const { data: route, error } = await sb
     .from("routes")
@@ -101,6 +130,8 @@ export async function createRoute(
       sintesis: pack.sintesis,
       tree: pack.tree,
       status: "generating",
+      visibility,
+      description,
     })
     .select("id")
     .single();
@@ -123,9 +154,42 @@ export async function createRoute(
 
   // Pregenerar todo en segundo plano después de responder
   after(() => generateRouteLessons(route.id));
+  // Generar portada con IA en background (no bloquea la respuesta)
+  after(() => generateAndStoreCover(route.id, topic, buildCoverPrompt(topic, pack.sintesis?.tesisGlobal)));
 
   console.log(`[Route] ✓ Ruta ${route.id} creada con ${lessonRows.length} lecciones. Generación en background iniciada.`);
   return { routeId: route.id };
+}
+
+/** Genera una portada con IA y la sube a Storage, guardando cover_path/cover_prompt. */
+async function generateAndStoreCover(routeId: string, topic: string, prompt: string) {
+  const sb = supabaseAdmin();
+  try {
+    const img = await generateCoverImage(prompt);
+    if (!img) {
+      console.warn(`[Cover] Ruta ${routeId}: sin portada (generación falló).`);
+      return;
+    }
+    const coverPath = `${routeId}/cover.png`;
+    const { error } = await sb.storage.from(COVER_BUCKET).upload(coverPath, img, {
+      contentType: "image/png",
+      upsert: true,
+    });
+    if (error) {
+      console.error(`[Cover] Error subiendo portada de ${routeId}:`, error.message);
+      return;
+    }
+    await sb.from("routes").update({ cover_path: coverPath, cover_prompt: prompt }).eq("id", routeId);
+    console.log(`[Cover] ✓ Portada de ${routeId} lista.`);
+  } catch (e) {
+    console.error(`[Cover] Error generando portada de ${routeId}:`, e);
+  }
+}
+
+/** URL pública de la portada de una ruta (helper interno). */
+function coverUrlFor(coverPath: string | null): string | null {
+  if (!coverPath) return null;
+  return supabaseAdmin().storage.from(COVER_BUCKET).getPublicUrl(coverPath).data.publicUrl;
 }
 
 /**
@@ -326,7 +390,7 @@ export async function getMyRoutes(token: string): Promise<RouteSummary[]> {
   const sb = supabaseAdmin();
   const { data: routes } = await sb
     .from("routes")
-    .select("id, topic, status, created_at")
+    .select("id, topic, status, created_at, visibility, cover_path, description")
     .eq("owner_id", user.id)
     .order("created_at", { ascending: false });
   if (!routes?.length) return [];
@@ -355,6 +419,9 @@ export async function getMyRoutes(token: string): Promise<RouteSummary[]> {
       readyNodes: ls.filter(l => l.status === "ready").length,
       completedNodes: completedNodes.size,
       avgStars: bests.length ? Math.round((bests.reduce((a, b) => a + b, 0) / bests.length) * 10) / 10 : null,
+      visibility: (r.visibility as RouteSummary["visibility"]) || "public",
+      coverUrl: coverUrlFor(r.cover_path),
+      description: r.description ?? null,
     };
   });
 }
@@ -382,10 +449,13 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
   const sb = supabaseAdmin();
   const { data: route } = await sb
     .from("routes")
-    .select("id, topic, status, sintesis, tree, owner_id")
+    .select("id, topic, status, sintesis, tree, owner_id, visibility, cover_path, description")
     .eq("id", routeId)
     .single();
-  if (!route || route.owner_id !== user.id) return null;
+  // Acceso: dueño siempre; cualquiera si la ruta es pública.
+  if (!route) return null;
+  const isOwner = route.owner_id === user.id;
+  if (!isOwner && route.visibility !== "public") return null;
 
   const [{ data: lessons }, { data: attempts }, { data: mastery }, { data: allUserAttempts }] = await Promise.all([
     sb.from("lessons").select("node_id, status, error, generating_at").eq("route_id", routeId),
@@ -447,6 +517,10 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
     nodes,
     xpTotal,
     streakDays,
+    visibility: (route.visibility as RouteDetail["visibility"]) || "public",
+    coverUrl: coverUrlFor(route.cover_path),
+    description: route.description ?? null,
+    isOwner,
   };
 }
 
@@ -456,10 +530,12 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
 
   const sb = supabaseAdmin();
   const [{ data: route }, { data: lesson }] = await Promise.all([
-    sb.from("routes").select("topic, sintesis, owner_id").eq("id", routeId).single(),
+    sb.from("routes").select("topic, sintesis, owner_id, visibility").eq("id", routeId).single(),
     sb.from("lessons").select("*").eq("route_id", routeId).eq("node_id", nodeId).single(),
   ]);
-  if (!route || route.owner_id !== user.id || !lesson) return null;
+  // Acceso: dueño siempre; cualquiera si la ruta es pública.
+  if (!route || !lesson) return null;
+  if (route.owner_id !== user.id && route.visibility !== "public") return null;
 
   let audioUrl: string | null = null;
   if (lesson.audio_path) {
@@ -506,6 +582,14 @@ export async function saveAttempt(
 
   const stars = Math.max(0, Math.min(5, input.stars));
 
+  // ¿Es el primer intento del usuario en TODA la ruta? (para contar estudiantes)
+  const { count: priorAttemptsInRoute } = await sb
+    .from("attempts")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", user.id)
+    .eq("route_id", routeId);
+  const isFirstInRoute = (priorAttemptsInRoute ?? 0) === 0;
+
   // Mejor score previo
   const { data: prev } = await sb
     .from("attempts")
@@ -525,6 +609,16 @@ export async function saveAttempt(
     xp: Math.max(0, Math.round(input.xp)),
     detail: input.detail,
   });
+
+  // Nuevo estudiante de la ruta: recomputar student_count desde la fuente (sin drift)
+  if (isFirstInRoute) {
+    const { data: distinctRows } = await sb
+      .from("attempts")
+      .select("user_id")
+      .eq("route_id", routeId);
+    const studentCount = new Set((distinctRows || []).map(r => r.user_id)).size;
+    await sb.from("routes").update({ student_count: studentCount }).eq("id", routeId);
+  }
 
   // Upsert de maestría por concepto
   for (const u of input.masteryUpdates) {

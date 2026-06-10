@@ -1,0 +1,583 @@
+"use server";
+
+// Server actions sociales: perfiles públicos, biblioteca/descubrimiento,
+// seguir/guardar/calificar y ajustes de ruta (visibilidad, portada).
+// Todas verifican el access token; el acceso a datos usa el service role.
+
+import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
+import { generateCoverImage } from "@/lib/generation";
+import type {
+  PlanState,
+  PublicProfile,
+  RouteCard,
+  LibrarySection,
+  FeaturedCreator,
+  RouteLanding,
+  RouteVisibility,
+  Plan,
+} from "@/lib/types";
+
+const AVATAR_BUCKET = "avatars";
+const COVER_BUCKET = "route-covers";
+
+// ──────────────────────────────────────────────────
+//  HELPERS
+// ──────────────────────────────────────────────────
+
+function publicUrl(bucket: string, path: string | null): string | null {
+  if (!path) return null;
+  return supabaseAdmin().storage.from(bucket).getPublicUrl(path).data.publicUrl;
+}
+
+/** Decodifica un string base64 (con o sin prefijo data URL) a Buffer + contentType. */
+function decodeImage(base64: string): { buffer: Buffer; contentType: string } {
+  let contentType = "image/png";
+  let data = base64;
+  const m = base64.match(/^data:(image\/[a-zA-Z+]+);base64,(.*)$/);
+  if (m) {
+    contentType = m[1];
+    data = m[2];
+  }
+  return { buffer: Buffer.from(data, "base64"), contentType };
+}
+
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB
+
+interface RouteRow {
+  id: string;
+  topic: string;
+  description: string | null;
+  cover_path: string | null;
+  visibility: string;
+  rating_sum: number;
+  rating_count: number;
+  student_count: number;
+  favorite_count: number;
+  owner_id: string;
+  created_at: string;
+  status: string;
+}
+
+interface ProfileRow {
+  id: string;
+  username: string | null;
+  display_name: string | null;
+  avatar_path: string | null;
+}
+
+function toRouteCard(r: RouteRow, creator?: ProfileRow): RouteCard {
+  return {
+    id: r.id,
+    topic: r.topic,
+    description: r.description,
+    coverUrl: publicUrl(COVER_BUCKET, r.cover_path),
+    visibility: (r.visibility as RouteVisibility) || "public",
+    ratingAvg: r.rating_count ? Math.round((r.rating_sum / r.rating_count) * 10) / 10 : null,
+    ratingCount: r.rating_count,
+    studentCount: r.student_count,
+    favoriteCount: r.favorite_count,
+    creator: {
+      username: creator?.username ?? null,
+      displayName: creator?.display_name ?? null,
+      avatarUrl: publicUrl(AVATAR_BUCKET, creator?.avatar_path ?? null),
+    },
+  };
+}
+
+const ROUTE_CARD_COLS =
+  "id, topic, description, cover_path, visibility, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status";
+
+// ──────────────────────────────────────────────────
+//  PLAN / PERFIL PROPIO
+// ──────────────────────────────────────────────────
+
+export async function getPlan(token: string): Promise<PlanState | null> {
+  const user = await getUserFromToken(token);
+  if (!user) return null;
+  const sb = supabaseAdmin();
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("plan, route_quota, premium_since")
+    .eq("id", user.id)
+    .single();
+  const { count } = await sb
+    .from("routes")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", user.id);
+  return {
+    plan: (profile?.plan as Plan) || "free",
+    routeQuota: profile?.route_quota ?? 1,
+    routesUsed: count ?? 0,
+    premiumSince: profile?.premium_since ?? null,
+  };
+}
+
+/** Perfil del usuario autenticado (para ajustes y onboarding). */
+export async function getMyProfile(token: string): Promise<{
+  id: string;
+  username: string | null;
+  displayName: string | null;
+  bio: string | null;
+  avatarUrl: string | null;
+  bannerUrl: string | null;
+  email: string;
+} | null> {
+  const user = await getUserFromToken(token);
+  if (!user) return null;
+  const sb = supabaseAdmin();
+  const { data: p } = await sb
+    .from("profiles")
+    .select("username, display_name, bio, avatar_path, banner_path")
+    .eq("id", user.id)
+    .single();
+  return {
+    id: user.id,
+    username: p?.username ?? null,
+    displayName: p?.display_name ?? null,
+    bio: p?.bio ?? null,
+    avatarUrl: publicUrl(AVATAR_BUCKET, p?.avatar_path ?? null),
+    bannerUrl: publicUrl(AVATAR_BUCKET, p?.banner_path ?? null),
+    email: user.email,
+  };
+}
+
+const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
+
+export async function updateProfile(
+  token: string,
+  input: { username?: string; displayName?: string; bio?: string }
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+  const sb = supabaseAdmin();
+
+  const patch: Record<string, unknown> = {};
+
+  if (input.username !== undefined) {
+    const username = input.username.trim().toLowerCase();
+    if (!USERNAME_RE.test(username)) {
+      return { ok: false, error: "El usuario debe tener 3-20 caracteres: letras, números o guion bajo." };
+    }
+    // Unicidad (excluyendo al propio usuario)
+    const { data: taken } = await sb
+      .from("profiles")
+      .select("id")
+      .eq("username", username)
+      .neq("id", user.id)
+      .maybeSingle();
+    if (taken) return { ok: false, error: "Ese nombre de usuario ya está en uso." };
+    patch.username = username;
+  }
+
+  if (input.displayName !== undefined) patch.display_name = input.displayName.trim().slice(0, 60) || null;
+  if (input.bio !== undefined) patch.bio = input.bio.trim().slice(0, 280) || null;
+
+  if (Object.keys(patch).length === 0) return { ok: true };
+
+  const { error } = await sb.from("profiles").update(patch).eq("id", user.id);
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: "Ese nombre de usuario ya está en uso." };
+    return { ok: false, error: "No se pudo actualizar el perfil." };
+  }
+  return { ok: true };
+}
+
+export async function uploadProfileImage(
+  token: string,
+  kind: "avatar" | "banner",
+  base64: string
+): Promise<{ ok: boolean; url?: string; error?: string }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+
+  const { buffer, contentType } = decodeImage(base64);
+  if (buffer.length === 0) return { ok: false, error: "Imagen vacía." };
+  if (buffer.length > MAX_IMAGE_BYTES) return { ok: false, error: "La imagen supera el límite de 8 MB." };
+
+  const sb = supabaseAdmin();
+  const ext = contentType.includes("jpeg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
+  const path = `${user.id}/${kind}-${Date.now()}.${ext}`;
+  const { error } = await sb.storage.from(AVATAR_BUCKET).upload(path, buffer, { contentType, upsert: true });
+  if (error) return { ok: false, error: "No se pudo subir la imagen." };
+
+  const col = kind === "avatar" ? "avatar_path" : "banner_path";
+  await sb.from("profiles").update({ [col]: path }).eq("id", user.id);
+  return { ok: true, url: publicUrl(AVATAR_BUCKET, path) ?? undefined };
+}
+
+// ──────────────────────────────────────────────────
+//  PERFIL PÚBLICO
+// ──────────────────────────────────────────────────
+
+export async function getProfileByUsername(token: string, username: string): Promise<PublicProfile | null> {
+  const viewer = await getUserFromToken(token);
+  const sb = supabaseAdmin();
+
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("id, username, display_name, bio, avatar_path, banner_path, plan")
+    .eq("username", username.toLowerCase())
+    .maybeSingle();
+  if (!profile) return null;
+
+  const isOwner = viewer?.id === profile.id;
+
+  // Rutas: públicas para todos; si es el dueño, también las privadas
+  let routesQuery = sb.from("routes").select(ROUTE_CARD_COLS).eq("owner_id", profile.id).order("created_at", { ascending: false });
+  if (!isOwner) routesQuery = routesQuery.eq("visibility", "public");
+  const { data: routeRows } = await routesQuery;
+  const routes = (routeRows || []).map(r => toRouteCard(r as RouteRow, profile as ProfileRow));
+
+  // Stats
+  const publicRoutes = (routeRows || []).filter(r => r.visibility === "public");
+  const studentTotal = publicRoutes.reduce((s, r) => s + (r.student_count || 0), 0);
+  const ratingSum = publicRoutes.reduce((s, r) => s + (r.rating_sum || 0), 0);
+  const ratingCount = publicRoutes.reduce((s, r) => s + (r.rating_count || 0), 0);
+
+  const [{ count: followers }, { count: following }, { data: isFollowingRow }] = await Promise.all([
+    sb.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", profile.id),
+    sb.from("follows").select("following_id", { count: "exact", head: true }).eq("follower_id", profile.id),
+    viewer && !isOwner
+      ? sb.from("follows").select("follower_id").eq("follower_id", viewer.id).eq("following_id", profile.id).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  return {
+    id: profile.id,
+    username: profile.username,
+    displayName: profile.display_name,
+    bio: profile.bio,
+    avatarUrl: publicUrl(AVATAR_BUCKET, profile.avatar_path),
+    bannerUrl: publicUrl(AVATAR_BUCKET, profile.banner_path),
+    plan: (profile.plan as Plan) || "free",
+    isOwner,
+    isFollowing: Boolean(isFollowingRow),
+    stats: {
+      routeCount: publicRoutes.length,
+      studentTotal,
+      ratingAvg: ratingCount ? Math.round((ratingSum / ratingCount) * 10) / 10 : null,
+      followers: followers ?? 0,
+      following: following ?? 0,
+    },
+    routes,
+  };
+}
+
+// ──────────────────────────────────────────────────
+//  BIBLIOTECA / DESCUBRIMIENTO
+// ──────────────────────────────────────────────────
+
+async function fetchCreators(ownerIds: string[]): Promise<Map<string, ProfileRow>> {
+  const sb = supabaseAdmin();
+  if (ownerIds.length === 0) return new Map();
+  const { data } = await sb
+    .from("profiles")
+    .select("id, username, display_name, avatar_path")
+    .in("id", ownerIds);
+  return new Map((data || []).map(p => [p.id, p as ProfileRow]));
+}
+
+export async function getLibrary(token: string): Promise<LibrarySection[]> {
+  await getUserFromToken(token); // requiere sesión, pero la biblioteca es común
+  const sb = supabaseAdmin();
+
+  const { data: pool } = await sb
+    .from("routes")
+    .select(ROUTE_CARD_COLS)
+    .eq("visibility", "public")
+    .order("created_at", { ascending: false })
+    .limit(120);
+  const rows = (pool || []) as RouteRow[];
+  if (rows.length === 0) return [];
+
+  const creators = await fetchCreators([...new Set(rows.map(r => r.owner_id))]);
+  const card = (r: RouteRow) => toRouteCard(r, creators.get(r.owner_id));
+
+  const destacadas = [...rows]
+    .sort((a, b) => (b.student_count - a.student_count) || (b.rating_sum - a.rating_sum))
+    .slice(0, 12);
+  const tendencia = [...rows]
+    .sort((a, b) => (b.favorite_count + b.student_count) - (a.favorite_count + a.student_count))
+    .slice(0, 12);
+  const recientes = rows.slice(0, 12);
+
+  const sections: LibrarySection[] = [];
+  if (destacadas.some(r => r.student_count > 0 || r.rating_count > 0)) {
+    sections.push({ key: "destacadas", title: "Rutas destacadas", routes: destacadas.map(card) });
+  }
+  if (tendencia.some(r => r.favorite_count > 0 || r.student_count > 0)) {
+    sections.push({ key: "tendencia", title: "En tendencia", routes: tendencia.map(card) });
+  }
+  sections.push({ key: "recientes", title: "Recién creadas", routes: recientes.map(card) });
+  return sections;
+}
+
+export async function searchPublicRoutes(token: string, q: string): Promise<RouteCard[]> {
+  await getUserFromToken(token);
+  const term = q.trim();
+  if (!term) return [];
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from("routes")
+    .select(ROUTE_CARD_COLS)
+    .eq("visibility", "public")
+    .or(`topic.ilike.%${term}%,description.ilike.%${term}%`)
+    .order("student_count", { ascending: false })
+    .limit(30);
+  const rows = (data || []) as RouteRow[];
+  const creators = await fetchCreators([...new Set(rows.map(r => r.owner_id))]);
+  return rows.map(r => toRouteCard(r, creators.get(r.owner_id)));
+}
+
+export async function getFeaturedCreators(token: string): Promise<FeaturedCreator[]> {
+  await getUserFromToken(token);
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from("routes")
+    .select("owner_id, student_count")
+    .eq("visibility", "public");
+  const agg = new Map<string, { routeCount: number; studentTotal: number }>();
+  for (const r of data || []) {
+    const cur = agg.get(r.owner_id) || { routeCount: 0, studentTotal: 0 };
+    cur.routeCount += 1;
+    cur.studentTotal += r.student_count || 0;
+    agg.set(r.owner_id, cur);
+  }
+  const topIds = [...agg.entries()]
+    .sort((a, b) => (b[1].studentTotal - a[1].studentTotal) || (b[1].routeCount - a[1].routeCount))
+    .slice(0, 12)
+    .map(([id]) => id);
+  if (topIds.length === 0) return [];
+  const creators = await fetchCreators(topIds);
+  return topIds
+    .map(id => {
+      const c = creators.get(id);
+      const a = agg.get(id)!;
+      if (!c?.username) return null; // solo creadores con handle
+      return {
+        username: c.username,
+        displayName: c.display_name,
+        avatarUrl: publicUrl(AVATAR_BUCKET, c.avatar_path),
+        routeCount: a.routeCount,
+        studentTotal: a.studentTotal,
+      } as FeaturedCreator;
+    })
+    .filter((c): c is FeaturedCreator => c !== null);
+}
+
+export async function getMyFavorites(token: string): Promise<RouteCard[]> {
+  const user = await getUserFromToken(token);
+  if (!user) return [];
+  const sb = supabaseAdmin();
+  const { data: favs } = await sb.from("favorites").select("route_id").eq("user_id", user.id);
+  const ids = (favs || []).map(f => f.route_id);
+  if (ids.length === 0) return [];
+  const { data: rows } = await sb.from("routes").select(ROUTE_CARD_COLS).in("id", ids);
+  const list = (rows || []) as RouteRow[];
+  const creators = await fetchCreators([...new Set(list.map(r => r.owner_id))]);
+  return list.map(r => toRouteCard(r, creators.get(r.owner_id)));
+}
+
+// ──────────────────────────────────────────────────
+//  FICHA DE RUTA (LANDING)
+// ──────────────────────────────────────────────────
+
+export async function getRouteLanding(token: string, routeId: string): Promise<RouteLanding | null> {
+  const user = await getUserFromToken(token);
+  if (!user) return null;
+  const sb = supabaseAdmin();
+
+  const { data: r } = await sb
+    .from("routes")
+    .select(
+      "id, topic, description, cover_path, cover_prompt, visibility, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status"
+    )
+    .eq("id", routeId)
+    .maybeSingle();
+  if (!r) return null;
+  const isOwner = r.owner_id === user.id;
+  if (!isOwner && r.visibility !== "public") return null;
+
+  const [{ data: creator }, { count: totalNodes }, { data: myRatingRow }, { data: myFavRow }, { data: passedAttempts }] =
+    await Promise.all([
+      sb.from("profiles").select("id, username, display_name, avatar_path").eq("id", r.owner_id).single(),
+      sb.from("lessons").select("id", { count: "exact", head: true }).eq("route_id", routeId),
+      sb.from("route_ratings").select("stars").eq("route_id", routeId).eq("user_id", user.id).maybeSingle(),
+      sb.from("favorites").select("route_id").eq("route_id", routeId).eq("user_id", user.id).maybeSingle(),
+      sb.from("attempts").select("user_id, node_id").eq("route_id", routeId).eq("passed", true),
+    ]);
+
+  const total = totalNodes ?? 0;
+
+  // Completado por estudiante (nodos distintos aprobados / total)
+  const perUser = new Map<string, Set<string>>();
+  for (const a of passedAttempts || []) {
+    if (!perUser.has(a.user_id)) perUser.set(a.user_id, new Set());
+    perUser.get(a.user_id)!.add(a.node_id);
+  }
+  let completionAvg: number | null = null;
+  if (total > 0 && perUser.size > 0) {
+    const ratios = [...perUser.values()].map(s => Math.min(1, s.size / total));
+    completionAvg = Math.round((ratios.reduce((a, b) => a + b, 0) / ratios.length) * 100);
+  }
+  const myCompletedNodes = perUser.get(user.id)?.size ?? 0;
+
+  return {
+    id: r.id,
+    topic: r.topic,
+    description: r.description,
+    coverUrl: publicUrl(COVER_BUCKET, r.cover_path),
+    visibility: (r.visibility as RouteVisibility) || "public",
+    coverPrompt: r.cover_prompt ?? null,
+    ratingAvg: r.rating_count ? Math.round((r.rating_sum / r.rating_count) * 10) / 10 : null,
+    ratingCount: r.rating_count,
+    studentCount: r.student_count,
+    favoriteCount: r.favorite_count,
+    completionAvg,
+    totalNodes: total,
+    creator: {
+      id: r.owner_id,
+      username: creator?.username ?? null,
+      displayName: creator?.display_name ?? null,
+      avatarUrl: publicUrl(AVATAR_BUCKET, creator?.avatar_path ?? null),
+    },
+    myRating: myRatingRow?.stars ?? null,
+    isFavorite: Boolean(myFavRow),
+    isOwner,
+    myCompletedNodes,
+  };
+}
+
+// ──────────────────────────────────────────────────
+//  ACCIONES SOCIALES
+// ──────────────────────────────────────────────────
+
+export async function rateRoute(token: string, routeId: string, stars: number): Promise<{ ok: boolean; ratingAvg: number | null; ratingCount: number }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, ratingAvg: null, ratingCount: 0 };
+  const s = Math.max(1, Math.min(5, Math.round(stars)));
+  const sb = supabaseAdmin();
+
+  await sb.from("route_ratings").upsert(
+    { user_id: user.id, route_id: routeId, stars: s },
+    { onConflict: "user_id,route_id" }
+  );
+
+  // Recomputar agregados desde la fuente (sin drift)
+  const { data: all } = await sb.from("route_ratings").select("stars").eq("route_id", routeId);
+  const ratingCount = all?.length ?? 0;
+  const ratingSum = (all || []).reduce((acc, row) => acc + row.stars, 0);
+  await sb.from("routes").update({ rating_sum: ratingSum, rating_count: ratingCount }).eq("id", routeId);
+
+  return { ok: true, ratingAvg: ratingCount ? Math.round((ratingSum / ratingCount) * 10) / 10 : null, ratingCount };
+}
+
+export async function toggleFavorite(token: string, routeId: string): Promise<{ ok: boolean; isFavorite: boolean; favoriteCount: number }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, isFavorite: false, favoriteCount: 0 };
+  const sb = supabaseAdmin();
+
+  const { data: existing } = await sb
+    .from("favorites")
+    .select("route_id")
+    .eq("user_id", user.id)
+    .eq("route_id", routeId)
+    .maybeSingle();
+
+  let isFavorite: boolean;
+  if (existing) {
+    await sb.from("favorites").delete().eq("user_id", user.id).eq("route_id", routeId);
+    isFavorite = false;
+  } else {
+    await sb.from("favorites").insert({ user_id: user.id, route_id: routeId });
+    isFavorite = true;
+  }
+
+  const { count } = await sb.from("favorites").select("route_id", { count: "exact", head: true }).eq("route_id", routeId);
+  const favoriteCount = count ?? 0;
+  await sb.from("routes").update({ favorite_count: favoriteCount }).eq("id", routeId);
+
+  return { ok: true, isFavorite, favoriteCount };
+}
+
+export async function toggleFollow(token: string, targetUserId: string): Promise<{ ok: boolean; isFollowing: boolean }> {
+  const user = await getUserFromToken(token);
+  if (!user || user.id === targetUserId) return { ok: false, isFollowing: false };
+  const sb = supabaseAdmin();
+
+  const { data: existing } = await sb
+    .from("follows")
+    .select("follower_id")
+    .eq("follower_id", user.id)
+    .eq("following_id", targetUserId)
+    .maybeSingle();
+
+  if (existing) {
+    await sb.from("follows").delete().eq("follower_id", user.id).eq("following_id", targetUserId);
+    return { ok: true, isFollowing: false };
+  }
+  await sb.from("follows").insert({ follower_id: user.id, following_id: targetUserId });
+  return { ok: true, isFollowing: true };
+}
+
+// ──────────────────────────────────────────────────
+//  AJUSTES DE RUTA (solo dueño)
+// ──────────────────────────────────────────────────
+
+async function assertOwner(token: string, routeId: string): Promise<{ ownerId: string; topic: string; sintesis: unknown } | null> {
+  const user = await getUserFromToken(token);
+  if (!user) return null;
+  const sb = supabaseAdmin();
+  const { data: route } = await sb.from("routes").select("owner_id, topic, sintesis").eq("id", routeId).single();
+  if (!route || route.owner_id !== user.id) return null;
+  return { ownerId: route.owner_id, topic: route.topic, sintesis: route.sintesis };
+}
+
+export async function setRouteVisibility(token: string, routeId: string, visibility: RouteVisibility): Promise<{ ok: boolean }> {
+  const owner = await assertOwner(token, routeId);
+  if (!owner) return { ok: false };
+  await supabaseAdmin().from("routes").update({ visibility }).eq("id", routeId);
+  return { ok: true };
+}
+
+export async function updateRouteDescription(token: string, routeId: string, description: string): Promise<{ ok: boolean }> {
+  const owner = await assertOwner(token, routeId);
+  if (!owner) return { ok: false };
+  await supabaseAdmin().from("routes").update({ description: description.trim().slice(0, 280) || null }).eq("id", routeId);
+  return { ok: true };
+}
+
+/** Regenera la portada con IA a partir de un prompt del usuario (síncrono: devuelve la URL nueva). */
+export async function generateRouteCover(token: string, routeId: string, prompt: string): Promise<{ ok: boolean; coverUrl?: string; error?: string }> {
+  const owner = await assertOwner(token, routeId);
+  if (!owner) return { ok: false, error: "No autorizado" };
+
+  const img = await generateCoverImage(prompt.trim().slice(0, 600));
+  if (!img) return { ok: false, error: "No se pudo generar la portada. Inténtalo de nuevo." };
+
+  const sb = supabaseAdmin();
+  const path = `${routeId}/cover-${Date.now()}.png`;
+  const { error } = await sb.storage.from(COVER_BUCKET).upload(path, img, { contentType: "image/png", upsert: true });
+  if (error) return { ok: false, error: "No se pudo guardar la portada." };
+
+  await sb.from("routes").update({ cover_path: path, cover_prompt: prompt }).eq("id", routeId);
+  return { ok: true, coverUrl: publicUrl(COVER_BUCKET, path) ?? undefined };
+}
+
+export async function uploadRouteCover(token: string, routeId: string, base64: string): Promise<{ ok: boolean; coverUrl?: string; error?: string }> {
+  const owner = await assertOwner(token, routeId);
+  if (!owner) return { ok: false, error: "No autorizado" };
+
+  const { buffer, contentType } = decodeImage(base64);
+  if (buffer.length === 0) return { ok: false, error: "Imagen vacía." };
+  if (buffer.length > MAX_IMAGE_BYTES) return { ok: false, error: "La imagen supera el límite de 8 MB." };
+
+  const sb = supabaseAdmin();
+  const ext = contentType.includes("jpeg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
+  const path = `${routeId}/cover-${Date.now()}.${ext}`;
+  const { error } = await sb.storage.from(COVER_BUCKET).upload(path, buffer, { contentType, upsert: true });
+  if (error) return { ok: false, error: "No se pudo subir la portada." };
+
+  await sb.from("routes").update({ cover_path: path, cover_prompt: null }).eq("id", routeId);
+  return { ok: true, coverUrl: publicUrl(COVER_BUCKET, path) ?? undefined };
+}

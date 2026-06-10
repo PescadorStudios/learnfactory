@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home } from "lucide-react";
+import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home, Info } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getRoute, retryLesson, resumeRoute } from "../routeActions";
 import type { RouteDetail, TreeNode, NodeState } from "@/lib/types";
@@ -174,6 +174,9 @@ function KnowledgeTree() {
           <div className="flex justify-center items-center gap-3 mb-6">
             <button onClick={() => router.push("/")} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2 text-zinc-400 hover:text-white transition-colors">
               <Home className="w-4 h-4" />
+            </button>
+            <button onClick={() => router.push(`/route/${routeId}`)} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2 text-zinc-400 hover:text-white transition-colors" title="Ver ficha de la ruta">
+              <Info className="w-4 h-4" />
             </button>
             <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2">
               <Star className="w-4 h-4 text-amber-400 fill-current" />

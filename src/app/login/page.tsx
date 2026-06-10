@@ -13,6 +13,7 @@ export default function LoginPage() {
   const { session, loading } = useAuth();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -28,13 +29,17 @@ export default function LoginPage() {
       setError("Correo válido y contraseña de mínimo 6 caracteres.");
       return;
     }
+    if (mode === "signup" && !/^[a-z0-9_]{3,20}$/.test(username.trim().toLowerCase())) {
+      setError("Elige un usuario de 3-20 caracteres (letras, números o guion bajo).");
+      return;
+    }
     setBusy(true);
 
     try {
       const sb = supabaseBrowser();
 
       if (mode === "signup") {
-        const result = await registerUser(email.trim(), password);
+        const result = await registerUser(email.trim(), password, username.trim());
         if (!result.ok) {
           setError(result.error || "No se pudo crear la cuenta.");
           setBusy(false);
@@ -107,6 +112,20 @@ export default function LoginPage() {
             autoComplete="email"
             className="w-full bg-zinc-900/80 border border-zinc-800 rounded-2xl py-4 px-6 text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
           />
+          {mode === "signup" && (
+            <div className="relative">
+              <span className="absolute left-6 top-1/2 -translate-y-1/2 text-zinc-500">@</span>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase())}
+                placeholder="tu_usuario"
+                autoComplete="username"
+                maxLength={20}
+                className="w-full bg-zinc-900/80 border border-zinc-800 rounded-2xl py-4 pl-10 pr-6 text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
+              />
+            </div>
+          )}
           <input
             type="password"
             value={password}
