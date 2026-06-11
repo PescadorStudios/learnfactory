@@ -3,9 +3,10 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home, Info } from "lucide-react";
+import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home, Info, Wand2, X } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
-import { getRoute, retryLesson, resumeRoute } from "../routeActions";
+import { useRouteRealtime } from "@/lib/useRouteRealtime";
+import { getRoute, retryLesson, resumeRoute, regenerateLesson } from "../routeActions";
 import type { RouteDetail, TreeNode, NodeState } from "@/lib/types";
 
 const NODE_TYPE_LABELS: Record<string, string> = {
@@ -59,6 +60,10 @@ function KnowledgeTree() {
   const [retrying, setRetrying] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
   const [stalledPolls, setStalledPolls] = useState(0);
+  // Regeneración guiada (solo dueño): nodo objetivo + prompt opcional
+  const [regenNode, setRegenNode] = useState<TreeNode | null>(null);
+  const [regenPrompt, setRegenPrompt] = useState("");
+  const [regenBusy, setRegenBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!token || !routeId) return;
@@ -71,13 +76,16 @@ function KnowledgeTree() {
     load();
   }, [load]);
 
-  // Polling mientras haya lecciones generándose
+  // Websocket: cada lección del lote aparece en su placeholder al completarse
+  useRouteRealtime(routeId, load);
+
+  // Polling de respaldo (por si el websocket falla) mientras haya generación
   useEffect(() => {
     if (!route) return;
     const generating = route.status === "generating" ||
       Object.values(route.nodes).some(n => n.status === "pending" || n.status === "generating");
     if (!generating) return;
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, 12000);
     return () => clearInterval(interval);
   }, [route, load]);
 
@@ -148,6 +156,16 @@ function KnowledgeTree() {
     setStalledPolls(0); // ocultar el aviso; si sigue parada, reaparece en ~10 s
     await load();
     setResuming(false);
+  };
+
+  const handleRegenerate = async () => {
+    if (!token || !regenNode) return;
+    setRegenBusy(true);
+    await regenerateLesson(token, routeId, regenNode.id, regenPrompt.trim() || undefined);
+    setRegenBusy(false);
+    setRegenNode(null);
+    setRegenPrompt("");
+    await load();
   };
 
   // Lecciones recuperables: en error o atascadas (proceso huérfano).
@@ -362,6 +380,16 @@ function KnowledgeTree() {
                                 {isStale ? "Se quedó atascada — Reintentar" : "Error al generar — Reintentar"}
                               </span>
                             )}
+                            {route.isOwner && isReady && node.type !== "debate" && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => { e.stopPropagation(); setRegenNode(node); setRegenPrompt(""); }}
+                                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-primary cursor-pointer transition-colors"
+                              >
+                                <Wand2 className="w-3 h-3" /> Regenerar
+                              </span>
+                            )}
                           </div>
 
                           <div className="shrink-0 ml-4">
@@ -382,6 +410,60 @@ function KnowledgeTree() {
           ))}
         </div>
       </div>
+
+      {/* Modal de regeneración guiada (solo dueño) */}
+      <AnimatePresence>
+        {regenNode && (
+          <div
+            className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => !regenBusy && setRegenNode(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 w-full max-w-md"
+            >
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Wand2 className="w-5 h-5 text-primary" /> Regenerar lección
+                </h3>
+                <button onClick={() => !regenBusy && setRegenNode(null)} className="text-zinc-500 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <p className="text-sm text-zinc-500 mb-4">{regenNode.title}</p>
+
+              <label className="text-xs uppercase tracking-wider text-zinc-500 font-bold">
+                ¿Cómo quieres que sea? (opcional)
+              </label>
+              <textarea
+                value={regenPrompt}
+                onChange={e => setRegenPrompt(e.target.value)}
+                rows={3}
+                maxLength={500}
+                placeholder="Ej: hazla más práctica, con ejemplos del mundo médico; usa un tono más serio..."
+                className="w-full mt-1 mb-3 bg-zinc-950 border border-zinc-800 rounded-2xl p-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary resize-none"
+              />
+
+              <p className="text-xs text-amber-400/80 mb-4 flex items-start gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                Reemplaza el contenido y el audio actuales de esta lección. Tarda 1-2 minutos.
+              </p>
+
+              <button
+                onClick={handleRegenerate}
+                disabled={regenBusy}
+                className="w-full py-3.5 rounded-2xl font-bold bg-primary text-white hover:bg-primary-hover transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {regenBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5" />}
+                Regenerar con IA
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

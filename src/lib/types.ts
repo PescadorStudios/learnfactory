@@ -76,29 +76,61 @@ export interface QuizStep {
 
 export type LessonStep = ContentStep | OpenQuestionStep | QuizStep;
 
-// ── Intro de audio con juego de atención ──
+// ── Sistema de verificación de atención (3 mecánicas rotativas) ──
 
-export interface AttentionQuestion {
-  atSeconds: number; // momento del audio en que aparece
-  question: string;
-  options: string[]; // exactamente 2
+export type AttentionMode = "spy" | "subtitles" | "copilot";
+
+/** Mecánica 1 — Misión de Espía: misiones reveladas antes del audio, respondidas al final. */
+export interface SpyMission {
+  /** Instrucción mostrada ANTES del audio: qué detectar mientras escucha. */
+  instruccion: string;
+  /** Pregunta directa al terminar el audio. */
+  pregunta: string;
+  options: string[]; // 3 opciones
   correctIndex: number;
 }
-
-export interface AudioIntroData {
-  durationSeconds: number;
-  questions: AttentionQuestion[];
+export interface SpyData {
+  mode: "spy";
+  misiones: SpyMission[]; // 2-3
 }
+
+/** Mecánica 2 — Subtítulos Trampa: 12 subtítulos alterados que contradicen el audio. */
+export interface SubtitleCue {
+  atSeconds: number;
+  endSeconds: number;
+  /** Texto mostrado en pantalla (en las trampas, contradice lo narrado). */
+  texto: string;
+  /** true en los subtítulos trampa. */
+  alterado: boolean;
+  /** Lo que realmente dice el audio (para el feedback de resultados). */
+  original?: string;
+}
+export interface SubtitlesData {
+  mode: "subtitles";
+  cues: SubtitleCue[];
+  /** Número de trampas (12). */
+  trampas: number;
+}
+
+/** Mecánica 3 — Co-Piloto Narrativo: el narrador duda y el oyente decide en 5 s. */
+export interface CopilotCheckpoint {
+  /** Momento del audio en que se pausa (fin de la pregunta narrada). */
+  atSeconds: number;
+  options: string[]; // exactamente 2, sin contexto suficiente por sí solas
+  correctIndex: number;
+  /** Corrección breve del narrador si el oyente falla o no responde. */
+  correccion: string;
+}
+export interface CopilotData {
+  mode: "copilot";
+  checkpoints: CopilotCheckpoint[]; // 6
+}
+
+export type AttentionData = SpyData | SubtitlesData | CopilotData;
 
 export interface MicroLessonData {
-  audioIntro: AudioIntroData | null; // null = sin audio (TTS falló o sin API key)
+  attention: AttentionData | null; // null = sin audio o lección antigua
   steps: LessonStep[];
-}
-
-/** Respuesta completa de la action (el base64 NO se guarda en localStorage) */
-export interface MicroLessonResponse {
-  lesson: MicroLessonData;
-  audioWavBase64: string | null;
 }
 
 // ── Evaluación socrática ──
@@ -315,8 +347,9 @@ export interface LessonData {
   steps: LessonStep[] | null; // theory / practice
   quiz: QuizNodeData | null; // nodos quiz
   boss: BossExamData | null; // nodos boss
-  audioIntro: AudioIntroData | null;
+  attention: AttentionData | null; // juego de atención del audio
   audioUrl: string | null;
+  audioDurationSeconds: number | null;
   topic: string;
   sintesis: Sintesis; // para debate y evaluaciones
 }

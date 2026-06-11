@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertTriangle, Mic, RefreshCw } from "lucide-react";
 import type { AttemptInput, LessonData } from "@/lib/types";
 import { useRequireAuth } from "@/lib/useAuth";
+import { useRouteRealtime } from "@/lib/useRouteRealtime";
 import { getLesson, saveAttempt, retryLesson } from "../routeActions";
 import { getAudio, putAudio } from "@/lib/audioCache";
 import MicroLesson from "./MicroLesson";
@@ -64,16 +65,19 @@ function LessonDispatcher() {
     load();
   }, [load]);
 
-  // Polling mientras la lección se esté generando
+  // Websocket: la lección llega sola en cuanto el lote la completa
+  useRouteRealtime(routeId, load);
+
+  // Polling de respaldo (por si el websocket falla) mientras se genera
   useEffect(() => {
     if (!lesson || lesson.status === "ready" || lesson.status === "error") return;
-    const interval = setInterval(load, 5000);
+    const interval = setInterval(load, 12000);
     return () => clearInterval(interval);
   }, [lesson, load]);
 
   // Descargar el audio (IndexedDB primero, luego Storage)
   useEffect(() => {
-    if (!lesson || lesson.status !== "ready" || !lesson.audioIntro || !lesson.audioUrl) return;
+    if (!lesson || lesson.status !== "ready" || !lesson.attention || !lesson.audioUrl) return;
     const audioKey = `audio_${routeId}_${nodeId}`;
     if (fetchedAudioFor.current === audioKey) return;
     fetchedAudioFor.current = audioKey;
@@ -181,7 +185,7 @@ function LessonDispatcher() {
   }
 
   // Esperar el audio si la lección lo tiene
-  if (lesson.audioIntro && lesson.audioUrl && audioLoading) {
+  if (lesson.attention && lesson.audioUrl && audioLoading) {
     return <LessonLoading text="Descargando el podcast de la lección..." />;
   }
 

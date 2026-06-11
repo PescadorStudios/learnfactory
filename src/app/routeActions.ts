@@ -26,6 +26,8 @@ import type {
   SaveAttemptResult,
   LessonGenStatus,
   BossExamData,
+  AttentionMode,
+  AttentionData,
 } from "@/lib/types";
 
 const AUDIO_BUCKET = "lesson-audio";
@@ -193,13 +195,49 @@ function coverUrlFor(coverPath: string | null): string | null {
 }
 
 /**
- * Loop secuencial: genera contenido + audio de cada lección pendiente y lo
- * persiste. Reclama lecciones huérfanas ("generating" viejas) y reintenta las
- * que quedaron en "error", de modo que relanzarlo reanuda la cola completa.
+ * Plan de generación por nodo, calculable ANTES de generar nada:
+ * - studiedConceptIds: conceptos de todos los nodos anteriores en el árbol.
+ * - attentionMode: las 3 mecánicas de atención rotan en orden cíclico entre
+ *   las lecciones con audio (espía → subtítulos → co-piloto), nunca dos
+ *   veces seguidas la misma.
+ */
+interface LessonPlanEntry {
+  node: TreeNode;
+  studiedConceptIds: string[];
+  attentionMode: AttentionMode;
+}
+
+const ATTENTION_CYCLE: AttentionMode[] = ["spy", "subtitles", "copilot"];
+
+function buildLessonPlan(tree: Tree): Map<string, LessonPlanEntry> {
+  const plan = new Map<string, LessonPlanEntry>();
+  const studied: string[] = [];
+  let audioLessonIndex = 0;
+
+  for (const node of flattenNodes(tree)) {
+    let attentionMode: AttentionMode = "spy";
+    if (node.type === "theory" || node.type === "practice") {
+      attentionMode = ATTENTION_CYCLE[audioLessonIndex % ATTENTION_CYCLE.length];
+      audioLessonIndex++;
+    }
+    plan.set(node.id, { node, studiedConceptIds: [...studied], attentionMode });
+    for (const c of node.conceptIds || []) {
+      if (!studied.includes(c)) studied.push(c);
+    }
+  }
+  return plan;
+}
+
+/**
+ * Generación EN PARALELO (estilo lote): los prompts de todas las lecciones se
+ * preparan de antemano (buildLessonPlan) y se despachan todos a la vez. Cada
+ * fila de `lessons` es el placeholder de su resultado: al completarse, la fila
+ * se actualiza y Supabase Realtime (websockets) empuja el cambio al cliente.
+ * El TTS lleva un semáforo interno para respetar rate limits.
  */
 async function generateRouteLessons(routeId: string) {
   if (activeRouteGen.has(routeId)) {
-    console.log(`[RouteGen] Ruta ${routeId} ya tiene un loop activo; no se relanza.`);
+    console.log(`[RouteGen] Ruta ${routeId} ya tiene un lote activo; no se relanza.`);
     return;
   }
   activeRouteGen.add(routeId);
@@ -211,39 +249,30 @@ async function generateRouteLessons(routeId: string) {
 
     const tree = route.tree as Tree;
     const sintesis = route.sintesis as Sintesis;
-    const nodes = flattenNodes(tree);
+    const plan = buildLessonPlan(tree);
 
     await sb.from("routes").update({ status: "generating" }).eq("id", routeId);
 
     // Reclamar lecciones huérfanas (generating viejas) y reintentar las que
-    // están en error: vuelven a "pending" para que el loop las regenere.
+    // están en error: vuelven a "pending" para que el lote las regenere.
     const staleCutoff = new Date(Date.now() - STALE_GENERATING_MS).toISOString();
     await sb.from("lessons").update({ status: "pending", error: null })
       .eq("route_id", routeId).eq("status", "error").neq("node_type", "debate");
     await sb.from("lessons").update({ status: "pending", error: null })
       .eq("route_id", routeId).eq("status", "generating").lt("generating_at", staleCutoff);
 
-    const studiedSoFar: string[] = [];
+    const { data: rows } = await sb.from("lessons").select("node_id, status").eq("route_id", routeId);
+    const statusByNode = new Map((rows || []).map(r => [r.node_id, r.status]));
 
-    for (const node of nodes) {
-      const focal = node.conceptIds || [];
+    const tasks = [...plan.values()].filter(
+      p => p.node.type !== "debate" && statusByNode.get(p.node.id) === "pending"
+    );
 
-      if (node.type !== "debate") {
-        const { data: lessonRow } = await sb
-          .from("lessons")
-          .select("id, status")
-          .eq("route_id", routeId)
-          .eq("node_id", node.id)
-          .single();
-
-        if (lessonRow && lessonRow.status === "pending") {
-          await generateOneLesson(routeId, route.topic, sintesis, node, [...studiedSoFar]);
-        }
-      }
-
-      for (const c of focal) {
-        if (!studiedSoFar.includes(c)) studiedSoFar.push(c);
-      }
+    if (tasks.length > 0) {
+      console.log(`[RouteGen] ⚡ Despachando ${tasks.length} lecciones EN PARALELO (ruta ${routeId})...`);
+      await Promise.allSettled(
+        tasks.map(p => generateOneLesson(routeId, route.topic, sintesis, p.node, p.studiedConceptIds, p.attentionMode))
+      );
     }
 
     await sb.from("routes").update({ status: "ready" }).eq("id", routeId);
@@ -261,7 +290,9 @@ async function generateOneLesson(
   topic: string,
   sintesis: Sintesis,
   node: TreeNode,
-  studiedConceptIds: string[]
+  studiedConceptIds: string[],
+  attentionMode: AttentionMode,
+  guidance?: string
 ) {
   const sb = supabaseAdmin();
   const focal = node.conceptIds || [];
@@ -269,14 +300,16 @@ async function generateOneLesson(
   await sb.from("lessons")
     .update({ status: "generating", error: null, generating_at: new Date().toISOString() })
     .eq("route_id", routeId).eq("node_id", node.id);
-  console.log(`[RouteGen] Generando ${node.type} "${node.title}" (${node.id})...`);
+  console.log(`[RouteGen] Generando ${node.type} "${node.title}" (${node.id}, atención: ${attentionMode})...`);
 
   try {
     if (node.type === "theory" || node.type === "practice") {
-      const content = await generateLessonContent(topic, node.title, node.type, sintesis, focal, studiedConceptIds);
+      const content = await generateLessonContent(
+        topic, node.title, node.type, sintesis, focal, studiedConceptIds, attentionMode, guidance
+      );
 
       let audioPath: string | null = null;
-      if (content.wav && content.audioIntro) {
+      if (content.wav && content.attention) {
         audioPath = `${routeId}/${node.id}.wav`;
         let uploaded = false;
         for (let i = 1; i <= 3 && !uploaded; i++) {
@@ -298,17 +331,17 @@ async function generateOneLesson(
 
       await sb.from("lessons").update({
         content: { steps: content.steps },
-        audio_questions: audioPath ? content.audioIntro?.questions : null,
-        audio_duration: audioPath ? content.audioIntro?.durationSeconds : null,
+        audio_questions: audioPath ? content.attention : null,
+        audio_duration: audioPath ? content.durationSeconds : null,
         audio_path: audioPath,
         status: "ready",
       }).eq("route_id", routeId).eq("node_id", node.id);
     } else if (node.type === "quiz") {
       const reviewIds = studiedConceptIds.filter(c => !focal.includes(c));
-      const quiz = await generateQuizNode(topic, sintesis, focal, reviewIds);
+      const quiz = await generateQuizNode(topic, sintesis, focal, reviewIds, guidance);
       await sb.from("lessons").update({ content: quiz, status: "ready" }).eq("route_id", routeId).eq("node_id", node.id);
     } else if (node.type === "boss") {
-      const exam = await generateBossExam(topic, sintesis);
+      const exam = await generateBossExam(topic, sintesis, guidance);
       await sb.from("lessons").update({ content: exam, status: "ready" }).eq("route_id", routeId).eq("node_id", node.id);
     }
 
@@ -320,6 +353,44 @@ async function generateOneLesson(
       error: e instanceof Error ? e.message : "Error desconocido",
     }).eq("route_id", routeId).eq("node_id", node.id);
   }
+}
+
+/**
+ * Regenera una lección bajo demanda del CREADOR del curso, con un prompt
+ * opcional que guía la regeneración (p. ej. "hazla más práctica, con
+ * ejemplos de medicina"). Reemplaza el contenido y el audio existentes.
+ */
+export async function regenerateLesson(
+  token: string,
+  routeId: string,
+  nodeId: string,
+  guidance?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+
+  const sb = supabaseAdmin();
+  const { data: route } = await sb.from("routes").select("owner_id, topic, sintesis, tree").eq("id", routeId).single();
+  if (!route) return { ok: false, error: "Ruta no encontrada" };
+  if (route.owner_id !== user.id) return { ok: false, error: "Solo el creador puede regenerar lecciones." };
+
+  const plan = buildLessonPlan(route.tree as Tree);
+  const entry = plan.get(nodeId);
+  if (!entry || entry.node.type === "debate") return { ok: false, error: "Esta lección no se puede regenerar." };
+
+  await sb.from("lessons").update({ status: "pending", error: null }).eq("route_id", routeId).eq("node_id", nodeId);
+  after(() =>
+    generateOneLesson(
+      routeId,
+      route.topic,
+      route.sintesis as Sintesis,
+      entry.node,
+      entry.studiedConceptIds,
+      entry.attentionMode,
+      guidance?.trim() || undefined
+    )
+  );
+  return { ok: true };
 }
 
 /**
@@ -537,6 +608,14 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
   const type = lesson.node_type as LessonData["nodeType"];
   const content = lesson.content as Record<string, unknown> | null;
 
+  // El nuevo sistema guarda un objeto { mode: ... }; las lecciones antiguas
+  // guardaban un array de preguntas flash → se tratan como "sin juego".
+  const rawAttention = lesson.audio_questions;
+  const attention: AttentionData | null =
+    rawAttention && !Array.isArray(rawAttention) && typeof rawAttention === "object" && "mode" in rawAttention
+      ? (rawAttention as AttentionData)
+      : null;
+
   return {
     nodeId: lesson.node_id,
     nodeType: type,
@@ -547,11 +626,9 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
     steps: type === "theory" || type === "practice" ? ((content?.steps as LessonData["steps"]) ?? null) : null,
     quiz: type === "quiz" ? ((content as LessonData["quiz"]) ?? null) : null,
     boss: type === "boss" ? ((content as unknown as BossExamData) ?? null) : null,
-    audioIntro:
-      lesson.audio_questions && lesson.audio_duration
-        ? { durationSeconds: lesson.audio_duration, questions: lesson.audio_questions }
-        : null,
+    attention,
     audioUrl,
+    audioDurationSeconds: lesson.audio_duration ?? null,
     topic: route.topic,
     sintesis: route.sintesis as Sintesis,
   };

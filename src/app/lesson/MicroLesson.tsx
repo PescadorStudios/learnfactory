@@ -9,7 +9,7 @@ import { XP, starsForMicroLesson } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
 import QuizQuestion from "./QuizQuestion";
-import AudioIntroGame from "./AudioIntroGame";
+import AttentionGame from "./attention/AttentionGame";
 
 interface Props {
   routeId: string;
@@ -22,7 +22,7 @@ interface Props {
 
 export default function MicroLesson({ token, lesson, audioBlob, onComplete, onExit }: Props) {
   const lessonSteps = lesson.steps || [];
-  const hasAudio = Boolean(lesson.audioIntro && audioBlob);
+  const hasAudio = Boolean(lesson.attention && audioBlob && lesson.audioDurationSeconds);
 
   const [phase, setPhase] = useState<"audio" | "steps">(hasAudio ? "audio" : "steps");
   const [currentStep, setCurrentStep] = useState(0);
@@ -39,7 +39,7 @@ export default function MicroLesson({ token, lesson, audioBlob, onComplete, onEx
 
   // Acumuladores para el score final
   const xpTotal = useRef(0);
-  const attention = useRef({ correct: 0, total: lesson.audioIntro?.questions.length ?? 0 });
+  const attention = useRef({ correct: 0, total: 0 });
   const socraticScores = useRef<number[]>([]);
   const quizCorrectRef = useRef(false);
   const masteryUpdates = useRef<Array<{ conceptId: string; delta: number }>>([]);
@@ -53,15 +53,16 @@ export default function MicroLesson({ token, lesson, audioBlob, onComplete, onEx
     );
   }
 
-  // Fase 1: podcast de contexto con juego de atención
-  if (phase === "audio" && lesson.audioIntro && audioBlob) {
+  // Fase 1: podcast de contexto con verificación de atención (mecánica rotativa)
+  if (phase === "audio" && lesson.attention && audioBlob && lesson.audioDurationSeconds) {
     return (
-      <AudioIntroGame
+      <AttentionGame
         nodeTitle={lesson.title}
         audioBlob={audioBlob}
-        intro={lesson.audioIntro}
-        onFinish={(correctCount) => {
-          attention.current = { correct: correctCount, total: lesson.audioIntro!.questions.length };
+        attention={lesson.attention}
+        durationSeconds={lesson.audioDurationSeconds}
+        onFinish={(correct, total) => {
+          attention.current = { correct, total };
           xpTotal.current += XP.audioFocusPass;
           setPhase("steps");
         }}

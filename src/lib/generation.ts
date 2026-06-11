@@ -20,15 +20,39 @@ import type {
   QuizNodeData,
   BossExamData,
   LessonStep,
-  AudioIntroData,
-  AttentionQuestion,
+  AttentionMode,
+  AttentionData,
+  SpyMission,
+  SubtitleCue,
+  CopilotCheckpoint,
 } from "./types";
 
 const apiKey = process.env.GEMINI_API_KEY || "";
 const genAI = new GoogleGenerativeAI(apiKey);
 const fileManager = apiKey ? new GoogleAIFileManager(apiKey) : null;
 
-export const AUDIO_QUESTION_COUNT = 11;
+// ── Semáforo de TTS ──
+// La generación de lecciones ahora corre EN PARALELO; el TTS es lo pesado y lo
+// que se ratelimita, así que limitamos cuántas síntesis corren a la vez. El
+// resto (JSON) vuela en paralelo total.
+const TTS_MAX_CONCURRENT = 3;
+let ttsActive = 0;
+const ttsWaiters: Array<() => void> = [];
+
+async function acquireTtsSlot(): Promise<void> {
+  if (ttsActive < TTS_MAX_CONCURRENT) {
+    ttsActive++;
+    return;
+  }
+  await new Promise<void>(resolve => ttsWaiters.push(resolve));
+  ttsActive++;
+}
+
+function releaseTtsSlot(): void {
+  ttsActive--;
+  const next = ttsWaiters.shift();
+  if (next) next();
+}
 
 // Timeouts (ms): si Gemini/TTS se cuelgan, la promesa se rechaza y el loop
 // de generación continúa con la siguiente lección en vez de quedar bloqueado.
@@ -156,15 +180,22 @@ function pcmToWav(pcm: Buffer, sampleRate = TTS_SAMPLE_RATE): Buffer {
 }
 
 export async function synthesizeSpeech(text: string): Promise<{ wav: Buffer; durationSeconds: number } | null> {
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const result = await synthesizeSpeechOnce(text);
-    if (result) return result;
-    if (attempt === 1) {
-      console.warn("[TTS] Reintentando síntesis...");
-      await new Promise(r => setTimeout(r, 2000));
+  await acquireTtsSlot();
+  try {
+    // Backoff progresivo: en paralelo es normal recibir algún 429 puntual.
+    const waits = [4000, 10000];
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const result = await synthesizeSpeechOnce(text);
+      if (result) return result;
+      if (attempt < 3) {
+        console.warn(`[TTS] Reintentando síntesis (intento ${attempt + 1}/3)...`);
+        await new Promise(r => setTimeout(r, waits[attempt - 1]));
+      }
     }
+    return null;
+  } finally {
+    releaseTtsSlot();
   }
-  return null;
 }
 
 async function synthesizeSpeechOnce(text: string): Promise<{ wav: Buffer; durationSeconds: number } | null> {
@@ -645,13 +676,156 @@ SOLO devuelve el JSON, sin formato markdown ni texto adicional:
 }
 
 // ──────────────────────────────────────────────────
-//  CONTENIDO DE MICROLECCIÓN (guion 11 preguntas + pasos + TTS)
+//  CONTENIDO DE MICROLECCIÓN
+//  Audio + sistema de atención rotativo (espía / subtítulos / co-piloto)
 // ──────────────────────────────────────────────────
 
 export interface LessonContent {
   steps: LessonStep[];
-  audioIntro: AudioIntroData | null;
+  attention: AttentionData | null;
+  durationSeconds: number | null;
   wav: Buffer | null;
+}
+
+const TTS_NARRATION_PREFIX =
+  "Narra en español con voz de adulto joven: tono maduro, claro, cálido y profesional, como un narrador de documentales cercano:\n\n";
+
+/** Baraja un par opciones/correctIndex (el modelo tiende a poner la correcta primero). */
+function shuffleOptions(options: string[], correctIndex: number): { options: string[]; correctIndex: number } {
+  const indices = options.map((_, i) => i);
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  return {
+    options: indices.map(i => options[i]),
+    correctIndex: indices.indexOf(correctIndex),
+  };
+}
+
+function guidanceBlock(guidance?: string): string {
+  return guidance?.trim()
+    ? `\nPETICIÓN DEL CREADOR DEL CURSO (ajústate a ella sin violar la fidelidad a la síntesis): «${guidance.trim().slice(0, 500)}»\n`
+    : "";
+}
+
+/** PARTE B compartida: los 5 pasos de la lección. */
+function stepsPromptPart(): string {
+  return `
+PARTE B — "steps": exactamente estos 5 pasos:
+1. { "type": "theory", "title": "...", "content": "Explicación fiel a la síntesis (máx 3 oraciones)", "cita": "Cita textual de la síntesis que la respalda" }
+2. { "type": "analogy", "title": "Analogía", "content": "Una analogía muy creativa para recordarlo, que NO distorsione el significado original" }
+3. { "type": "elaboration", "title": "Conéctalo", "prompt": "Pregunta de elaboración: pide al usuario conectar este concepto con la tesis global o con un concepto ya visto, en sus propias palabras", "conceptContext": "Resumen de 2-3 oraciones de los conceptos relevantes para evaluar la respuesta" }
+4. { "type": "debate", "title": "Pregunta Socrática", "prompt": "Pregunta retadora basada en la síntesis", "conceptContext": "Resumen de 2-3 oraciones de los conceptos relevantes para evaluar la respuesta" }
+5. { "type": "quiz", "title": "Comprueba tu comprensión", "question": "...", "options": ["A", "B", "C", "D"], "correctAnswer": 0, "explicacion": "Por qué es correcta, apoyándote en la síntesis", "conceptId": "id del concepto focal evaluado" }`;
+}
+
+function lessonPromptHeader(
+  topic: string,
+  nodeTitle: string,
+  nodeType: NodeType,
+  sintesis: Sintesis,
+  conceptIds: string[],
+  studiedConceptIds: string[],
+  guidance?: string
+): string {
+  const practiceInstruction = nodeType === "practice"
+    ? `\nEsta es una lección de PRÁCTICA: el paso "theory" debe presentar un caso o escenario concreto donde se aplique el concepto (no solo definirlo), y el paso "quiz" debe ser de nivel de APLICACIÓN (resolver una situación), no de simple recuerdo.`
+    : "";
+  const recapInstruction = studiedConceptIds.length
+    ? `\nAl inicio de la narración, conecta brevemente lo ya aprendido (conceptos: ${studiedConceptIds.join(", ")}) con lo que viene.`
+    : "";
+  return `
+Actúa como tutor experto en la academia "LearnFactory".
+${sintesisBlock(sintesis)}
+${guidanceBlock(guidance)}
+Conceptos focales de esta lección: ${conceptIds.length ? conceptIds.join(", ") : "los más relevantes al subtema"}
+
+Crea una microlección sobre "${nodeTitle}" (tema general: "${topic}").${practiceInstruction}${recapInstruction}
+
+REGLAS DE NARRACIÓN (la PARTE A se leerá en voz alta TAL CUAL):
+- Tono de narrador de podcast entusiasta y cercano, en segunda persona. Cuenta el contexto como una historia: gancho → panorama → conceptos → ejemplos → por qué importa.
+- Nada de markdown, emojis, títulos ni acotaciones; solo prosa hablada natural y fluida.
+- Fiel a la síntesis: nada inventado.`;
+}
+
+// ── Prompts de la PARTE A por mecánica ──
+
+function spyPromptPart(): string {
+  return `
+PARTE A — "guion" + "misiones" (MECÁNICA: MISIÓN DE ESPÍA):
+"guion": mini-podcast de ~3 minutos en exactamente 10 segmentos de 40-45 palabras cada uno (narración pura, sin preguntas habladas).
+
+"misiones": exactamente 3 misiones de escucha que el oyente recibe ANTES de oír el audio y responde AL FINAL. Reglas estrictas:
+- Cada misión instruye a DETECTAR algo concreto durante la narración: una causa, el orden en que aparecen varios elementos, una característica que aplica a un escenario específico, una contradicción aparente, quién/qué hizo algo.
+- PROHIBIDO preguntar por el tema central explícito del audio: las misiones son sobre detalles que SOLO se capturan prestando atención sostenida.
+- Reparto obligatorio: la misión 1 se responde con información del primer tercio del audio, la 2 con el tercio medio y la 3 con el final (así toda interacción exige memoria de lo escuchado).
+- "instruccion": lenguaje de juego de espías, imperativo y breve (máx 15 palabras), SIN revelar la respuesta. Ej: "Detecta qué provocó el colapso del sistema."
+- "pregunta": la pregunta directa que se hace al final (máx 14 palabras).
+- "options": exactamente 3 opciones cortas y plausibles (máx 5 palabras); "correctIndex" la correcta.
+
+Devuelve SOLO este JSON:
+{
+  "guion": [ { "texto": "40-45 palabras..." } ],
+  "misiones": [ { "instruccion": "...", "pregunta": "...", "options": ["...","...","..."], "correctIndex": 0 } ],
+  "steps": [...]
+}`;
+}
+
+function subtitlesPromptPart(): string {
+  return `
+PARTE A — "cues" (MECÁNICA: SUBTÍTULOS TRAMPA):
+La narración de ~3 minutos se divide en exactamente 40 "cues" (frases cortas de 8 a 13 palabras) que juntas forman una narración continua y natural (al concatenarlas se leen como prosa fluida).
+
+Exactamente 12 cues llevan además "textoAlterado": una versión del cue donde UNA palabra o frase clave fue cambiada de modo que CONTRADICE lo que el audio realmente dice. Reglas estrictas:
+- La alteración SIEMPRE afecta contenido clave: una cifra, un orden, una causa, un nombre conceptual, una relación (causa↔consecuencia, antes↔después, más↔menos).
+- El texto alterado debe leerse 100% natural y plausible por sí solo: PROHIBIDO que sea detectable solo leyendo; solo se nota al COMPARAR con lo que se oye.
+- Las 12 trampas se reparten por TODO el audio y nunca hay dos en cues consecutivos.
+- Al menos 2 trampas deben contradecir información que el audio estableció mucho antes (30+ segundos atrás), no solo la frase actual.
+
+Devuelve SOLO este JSON:
+{
+  "cues": [ { "texto": "frase que se narra..." }, { "texto": "frase que se narra...", "textoAlterado": "misma frase con el cambio trampa..." } ],
+  "steps": [...]
+}`;
+}
+
+function copilotPromptPart(): string {
+  return `
+PARTE A — "guion" (MECÁNICA: CO-PILOTO NARRATIVO):
+Mini-podcast de ~3 minutos en exactamente 12 segmentos de 35-45 palabras. Los segmentos 2, 4, 6, 8, 10 y 12 TERMINAN con una duda conversacional del narrador dirigida al oyente (forma parte del texto narrado), p. ej.: "...y aquí te lo pregunto a ti, copiloto: ¿esto ocurrió por la presión externa o por una decisión interna?". Esos 6 segmentos llevan además "checkpoint". Reglas estrictas:
+- La duda narrada plantea una bifurcación REAL sobre causas, consecuencias, definiciones o contrastes presentes en la síntesis.
+- Solo puede responderse habiendo ESCUCHADO los segundos anteriores: las opciones en pantalla NO contienen contexto suficiente por sí solas.
+- "options": exactamente 2, cortas (máx 5 palabras), correspondiendo a las dos alternativas de la duda narrada; "correctIndex" la correcta.
+- "correccion": 1 frase breve en voz del narrador para cuando el oyente ELIGIÓ LA OPCIÓN INCORRECTA: debe empezar corrigiendo el error y dar la respuesta correcta (ej.: "Casi, pero no: en realidad fue la presión externa, recuerda que..."). PROHIBIDO redactarla como confirmación o felicitación.
+- Al menos UNO de los 6 checkpoints debe girar sobre algo dicho 2 o más segmentos atrás (30+ segundos antes), no sobre la frase inmediata.
+- El segmento SIGUIENTE a cada duda comienza resolviéndola con naturalidad en su primera frase (confirma la respuesta correcta y sigue), para que el audio fluya tanto si el oyente acertó como si no.
+
+Devuelve SOLO este JSON:
+{
+  "guion": [ { "texto": "35-45 palabras..." }, { "texto": "35-45 palabras que terminan con la duda narrada...", "checkpoint": { "options": ["...","..."], "correctIndex": 0, "correccion": "..." } } ],
+  "steps": [...]
+}`;
+}
+
+/** Llama al modelo JSON con un reintento ante errores transitorios (429/503). */
+async function generateLessonJson(prompt: string): Promise<Record<string, unknown>> {
+  const model = getJsonModel();
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const result = await withTimeout(model.generateContent(prompt), TEXT_TIMEOUT_MS, "Generación del contenido de la lección");
+      return parseJsonResponse(result.response.text());
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const transient = /429|quota|rate|503|overloaded|fetch failed/i.test(msg);
+      if (attempt < 2 && transient) {
+        console.warn(`[LessonContent] Error transitorio (${msg.slice(0, 120)}). Reintentando en 6s...`);
+        await new Promise(r => setTimeout(r, 6000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 export async function generateLessonContent(
@@ -660,115 +834,147 @@ export async function generateLessonContent(
   nodeType: NodeType,
   sintesis: Sintesis,
   conceptIds: string[],
-  studiedConceptIds: string[]
+  studiedConceptIds: string[],
+  attentionMode: AttentionMode = "spy",
+  guidance?: string
 ): Promise<LessonContent> {
   if (!apiKey) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    return { steps: generateMockSteps(topic, nodeTitle), audioIntro: null, wav: null };
+    return { steps: generateMockSteps(topic, nodeTitle), attention: null, durationSeconds: null, wav: null };
   }
 
-  const model = getJsonModel();
+  const header = lessonPromptHeader(topic, nodeTitle, nodeType, sintesis, conceptIds, studiedConceptIds, guidance);
+  const partA =
+    attentionMode === "subtitles" ? subtitlesPromptPart() :
+    attentionMode === "copilot" ? copilotPromptPart() :
+    spyPromptPart();
 
-  const practiceInstruction = nodeType === "practice"
-    ? `\nEsta es una lección de PRÁCTICA: el paso "theory" debe presentar un caso o escenario concreto donde se aplique el concepto (no solo definirlo), y el paso "quiz" debe ser de nivel de APLICACIÓN (resolver una situación), no de simple recuerdo.`
-    : "";
-
-  const recapInstruction = studiedConceptIds.length
-    ? `En el segmento 2, conecta brevemente lo que el estudiante ya aprendió (conceptos: ${studiedConceptIds.join(", ")}) con lo que viene.`
-    : "";
-
-  const prompt = `
-Actúa como tutor experto en la academia "LearnFactory".
-${sintesisBlock(sintesis)}
-
-Conceptos focales de esta lección: ${conceptIds.length ? conceptIds.join(", ") : "los más relevantes al subtema"}
-
-Crea una microlección sobre "${nodeTitle}" (tema general: "${topic}").${practiceInstruction}
-
-La lección tiene DOS partes:
-
-PARTE A — "guion": el guion de un mini-podcast de ~3 minutos que da TODO el contexto de esta lección a alguien que llega desde cero. Exactamente ${AUDIO_QUESTION_COUNT} segmentos. Reglas:
-- Cada segmento: 40-45 palabras de narración continua. Tono de narrador de podcast entusiasta y cercano, en segunda persona. Cuenta el contexto como una historia: gancho → panorama → conceptos → ejemplos → por qué importa.
-- Fiel a la síntesis: nada inventado. ${recapInstruction}
-- El texto se leerá en voz alta TAL CUAL: nada de markdown, emojis, títulos ni acotaciones; solo prosa hablada natural con transiciones fluidas entre segmentos.
-- Cada segmento incluye UNA "pregunta" de atención sobre un dato CONCRETO que el segmento menciona. La pregunta NO evalúa comprensión profunda: solo comprueba que el oyente está prestando atención (ej.: si el segmento dice "la bola roja iba rodando", la pregunta es "¿De qué color era la bola?" con opciones ["Roja", "Verde"]).
-- REGLA CRÍTICA: el dato que responde la pregunta debe mencionarse en la PRIMERA ORACIÓN del segmento (la pregunta aparece en pantalla segundos después de oírse ese dato, deben coincidir casi al mismo tiempo).
-- Cada pregunta: máx 10 palabras, exactamente 2 opciones cortas (máx 4 palabras), una correcta y una claramente incorrecta.
-
-PARTE B — "steps": exactamente estos 5 pasos:
-1. { "type": "theory", "title": "...", "content": "Explicación fiel a la síntesis (máx 3 oraciones)", "cita": "Cita textual de la síntesis que la respalda" }
-2. { "type": "analogy", "title": "Analogía", "content": "Una analogía muy creativa para recordarlo, que NO distorsione el significado original" }
-3. { "type": "elaboration", "title": "Conéctalo", "prompt": "Pregunta de elaboración: pide al usuario conectar este concepto con la tesis global o con un concepto ya visto, en sus propias palabras", "conceptContext": "Resumen de 2-3 oraciones de los conceptos relevantes para evaluar la respuesta" }
-4. { "type": "debate", "title": "Pregunta Socrática", "prompt": "Pregunta retadora basada en la síntesis", "conceptContext": "Resumen de 2-3 oraciones de los conceptos relevantes para evaluar la respuesta" }
-5. { "type": "quiz", "title": "Comprueba tu comprensión", "question": "...", "options": ["A", "B", "C", "D"], "correctAnswer": 0, "explicacion": "Por qué es correcta, apoyándote en la síntesis", "conceptId": "id del concepto focal evaluado" }
-
-Devuelve SOLO este JSON, sin texto adicional ni markdown:
-{
-  "guion": [
-    { "texto": "40-45 palabras de narración...", "pregunta": { "question": "...", "options": ["...", "..."], "correctIndex": 0 } }
-  ],
-  "steps": [...]
-}
-`;
-
-  const result = await withTimeout(
-    model.generateContent(prompt),
-    TEXT_TIMEOUT_MS,
-    "Generación del guion de la lección"
-  );
-  const parsed = parseJsonResponse(result.response.text());
+  const parsed = await generateLessonJson(`${header}\n${partA}\n${stepsPromptPart()}\n\nDevuelve SOLO el JSON indicado, sin texto adicional ni markdown.`);
   if (!Array.isArray(parsed?.steps) || parsed.steps.length === 0) {
     throw new Error("La lección no tiene pasos válidos.");
   }
-
   const steps = parsed.steps as LessonStep[];
-  const guion: Array<{ texto: string; pregunta: { question: string; options: string[]; correctIndex: number } }> =
-    Array.isArray(parsed.guion) ? parsed.guion.filter((s: { texto?: string; pregunta?: { options?: string[] } }) => s?.texto && s?.pregunta?.options?.length === 2) : [];
 
-  if (guion.length < AUDIO_QUESTION_COUNT - 2) {
-    console.warn(`[LessonContent] Guion corto (${guion.length} segmentos): la lección irá sin intro de audio.`);
-    return { steps, audioIntro: null, wav: null };
-  }
+  const noAudio: LessonContent = { steps, attention: null, durationSeconds: null, wav: null };
 
-  const fullScript = guion.map(s => s.texto.trim()).join("\n\n");
-  const speech = await synthesizeSpeech(
-    `Narra en español con voz de adulto joven: tono maduro, claro, cálido y profesional, como un narrador de documentales cercano:\n\n${fullScript}`
-  );
+  // ── Construir guion + datos de atención según la mecánica ──
 
-  if (!speech) {
-    console.warn("[LessonContent] TTS no disponible: la lección irá sin intro de audio.");
-    return { steps, audioIntro: null, wav: null };
-  }
-
-  // Timing proporcional por caracteres: la pregunta aparece al ~55% de su segmento
-  // (el dato va en la PRIMERA oración, así que ya fue narrado segundos antes)
-  const totalChars = fullScript.length;
-  const questions: AttentionQuestion[] = [];
-  let offset = 0;
-  for (const seg of guion) {
-    const texto = seg.texto.trim();
-    const charPoint = offset + texto.length * 0.55;
-
-    // Barajar las opciones: el modelo tiende a poner la correcta siempre primero
-    let options = seg.pregunta.options;
-    let correctIndex = seg.pregunta.correctIndex === 1 ? 1 : 0;
-    if (Math.random() < 0.5) {
-      options = [options[1], options[0]];
-      correctIndex = correctIndex === 0 ? 1 : 0;
+  if (attentionMode === "subtitles") {
+    const rawCues: Array<{ texto?: string; textoAlterado?: string }> = Array.isArray(parsed.cues) ? (parsed.cues as Array<{ texto?: string; textoAlterado?: string }>) : [];
+    const cuesIn = rawCues.filter(c => typeof c?.texto === "string" && c.texto.trim().length > 0);
+    const trampasIn = cuesIn.filter(c => c.textoAlterado?.trim());
+    if (cuesIn.length < 24 || trampasIn.length < 8) {
+      console.warn(`[LessonContent] Subtítulos insuficientes (${cuesIn.length} cues, ${trampasIn.length} trampas): lección sin audio.`);
+      return noAudio;
     }
 
-    questions.push({
-      atSeconds: Math.round((charPoint / totalChars) * speech.durationSeconds * 10) / 10,
-      question: seg.pregunta.question,
+    const fullScript = cuesIn.map(c => c.texto!.trim()).join(" ");
+    const speech = await synthesizeSpeech(TTS_NARRATION_PREFIX + fullScript);
+    if (!speech) return noAudio;
+
+    // Ventana temporal de cada cue: proporcional a sus caracteres
+    const totalChars = fullScript.length;
+    const cues: SubtitleCue[] = [];
+    let offset = 0;
+    for (const c of cuesIn) {
+      const texto = c.texto!.trim();
+      const start = (offset / totalChars) * speech.durationSeconds;
+      const end = ((offset + texto.length) / totalChars) * speech.durationSeconds;
+      const alterado = Boolean(c.textoAlterado?.trim());
+      cues.push({
+        atSeconds: Math.round(start * 10) / 10,
+        endSeconds: Math.round(end * 10) / 10,
+        texto: alterado ? c.textoAlterado!.trim() : texto,
+        alterado,
+        original: alterado ? texto : undefined,
+      });
+      offset += texto.length + 1; // espacio separador
+    }
+
+    return {
+      steps,
+      attention: { mode: "subtitles", cues, trampas: cues.filter(c => c.alterado).length },
+      durationSeconds: speech.durationSeconds,
+      wav: speech.wav,
+    };
+  }
+
+  if (attentionMode === "copilot") {
+    const rawGuion: Array<{ texto?: string; checkpoint?: { options?: string[]; correctIndex?: number; correccion?: string } }> =
+      Array.isArray(parsed.guion) ? (parsed.guion as Array<{ texto?: string; checkpoint?: { options?: string[]; correctIndex?: number; correccion?: string } }>) : [];
+    const segs = rawGuion.filter(s => typeof s?.texto === "string" && s.texto.trim().length > 0);
+    const withCp = segs.filter(s => s.checkpoint?.options?.length === 2);
+    if (segs.length < 8 || withCp.length < 4) {
+      console.warn(`[LessonContent] Co-piloto insuficiente (${segs.length} segmentos, ${withCp.length} checkpoints): lección sin audio.`);
+      return noAudio;
+    }
+
+    const fullScript = segs.map(s => s.texto!.trim()).join("\n\n");
+    const speech = await synthesizeSpeech(TTS_NARRATION_PREFIX + fullScript);
+    if (!speech) return noAudio;
+
+    // Pausa al FINAL del segmento que termina con la duda narrada
+    const totalChars = fullScript.length;
+    const checkpoints: CopilotCheckpoint[] = [];
+    let offset = 0;
+    for (const s of segs) {
+      const texto = s.texto!.trim();
+      const segEnd = ((offset + texto.length) / totalChars) * speech.durationSeconds;
+      if (s.checkpoint?.options?.length === 2) {
+        const { options, correctIndex } = shuffleOptions(
+          s.checkpoint.options.map(o => String(o)),
+          s.checkpoint.correctIndex === 1 ? 1 : 0
+        );
+        checkpoints.push({
+          // Clamp: el último segmento termina con el audio; la pausa debe caer antes del final
+          atSeconds: Math.round(Math.min(segEnd + 0.2, speech.durationSeconds - 1.5) * 10) / 10,
+          options,
+          correctIndex,
+          correccion: s.checkpoint.correccion?.trim() || "Repasemos: la otra opción era la correcta. Sigamos.",
+        });
+      }
+      offset += texto.length + 2; // separador "\n\n"
+    }
+
+    return {
+      steps,
+      attention: { mode: "copilot", checkpoints },
+      durationSeconds: speech.durationSeconds,
+      wav: speech.wav,
+    };
+  }
+
+  // ── Misión de Espía (default) ──
+  const rawGuion: Array<{ texto?: string }> = Array.isArray(parsed.guion) ? (parsed.guion as Array<{ texto?: string }>) : [];
+  const segs = rawGuion.filter(s => typeof s?.texto === "string" && s.texto.trim().length > 0);
+  const rawMisiones: Array<{ instruccion?: string; pregunta?: string; options?: string[]; correctIndex?: number }> =
+    Array.isArray(parsed.misiones) ? (parsed.misiones as Array<{ instruccion?: string; pregunta?: string; options?: string[]; correctIndex?: number }>) : [];
+  const misionesIn = rawMisiones.filter(m => m?.instruccion && m?.pregunta && Array.isArray(m.options) && m.options.length >= 2);
+  if (segs.length < 7 || misionesIn.length < 2) {
+    console.warn(`[LessonContent] Misión de espía insuficiente (${segs.length} segmentos, ${misionesIn.length} misiones): lección sin audio.`);
+    return noAudio;
+  }
+
+  const fullScript = segs.map(s => s.texto!.trim()).join("\n\n");
+  const speech = await synthesizeSpeech(TTS_NARRATION_PREFIX + fullScript);
+  if (!speech) return noAudio;
+
+  const misiones: SpyMission[] = misionesIn.slice(0, 3).map(m => {
+    const opts = m.options!.map(o => String(o)).slice(0, 3);
+    const rawCorrect = typeof m.correctIndex === "number" && m.correctIndex >= 0 && m.correctIndex < opts.length ? m.correctIndex : 0;
+    const { options, correctIndex } = shuffleOptions(opts, rawCorrect);
+    return {
+      instruccion: String(m.instruccion).trim(),
+      pregunta: String(m.pregunta).trim(),
       options,
       correctIndex,
-    });
-    offset += texto.length + 2; // separador "\n\n"
-  }
+    };
+  });
 
   return {
     steps,
-    audioIntro: { durationSeconds: speech.durationSeconds, questions },
+    attention: { mode: "spy", misiones },
+    durationSeconds: speech.durationSeconds,
     wav: speech.wav,
   };
 }
@@ -900,7 +1106,8 @@ export async function generateQuizNode(
   topic: string,
   sintesis: Sintesis,
   focalConceptIds: string[],
-  reviewConceptIds: string[] = []
+  reviewConceptIds: string[] = [],
+  guidance?: string
 ): Promise<QuizNodeData> {
   if (!apiKey) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -915,7 +1122,7 @@ export async function generateQuizNode(
     const prompt = `
 Actúa como diseñador de evaluaciones en la academia "LearnFactory".
 ${sintesisBlock(sintesis)}
-
+${guidanceBlock(guidance)}
 Tema general: "${topic}".
 
 ${composition}
@@ -950,7 +1157,7 @@ SOLO devuelve el JSON, sin texto adicional:
 //  BOSS: EXAMEN FINAL
 // ──────────────────────────────────────────────────
 
-export async function generateBossExam(topic: string, sintesis: Sintesis): Promise<BossExamData> {
+export async function generateBossExam(topic: string, sintesis: Sintesis, guidance?: string): Promise<BossExamData> {
   if (!apiKey) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     return generateMockBossExam(topic);
@@ -962,7 +1169,7 @@ export async function generateBossExam(topic: string, sintesis: Sintesis): Promi
     const prompt = `
 Actúa como diseñador del examen final ("Boss Battle") de la academia "LearnFactory".
 ${sintesisBlock(sintesis)}
-
+${guidanceBlock(guidance)}
 Tema general: "${topic}".
 
 Genera el examen final que cubra TODOS los conceptos de la síntesis:

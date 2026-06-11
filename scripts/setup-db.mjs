@@ -148,6 +148,29 @@ alter table public.favorites enable row level security;
 alter table public.route_ratings enable row level security;
 alter table public.payment_orders enable row level security;
 alter table public.bold_transactions enable row level security;
+
+-- ── Realtime (websockets) para el progreso de generación ──
+-- Políticas de SOLO LECTURA para usuarios autenticados: necesarias para que
+-- Supabase Realtime (postgres_changes) entregue los updates de lecciones.
+-- Las escrituras siguen pasando únicamente por el service role.
+drop policy if exists routes_read on public.routes;
+create policy routes_read on public.routes for select to authenticated
+  using (visibility = 'public' or owner_id = (select auth.uid()));
+
+drop policy if exists lessons_read on public.lessons;
+create policy lessons_read on public.lessons for select to authenticated
+  using (exists (
+    select 1 from public.routes r
+    where r.id = route_id and (r.visibility = 'public' or r.owner_id = (select auth.uid()))
+  ));
+
+-- Añadir las tablas a la publicación de Realtime (idempotente)
+do $$ begin
+  alter publication supabase_realtime add table public.lessons;
+exception when duplicate_object then null; end $$;
+do $$ begin
+  alter publication supabase_realtime add table public.routes;
+exception when duplicate_object then null; end $$;
 `;
 
 async function main() {
@@ -184,8 +207,8 @@ async function main() {
   for (const { name, opts } of bucketSpecs) {
     if (!existing.has(name)) {
       const { error } = await supabase.storage.createBucket(name, opts);
-      if (error) throw error;
-      console.log(`✓ Bucket '${name}' creado (público)`);
+      if (error && !/already exists/i.test(error.message)) throw error;
+      console.log(error ? `✓ Bucket '${name}' ya existía` : `✓ Bucket '${name}' creado (público)`);
     } else {
       console.log(`✓ Bucket '${name}' ya existía`);
     }
