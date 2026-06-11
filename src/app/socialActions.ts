@@ -14,8 +14,10 @@ import type {
   FeaturedCreator,
   RouteLanding,
   RouteVisibility,
+  RouteCategory,
   Plan,
 } from "@/lib/types";
+import { ROUTE_CATEGORIES } from "@/lib/types";
 
 const AVATAR_BUCKET = "avatars";
 const COVER_BUCKET = "route-covers";
@@ -49,6 +51,7 @@ interface RouteRow {
   description: string | null;
   cover_path: string | null;
   visibility: string;
+  category: string | null;
   rating_sum: number;
   rating_count: number;
   student_count: number;
@@ -56,6 +59,10 @@ interface RouteRow {
   owner_id: string;
   created_at: string;
   status: string;
+}
+
+function rowCategory(category: string | null): RouteCategory {
+  return (ROUTE_CATEGORIES.some(c => c.id === category) ? category : "otros") as RouteCategory;
 }
 
 interface ProfileRow {
@@ -72,6 +79,7 @@ function toRouteCard(r: RouteRow, creator?: ProfileRow): RouteCard {
     description: r.description,
     coverUrl: publicUrl(COVER_BUCKET, r.cover_path),
     visibility: (r.visibility as RouteVisibility) || "public",
+    category: rowCategory(r.category),
     ratingAvg: r.rating_count ? Math.round((r.rating_sum / r.rating_count) * 10) / 10 : null,
     ratingCount: r.rating_count,
     studentCount: r.student_count,
@@ -85,7 +93,7 @@ function toRouteCard(r: RouteRow, creator?: ProfileRow): RouteCard {
 }
 
 const ROUTE_CARD_COLS =
-  "id, topic, description, cover_path, visibility, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status";
+  "id, topic, description, cover_path, visibility, category, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status";
 
 // ──────────────────────────────────────────────────
 //  PLAN / PERFIL PROPIO
@@ -97,7 +105,7 @@ export async function getPlan(token: string): Promise<PlanState | null> {
   const sb = supabaseAdmin();
   const { data: profile } = await sb
     .from("profiles")
-    .select("plan, route_quota, premium_since")
+    .select("plan, route_quota, premium_since, batch_enabled")
     .eq("id", user.id)
     .single();
   const { count } = await sb
@@ -109,6 +117,7 @@ export async function getPlan(token: string): Promise<PlanState | null> {
     routeQuota: profile?.route_quota ?? 1,
     routesUsed: count ?? 0,
     premiumSince: profile?.premium_since ?? null,
+    batchEnabled: Boolean(profile?.batch_enabled),
   };
 }
 
@@ -277,6 +286,11 @@ async function fetchCreators(ownerIds: string[]): Promise<Map<string, ProfileRow
   return new Map((data || []).map(p => [p.id, p as ProfileRow]));
 }
 
+/**
+ * Biblioteca pública organizada POR CATEGORÍAS (en el orden fijo de
+ * ROUTE_CATEGORIES). Las categorías sin rutas no se muestran. Una fila
+ * "Destacadas" va primero cuando hay tracción real.
+ */
 export async function getLibrary(token: string): Promise<LibrarySection[]> {
   await getUserFromToken(token); // requiere sesión, pero la biblioteca es común
   const sb = supabaseAdmin();
@@ -286,29 +300,34 @@ export async function getLibrary(token: string): Promise<LibrarySection[]> {
     .select(ROUTE_CARD_COLS)
     .eq("visibility", "public")
     .order("created_at", { ascending: false })
-    .limit(120);
+    .limit(300);
   const rows = (pool || []) as RouteRow[];
   if (rows.length === 0) return [];
 
   const creators = await fetchCreators([...new Set(rows.map(r => r.owner_id))]);
   const card = (r: RouteRow) => toRouteCard(r, creators.get(r.owner_id));
 
+  const sections: LibrarySection[] = [];
+
+  // Destacadas globales (solo si alguna ruta tiene tracción)
   const destacadas = [...rows]
     .sort((a, b) => (b.student_count - a.student_count) || (b.rating_sum - a.rating_sum))
     .slice(0, 12);
-  const tendencia = [...rows]
-    .sort((a, b) => (b.favorite_count + b.student_count) - (a.favorite_count + a.student_count))
-    .slice(0, 12);
-  const recientes = rows.slice(0, 12);
-
-  const sections: LibrarySection[] = [];
   if (destacadas.some(r => r.student_count > 0 || r.rating_count > 0)) {
-    sections.push({ key: "destacadas", title: "Rutas destacadas", routes: destacadas.map(card) });
+    sections.push({ key: "destacadas", title: "⭐ Destacadas", routes: destacadas.map(card) });
   }
-  if (tendencia.some(r => r.favorite_count > 0 || r.student_count > 0)) {
-    sections.push({ key: "tendencia", title: "En tendencia", routes: tendencia.map(card) });
+
+  // Una fila por categoría (orden fijo, vacías ocultas), populares primero
+  for (const cat of ROUTE_CATEGORIES) {
+    const inCat = rows
+      .filter(r => rowCategory(r.category) === cat.id)
+      .sort((a, b) => (b.student_count - a.student_count) || (b.favorite_count - a.favorite_count))
+      .slice(0, 16);
+    if (inCat.length > 0) {
+      sections.push({ key: cat.id, title: cat.label, routes: inCat.map(card) });
+    }
   }
-  sections.push({ key: "recientes", title: "Recién creadas", routes: recientes.map(card) });
+
   return sections;
 }
 
@@ -390,7 +409,7 @@ export async function getRouteLanding(token: string, routeId: string): Promise<R
   const { data: r } = await sb
     .from("routes")
     .select(
-      "id, topic, description, cover_path, cover_prompt, visibility, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status"
+      "id, topic, description, cover_path, cover_prompt, visibility, category, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status"
     )
     .eq("id", routeId)
     .maybeSingle();
@@ -428,6 +447,7 @@ export async function getRouteLanding(token: string, routeId: string): Promise<R
     description: r.description,
     coverUrl: publicUrl(COVER_BUCKET, r.cover_path),
     visibility: (r.visibility as RouteVisibility) || "public",
+    category: rowCategory(r.category),
     coverPrompt: r.cover_prompt ?? null,
     ratingAvg: r.rating_count ? Math.round((r.rating_sum / r.rating_count) * 10) / 10 : null,
     ratingCount: r.rating_count,

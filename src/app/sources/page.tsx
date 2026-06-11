@@ -3,9 +3,10 @@
 import { Suspense, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Sparkles } from "lucide-react";
+import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Sparkles, Tag } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { createRoute } from "../routeActions";
+import { ROUTE_CATEGORIES } from "@/lib/types";
 import PremiumCheckout from "@/components/PremiumCheckout";
 
 function Sources() {
@@ -18,6 +19,7 @@ function Sources() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [category, setCategory] = useState("");
   const [showPaywall, setShowPaywall] = useState(false);
   const [topicInput, setTopicInput] = useState("");
 
@@ -58,13 +60,13 @@ function Sources() {
   };
 
   const handleGenerateKnowledge = async () => {
-    if (!token) return;
+    if (!token || !category) return;
     setIsGenerating(true);
     setGenError("");
     const sourcesStr = sources.map(s => s.name).join(",");
     try {
       // Crea la ruta (síntesis + árbol) y arranca la pregeneración en background
-      const result = await createRoute(token, topic, sourcesStr, visibility);
+      const result = await createRoute(token, topic, sourcesStr, visibility, category);
       if (result.routeId) {
         router.push(`/tree?route=${result.routeId}`);
       } else if (result.quotaReached) {
@@ -248,6 +250,25 @@ function Sources() {
               ))}
             </ul>
 
+            {/* Categoría (obligatoria) */}
+            <div className="mb-4">
+              <label className="text-xs uppercase tracking-wider text-zinc-500 font-bold flex items-center gap-1.5 mb-2">
+                <Tag className="w-3.5 h-3.5" /> Categoría de la ruta
+              </label>
+              <select
+                value={category}
+                onChange={e => setCategory(e.target.value)}
+                className={`w-full bg-zinc-950 border rounded-xl py-3 px-4 text-sm focus:outline-none focus:border-primary ${
+                  category ? "border-zinc-800 text-white" : "border-amber-500/40 text-zinc-500"
+                }`}
+              >
+                <option value="">Elige la categoría...</option>
+                {ROUTE_CATEGORIES.map(c => (
+                  <option key={c.id} value={c.id}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Visibilidad: pública por defecto para crecer la biblioteca */}
             <div className="grid grid-cols-2 gap-3 mb-4">
               <button
@@ -283,7 +304,7 @@ function Sources() {
             {genError && <p className="text-rose-400 text-sm mb-3 text-center">{genError}</p>}
             <button
               onClick={handleGenerateKnowledge}
-              disabled={isGenerating}
+              disabled={isGenerating || !category}
               className="w-full py-4 bg-white text-zinc-950 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-zinc-200 transition-all disabled:opacity-70"
             >
               {isGenerating ? (

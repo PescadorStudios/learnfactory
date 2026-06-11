@@ -226,6 +226,7 @@ export interface RouteSummary {
   visibility: RouteVisibility;
   coverUrl: string | null;
   description: string | null;
+  category: RouteCategory;
 }
 
 // ── Social / biblioteca pública ──
@@ -233,11 +234,32 @@ export interface RouteSummary {
 export type RouteVisibility = "public" | "private";
 export type Plan = "free" | "premium";
 
+/** Categorías fijas de rutas. Las rutas existentes caen en "otros". */
+export const ROUTE_CATEGORIES = [
+  { id: "negocios", label: "Negocios y finanzas" },
+  { id: "marketing", label: "Marketing" },
+  { id: "ia", label: "Inteligencia Artificial" },
+  { id: "contenido", label: "Creación de Contenido" },
+  { id: "salud", label: "Salud y Nutrición" },
+  { id: "teologia", label: "Teología" },
+  { id: "historia", label: "Historia y Filosofía" },
+  { id: "arte", label: "Arte y Creatividad" },
+  { id: "otros", label: "Otros" },
+] as const;
+
+export type RouteCategory = (typeof ROUTE_CATEGORIES)[number]["id"];
+
+export function categoryLabel(id: string): string {
+  return ROUTE_CATEGORIES.find(c => c.id === id)?.label ?? "Otros";
+}
+
 export interface PlanState {
   plan: Plan;
   routeQuota: number;
   routesUsed: number;
   premiumSince: string | null;
+  /** Creación de rutas en lote: el admin la activa manualmente por usuario. */
+  batchEnabled: boolean;
 }
 
 /** Tarjeta de ruta para la biblioteca estilo Netflix. */
@@ -247,6 +269,7 @@ export interface RouteCard {
   description: string | null;
   coverUrl: string | null;
   visibility: RouteVisibility;
+  category: RouteCategory;
   ratingAvg: number | null;
   ratingCount: number;
   studentCount: number;
@@ -297,6 +320,7 @@ export interface RouteLanding {
   description: string | null;
   coverUrl: string | null;
   visibility: RouteVisibility;
+  category: RouteCategory;
   coverPrompt: string | null;
   ratingAvg: number | null;
   ratingCount: number;

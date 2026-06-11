@@ -30,6 +30,7 @@ export interface AdminUserRow {
   role: string;
   routeQuota: number;
   routesUsed: number;
+  batchEnabled: boolean;
 }
 
 export async function adminListUsers(token: string, search = ""): Promise<AdminUserRow[]> {
@@ -39,7 +40,7 @@ export async function adminListUsers(token: string, search = ""): Promise<AdminU
 
   let q = sb
     .from("profiles")
-    .select("id, email, username, display_name, avatar_path, plan, role, route_quota, created_at")
+    .select("id, email, username, display_name, avatar_path, plan, role, route_quota, batch_enabled, created_at")
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -67,7 +68,19 @@ export async function adminListUsers(token: string, search = ""): Promise<AdminU
     role: r.role || "user",
     routeQuota: r.route_quota ?? 1,
     routesUsed: counts.get(r.id) ?? 0,
+    batchEnabled: Boolean(r.batch_enabled),
   }));
+}
+
+/** Activa/desactiva la creación de rutas en lote para un usuario (exclusiva). */
+export async function adminSetBatchEnabled(token: string, userId: string, enabled: boolean): Promise<{ ok: boolean; error?: string; batchEnabled?: boolean }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false, error: "No autorizado" };
+
+  const sb = supabaseAdmin();
+  const { error } = await sb.from("profiles").update({ batch_enabled: enabled }).eq("id", userId);
+  if (error) return { ok: false, error: "No se pudo actualizar el acceso al lote." };
+  return { ok: true, batchEnabled: enabled };
 }
 
 /** Fija la cuota de creación de rutas de un usuario (valor absoluto). */

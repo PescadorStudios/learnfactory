@@ -3,9 +3,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle } from "lucide-react";
+import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
-import { checkIsAdmin, adminListUsers, adminSetUserQuota, type AdminUserRow } from "@/app/adminActions";
+import { checkIsAdmin, adminListUsers, adminSetUserQuota, adminSetBatchEnabled, type AdminUserRow } from "@/app/adminActions";
 import AppHeader from "@/components/AppHeader";
 
 export default function AdminPage() {
@@ -19,6 +19,7 @@ export default function AdminPage() {
   const [drafts, setDrafts] = useState<Record<string, number>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [batchSavingId, setBatchSavingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -51,6 +52,16 @@ export default function AdminPage() {
   };
 
   const setDraft = (id: string, v: number) => setDrafts(d => ({ ...d, [id]: Math.max(0, Math.min(999, v)) }));
+
+  const toggleBatch = async (userId: string, enabled: boolean) => {
+    if (!token) return;
+    setBatchSavingId(userId);
+    const res = await adminSetBatchEnabled(token, userId, enabled);
+    setBatchSavingId(null);
+    if (res.ok && res.batchEnabled !== undefined) {
+      setUsers(us => us.map(u => (u.id === userId ? { ...u, batchEnabled: res.batchEnabled! } : u)));
+    }
+  };
 
   if (loading || !session || isAdmin === null) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center"><Loader2 className="w-10 h-10 text-primary animate-spin" /></div>;
@@ -131,6 +142,21 @@ export default function AdminPage() {
                     <p className="text-xs text-zinc-500 truncate">{u.email}</p>
                     <p className="text-xs text-zinc-600 mt-0.5">{u.routesUsed} rutas creadas · cuota actual {u.routeQuota}</p>
                   </div>
+
+                  {/* Toggle de creación en lote (exclusiva, manual por usuario) */}
+                  <button
+                    onClick={() => toggleBatch(u.id, !u.batchEnabled)}
+                    disabled={batchSavingId === u.id}
+                    title={u.batchEnabled ? "Desactivar creación en lote" : "Activar creación en lote"}
+                    className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                      u.batchEnabled
+                        ? "bg-violet-500/15 text-violet-300 border-violet-500/50"
+                        : "bg-zinc-800 text-zinc-500 border-zinc-700 hover:text-zinc-300"
+                    }`}
+                  >
+                    {batchSavingId === u.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
+                    Lote {u.batchEnabled ? "ON" : "OFF"}
+                  </button>
 
                   {/* Editor de cuota */}
                   <div className="flex items-center gap-1 shrink-0">

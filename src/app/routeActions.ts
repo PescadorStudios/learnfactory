@@ -28,7 +28,9 @@ import type {
   BossExamData,
   AttentionMode,
   AttentionData,
+  RouteCategory,
 } from "@/lib/types";
+import { ROUTE_CATEGORIES } from "@/lib/types";
 
 const AUDIO_BUCKET = "lesson-audio";
 const COVER_BUCKET = "route-covers";
@@ -95,11 +97,16 @@ function flattenNodes(tree: Tree): TreeNode[] {
   return tree.levels.flatMap(l => l.nodes);
 }
 
+function cleanCategory(category?: string): RouteCategory {
+  return (ROUTE_CATEGORIES.some(c => c.id === category) ? category : "otros") as RouteCategory;
+}
+
 export async function createRoute(
   token: string,
   topic: string,
   sourcesStr: string,
-  visibility: "public" | "private" = "public"
+  visibility: "public" | "private" = "public",
+  category?: string
 ): Promise<{ routeId?: string; error?: string; quotaReached?: boolean }> {
   const user = await getUserFromToken(token);
   if (!user) return { error: "Sesión inválida" };
@@ -134,6 +141,7 @@ export async function createRoute(
       status: "generating",
       visibility,
       description,
+      category: cleanCategory(category),
     })
     .select("id")
     .single();
@@ -164,10 +172,15 @@ export async function createRoute(
 }
 
 /** Genera una portada con IA y la sube a Storage, guardando cover_path/cover_prompt. */
-async function generateAndStoreCover(routeId: string, topic: string, prompt: string) {
+async function generateAndStoreCover(
+  routeId: string,
+  topic: string,
+  prompt: string,
+  references: Array<{ mimeType: string; data: string }> = []
+) {
   const sb = supabaseAdmin();
   try {
-    const img = await generateCoverImage(prompt);
+    const img = await generateCoverImage(prompt, references);
     if (!img) {
       console.warn(`[Cover] Ruta ${routeId}: sin portada (generación falló).`);
       return;
@@ -192,6 +205,230 @@ async function generateAndStoreCover(routeId: string, topic: string, prompt: str
 function coverUrlFor(coverPath: string | null): string | null {
   if (!coverPath) return null;
   return supabaseAdmin().storage.from(COVER_BUCKET).getPublicUrl(coverPath).data.publicUrl;
+}
+
+// ──────────────────────────────────────────────────
+//  CREACIÓN DE RUTAS EN LOTE (exclusiva, activada por el admin)
+// ──────────────────────────────────────────────────
+
+const BATCH_MAX = 20;
+// Las síntesis maestras son lo pesado del arranque del lote: limitar cuántas
+// corren a la vez (el TTS ya tiene su propio semáforo global en generation.ts).
+const STUDYPACK_MAX_CONCURRENT = 3;
+let studyPackActive = 0;
+const studyPackWaiters: Array<() => void> = [];
+
+async function acquireStudyPackSlot(): Promise<void> {
+  if (studyPackActive < STUDYPACK_MAX_CONCURRENT) {
+    studyPackActive++;
+    return;
+  }
+  await new Promise<void>(resolve => studyPackWaiters.push(resolve));
+  studyPackActive++;
+}
+
+function releaseStudyPackSlot(): void {
+  studyPackActive--;
+  const next = studyPackWaiters.shift();
+  if (next) next();
+}
+
+export interface BatchRouteInput {
+  topic: string;
+  /** Links separados por coma (web, YouTube o archivos), igual que createRoute. */
+  sources: string;
+  category: string;
+  visibility?: "public" | "private";
+  /** Prompt de portada opcional (si no, se genera con el prompt automático). */
+  coverPrompt?: string;
+  /** Imagen de referencia opcional para la portada (base64, con o sin prefijo data URL). */
+  coverReference?: string;
+}
+
+/** Decodifica base64 (con o sin prefijo data URL) a referencia para Gemini. */
+function toCoverReference(base64?: string): Array<{ mimeType: string; data: string }> {
+  if (!base64) return [];
+  let contentType = "image/png";
+  let data = base64;
+  const m = base64.match(/^data:(image\/[a-zA-Z+]+);base64,(.*)$/);
+  if (m) {
+    contentType = m[1];
+    data = m[2];
+  }
+  if (!data) return [];
+  return [{ mimeType: contentType, data }];
+}
+
+/**
+ * Pipeline completo de UNA ruta del lote: síntesis maestra → árbol + lecciones
+ * placeholder → portada → generación de lecciones en paralelo. La fila de la
+ * ruta ya existe (status "generating"); aquí se va llenando.
+ */
+async function generateFullRoute(routeId: string, topic: string, sources: string, item: BatchRouteInput) {
+  const sb = supabaseAdmin();
+  try {
+    await acquireStudyPackSlot();
+    let pack;
+    try {
+      console.log(`[Batch] Síntesis de "${topic}" (ruta ${routeId})...`);
+      pack = await generateStudyPack(topic, sources);
+    } finally {
+      releaseStudyPackSlot();
+    }
+
+    const description = (pack.sintesis?.tesisGlobal || "").slice(0, 280) || null;
+    await sb.from("routes").update({ sintesis: pack.sintesis, tree: pack.tree, description }).eq("id", routeId);
+
+    const lessonRows = flattenNodes(pack.tree).map(node => ({
+      route_id: routeId,
+      node_id: node.id,
+      node_type: node.type,
+      title: node.title,
+      concept_ids: node.conceptIds || [],
+      status: node.type === "debate" ? "ready" : "pending",
+    }));
+    await sb.from("lessons").insert(lessonRows);
+
+    // Portada: prompt del usuario (con referencia opcional) o el automático
+    const references = toCoverReference(item.coverReference);
+    let coverPrompt = item.coverPrompt?.trim().slice(0, 600) || buildCoverPrompt(topic, pack.sintesis?.tesisGlobal);
+    if (references.length > 0) {
+      coverPrompt += "\n\nUsa la imagen adjunta como referencia e intégrala de forma elegante y protagonista en la portada.";
+    }
+    // La portada no bloquea las lecciones: corre en paralelo dentro del mismo job
+    const coverJob = generateAndStoreCover(routeId, topic, coverPrompt, references);
+
+    await generateRouteLessons(routeId);
+    await coverJob;
+  } catch (e) {
+    console.error(`[Batch] ✗ Ruta ${routeId} ("${topic}") falló:`, e);
+    await sb.from("routes").update({ status: "error" }).eq("id", routeId);
+  }
+}
+
+/**
+ * Crea hasta 20 rutas EN PARALELO (estilo Video Factory: cada tarjeta es un
+ * job). Exclusivo: requiere profiles.batch_enabled (lo activa el admin).
+ * Inserta todas las filas al instante (placeholders con status "generating")
+ * y despacha los pipelines en background; el cliente sigue el progreso por
+ * polling de getMyRoutes.
+ */
+export async function createRouteBatch(
+  token: string,
+  items: BatchRouteInput[]
+): Promise<{ ok: boolean; routeIds?: string[]; error?: string; quotaReached?: boolean }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+
+  const sb = supabaseAdmin();
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("route_quota, batch_enabled")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.batch_enabled) {
+    return { ok: false, error: "La creación en lote no está activada para tu cuenta. Pídesela al administrador." };
+  }
+
+  const clean = items
+    .map(i => ({
+      ...i,
+      topic: i.topic?.trim().slice(0, 140) || "",
+      sources: i.sources?.trim() || "",
+      category: cleanCategory(i.category),
+      visibility: i.visibility === "private" ? "private" as const : "public" as const,
+    }))
+    .filter(i => i.topic && i.sources);
+
+  if (clean.length === 0) return { ok: false, error: "Cada ruta necesita un tema y al menos un link." };
+  if (clean.length > BATCH_MAX) return { ok: false, error: `Máximo ${BATCH_MAX} rutas por lote.` };
+
+  // Cuota: el lote completo debe caber en lo que queda
+  const quota = profile.route_quota ?? 1;
+  const { count: routesUsed } = await sb
+    .from("routes")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", user.id);
+  if ((routesUsed ?? 0) + clean.length > quota) {
+    return { ok: false, error: "quota", quotaReached: true };
+  }
+
+  // Insertar todas las filas YA (placeholders): el usuario ve sus tarjetas al instante
+  const placeholderSintesis = { tesisGlobal: "", conceptos: [], advertenciasDeContexto: [] };
+  const { data: rows, error } = await sb
+    .from("routes")
+    .insert(
+      clean.map(i => ({
+        owner_id: user.id,
+        topic: i.topic,
+        sources: i.sources,
+        sintesis: placeholderSintesis,
+        tree: { topic: i.topic, levels: [] },
+        status: "generating",
+        visibility: i.visibility,
+        category: i.category,
+      }))
+    )
+    .select("id, topic");
+
+  if (error || !rows?.length) {
+    console.error("[Batch] Error insertando rutas:", error);
+    return { ok: false, error: "No se pudieron crear las rutas." };
+  }
+
+  // Despachar TODOS los pipelines en background (el semáforo regula las síntesis)
+  after(() =>
+    Promise.allSettled(
+      rows.map((r, idx) => generateFullRoute(r.id, clean[idx].topic, clean[idx].sources, clean[idx]))
+    )
+  );
+
+  console.log(`[Batch] ⚡ Lote de ${rows.length} rutas despachado para ${user.email}.`);
+  return { ok: true, routeIds: rows.map(r => r.id) };
+}
+
+// ──────────────────────────────────────────────────
+//  CATEGORÍA Y ELIMINACIÓN (solo dueño)
+// ──────────────────────────────────────────────────
+
+export async function setRouteCategory(token: string, routeId: string, category: string): Promise<{ ok: boolean; category?: RouteCategory }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false };
+  const sb = supabaseAdmin();
+  const { data: route } = await sb.from("routes").select("owner_id").eq("id", routeId).single();
+  if (!route || route.owner_id !== user.id) return { ok: false };
+  const cat = cleanCategory(category);
+  await sb.from("routes").update({ category: cat }).eq("id", routeId);
+  return { ok: true, category: cat };
+}
+
+/** Elimina una ruta del creador: audios y portadas de Storage + la fila (cascade borra lecciones, intentos, ratings y favoritos). */
+export async function deleteRoute(token: string, routeId: string): Promise<{ ok: boolean; error?: string }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+  const sb = supabaseAdmin();
+
+  const { data: route } = await sb.from("routes").select("owner_id, topic").eq("id", routeId).single();
+  if (!route) return { ok: false, error: "Ruta no encontrada" };
+  if (route.owner_id !== user.id) return { ok: false, error: "Solo el creador puede eliminar la ruta." };
+
+  // Storage: audios de lecciones y portadas viven bajo el prefijo routeId/
+  for (const bucket of [AUDIO_BUCKET, COVER_BUCKET]) {
+    try {
+      const { data: files } = await sb.storage.from(bucket).list(routeId, { limit: 200 });
+      if (files?.length) {
+        await sb.storage.from(bucket).remove(files.map(f => `${routeId}/${f.name}`));
+      }
+    } catch (e) {
+      console.warn(`[Delete] No se pudo limpiar ${bucket}/${routeId}:`, e);
+    }
+  }
+
+  const { error } = await sb.from("routes").delete().eq("id", routeId);
+  if (error) return { ok: false, error: "No se pudo eliminar la ruta." };
+  console.log(`[Delete] ✓ Ruta ${routeId} ("${route.topic}") eliminada por su creador.`);
+  return { ok: true };
 }
 
 /**
@@ -453,7 +690,7 @@ export async function getMyRoutes(token: string): Promise<RouteSummary[]> {
   const sb = supabaseAdmin();
   const { data: routes } = await sb
     .from("routes")
-    .select("id, topic, status, created_at, visibility, cover_path, description")
+    .select("id, topic, status, created_at, visibility, cover_path, description, category")
     .eq("owner_id", user.id)
     .order("created_at", { ascending: false });
   if (!routes?.length) return [];
@@ -485,6 +722,7 @@ export async function getMyRoutes(token: string): Promise<RouteSummary[]> {
       visibility: (r.visibility as RouteSummary["visibility"]) || "public",
       coverUrl: coverUrlFor(r.cover_path),
       description: r.description ?? null,
+      category: cleanCategory(r.category),
     };
   });
 }

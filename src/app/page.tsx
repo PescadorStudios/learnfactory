@@ -3,11 +3,11 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Sparkles, Loader2, Plus, ChevronRight, Star, Crown, Users } from "lucide-react";
+import { Sparkles, Loader2, Plus, ChevronRight, Star, Crown, Users, Layers } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
-import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile } from "./socialActions";
-import type { RouteSummary, LibrarySection, FeaturedCreator, RouteCard as RouteCardData } from "@/lib/types";
+import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
+import type { RouteSummary, LibrarySection, FeaturedCreator, RouteCard as RouteCardData, PlanState } from "@/lib/types";
 import AppHeader from "@/components/AppHeader";
 import RouteRow from "@/components/RouteRow";
 import RouteCard from "@/components/RouteCard";
@@ -22,6 +22,7 @@ function HomeContent() {
   const [sections, setSections] = useState<LibrarySection[] | null>(null);
   const [creators, setCreators] = useState<FeaturedCreator[]>([]);
   const [results, setResults] = useState<RouteCardData[] | null>(null);
+  const [plan, setPlan] = useState<PlanState | null>(null);
 
   // Onboarding: si no hay username, ir a ajustes
   useEffect(() => {
@@ -33,10 +34,11 @@ function HomeContent() {
 
   const loadHome = useCallback(async () => {
     if (!token) return;
-    const [routes, lib, feat] = await Promise.all([getMyRoutes(token), getLibrary(token), getFeaturedCreators(token)]);
+    const [routes, lib, feat, p] = await Promise.all([getMyRoutes(token), getLibrary(token), getFeaturedCreators(token), getPlan(token)]);
     setMyRoutes(routes);
     setSections(lib);
     setCreators(feat);
+    setPlan(p);
   }, [token]);
 
   useEffect(() => {
@@ -102,12 +104,22 @@ function HomeContent() {
                 <p className="text-zinc-400 text-base md:text-lg mb-6 max-w-xl">
                   Explora rutas creadas por la comunidad o genera la tuya con IA: podcast, lecciones, debates y exámenes.
                 </p>
-                <button
-                  onClick={() => router.push("/sources")}
-                  className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-full px-6 py-3 font-bold transition-all"
-                >
-                  <Plus className="w-5 h-5" /> Crear ruta nueva
-                </button>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => router.push("/sources")}
+                    className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-full px-6 py-3 font-bold transition-all"
+                  >
+                    <Plus className="w-5 h-5" /> Crear ruta nueva
+                  </button>
+                  {plan?.batchEnabled && (
+                    <button
+                      onClick={() => router.push("/batch")}
+                      className="inline-flex items-center gap-2 bg-violet-500/15 border border-violet-500/50 text-violet-300 hover:bg-violet-500/25 rounded-full px-6 py-3 font-bold transition-all"
+                    >
+                      <Layers className="w-5 h-5" /> Crear rutas en lote
+                    </button>
+                  )}
+                </div>
               </div>
             </motion.div>
 

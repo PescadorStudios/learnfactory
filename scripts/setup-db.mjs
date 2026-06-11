@@ -25,6 +25,8 @@ alter table public.profiles add column if not exists banner_path text;
 alter table public.profiles add column if not exists plan text not null default 'free';
 alter table public.profiles add column if not exists route_quota int not null default 1;
 alter table public.profiles add column if not exists premium_since timestamptz;
+-- Creación de rutas en lote: exclusiva, el admin la activa manualmente por usuario
+alter table public.profiles add column if not exists batch_enabled boolean not null default false;
 
 create table if not exists public.routes (
   id uuid primary key default gen_random_uuid(),
@@ -45,8 +47,11 @@ alter table public.routes add column if not exists rating_sum int not null defau
 alter table public.routes add column if not exists rating_count int not null default 0;
 alter table public.routes add column if not exists student_count int not null default 0;
 alter table public.routes add column if not exists favorite_count int not null default 0;
+-- Categoría de la ruta (las existentes caen en 'otros' por el default)
+alter table public.routes add column if not exists category text not null default 'otros';
 create index if not exists routes_visibility_idx on public.routes(visibility);
 create index if not exists routes_owner_idx on public.routes(owner_id);
+create index if not exists routes_category_idx on public.routes(category);
 
 create table if not exists public.lessons (
   id uuid primary key default gen_random_uuid(),

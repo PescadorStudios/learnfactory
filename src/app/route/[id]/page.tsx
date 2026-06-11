@@ -3,10 +3,11 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle } from "lucide-react";
+import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility } from "@/app/socialActions";
-import type { RouteLanding } from "@/lib/types";
+import { setRouteCategory, deleteRoute } from "@/app/routeActions";
+import { ROUTE_CATEGORIES, categoryLabel, type RouteLanding } from "@/lib/types";
 import AppHeader from "@/components/AppHeader";
 import StarRating from "@/components/StarRating";
 import CoverEditor from "@/components/CoverEditor";
@@ -27,6 +28,10 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
   const [ratingAvg, setRatingAvg] = useState<number | null>(null);
   const [ratingCount, setRatingCount] = useState(0);
   const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [category, setCategory] = useState<string>("otros");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     if (!token) return;
@@ -40,6 +45,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
       setRatingAvg(d.ratingAvg);
       setRatingCount(d.ratingCount);
       setVisibility(d.visibility);
+      setCategory(d.category);
     });
   }, [token, id]);
 
@@ -61,6 +67,25 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
     if (!token) return;
     setVisibility(v);
     await setRouteVisibility(token, id, v);
+  };
+
+  const handleCategory = async (cat: string) => {
+    if (!token) return;
+    setCategory(cat);
+    await setRouteCategory(token, id, cat);
+  };
+
+  const handleDelete = async () => {
+    if (!token || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    const res = await deleteRoute(token, id);
+    if (res.ok) {
+      router.push("/");
+    } else {
+      setDeleteError(res.error || "No se pudo eliminar la ruta.");
+      setDeleting(false);
+    }
   };
 
   if (loading || !session) {
@@ -140,6 +165,9 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
 
             {/* Métricas */}
             <div className="flex flex-wrap gap-4 mb-6 text-sm">
+              <span className="flex items-center gap-1.5 text-violet-300 bg-violet-500/10 border border-violet-500/30 rounded-full px-3 py-1 text-xs font-bold">
+                <Tag className="w-3.5 h-3.5" /> {categoryLabel(category)}
+              </span>
               <span className="flex items-center gap-1.5 text-amber-400">
                 <Star className="w-4 h-4 fill-current" /> {ratingAvg ?? "—"} <span className="text-zinc-600">({ratingCount})</span>
               </span>
@@ -186,20 +214,44 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
 
             {/* Controles del dueño */}
             {data.isOwner && (
-              <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4">
-                <p className="text-sm text-zinc-400 mb-3">Visibilidad</p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleVisibility("public")}
-                    className={`flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all ${visibility === "public" ? "bg-primary/15 text-primary border border-primary/40" : "bg-zinc-800 text-zinc-400 hover:text-white"}`}
+              <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 space-y-4">
+                <div>
+                  <p className="text-sm text-zinc-400 mb-3">Visibilidad</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleVisibility("public")}
+                      className={`flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all ${visibility === "public" ? "bg-primary/15 text-primary border border-primary/40" : "bg-zinc-800 text-zinc-400 hover:text-white"}`}
+                    >
+                      <Globe className="w-4 h-4" /> Pública
+                    </button>
+                    <button
+                      onClick={() => handleVisibility("private")}
+                      className={`flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all ${visibility === "private" ? "bg-zinc-700/40 text-white border border-zinc-500" : "bg-zinc-800 text-zinc-400 hover:text-white"}`}
+                    >
+                      <Lock className="w-4 h-4" /> Privada
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm text-zinc-400 mb-2">Categoría</p>
+                  <select
+                    value={category}
+                    onChange={e => handleCategory(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:border-violet-500"
                   >
-                    <Globe className="w-4 h-4" /> Pública
-                  </button>
+                    {ROUTE_CATEGORIES.map(c => (
+                      <option key={c.id} value={c.id}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="pt-3 border-t border-zinc-800">
                   <button
-                    onClick={() => handleVisibility("private")}
-                    className={`flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all ${visibility === "private" ? "bg-zinc-700/40 text-white border border-zinc-500" : "bg-zinc-800 text-zinc-400 hover:text-white"}`}
+                    onClick={() => setConfirmDelete(true)}
+                    className="inline-flex items-center gap-2 text-sm font-bold text-rose-400 hover:text-rose-300 transition-colors"
                   >
-                    <Lock className="w-4 h-4" /> Privada
+                    <Trash2 className="w-4 h-4" /> Eliminar esta ruta
                   </button>
                 </div>
               </div>
@@ -218,6 +270,46 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
           onUpdated={setCoverUrl}
           onClose={() => setEditingCover(false)}
         />
+      )}
+
+      {/* Confirmación de borrado */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !deleting && setConfirmDelete(false)}>
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            onClick={e => e.stopPropagation()}
+            className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 w-full max-w-md relative"
+          >
+            <button onClick={() => !deleting && setConfirmDelete(false)} className="absolute top-4 right-4 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+            <div className="w-12 h-12 bg-rose-500/10 border border-rose-500/40 rounded-2xl flex items-center justify-center mb-4">
+              <Trash2 className="w-6 h-6 text-rose-400" />
+            </div>
+            <h3 className="text-xl font-bold mb-2">¿Eliminar &quot;{data.topic}&quot;?</h3>
+            <p className="text-zinc-400 text-sm mb-1">
+              Se borrarán para siempre sus lecciones, audios, portada, calificaciones y el progreso de todos sus estudiantes.
+            </p>
+            <p className="text-zinc-500 text-xs mb-5">Esta acción no se puede deshacer. Liberarás 1 espacio de tu cuota.</p>
+            {deleteError && <p className="text-rose-400 text-sm mb-3">{deleteError}</p>}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+                className="flex-1 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition-all disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 py-3 rounded-2xl bg-rose-500 text-white font-bold hover:bg-rose-400 transition-all disabled:opacity-60 inline-flex items-center justify-center gap-2"
+              >
+                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Eliminar
+              </button>
+            </div>
+          </motion.div>
+        </div>
       )}
     </main>
   );
