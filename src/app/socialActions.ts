@@ -231,8 +231,9 @@ export async function getProfileByUsername(token: string, username: string): Pro
 
   const isOwner = viewer?.id === profile.id;
 
-  // Rutas: públicas para todos; si es el dueño, también las privadas
-  let routesQuery = sb.from("routes").select(ROUTE_CARD_COLS).eq("owner_id", profile.id).order("created_at", { ascending: false });
+  // Rutas: públicas para todos; si es el dueño, también las privadas.
+  // Las que están fuera del aire (blocked) no aparecen para nadie.
+  let routesQuery = sb.from("routes").select(ROUTE_CARD_COLS).eq("owner_id", profile.id).eq("blocked", false).order("created_at", { ascending: false });
   if (!isOwner) routesQuery = routesQuery.eq("visibility", "public");
   const { data: routeRows } = await routesQuery;
   const routes = (routeRows || []).map(r => toRouteCard(r as RouteRow, profile as ProfileRow));
@@ -299,6 +300,7 @@ export async function getLibrary(token: string): Promise<LibrarySection[]> {
     .from("routes")
     .select(ROUTE_CARD_COLS)
     .eq("visibility", "public")
+    .eq("blocked", false)
     .order("created_at", { ascending: false })
     .limit(300);
   const rows = (pool || []) as RouteRow[];
@@ -340,6 +342,7 @@ export async function searchPublicRoutes(token: string, q: string): Promise<Rout
     .from("routes")
     .select(ROUTE_CARD_COLS)
     .eq("visibility", "public")
+    .eq("blocked", false)
     .or(`topic.ilike.%${term}%,description.ilike.%${term}%`)
     .order("student_count", { ascending: false })
     .limit(30);
@@ -354,7 +357,8 @@ export async function getFeaturedCreators(token: string): Promise<FeaturedCreato
   const { data } = await sb
     .from("routes")
     .select("owner_id, student_count")
-    .eq("visibility", "public");
+    .eq("visibility", "public")
+    .eq("blocked", false);
   const agg = new Map<string, { routeCount: number; studentTotal: number }>();
   for (const r of data || []) {
     const cur = agg.get(r.owner_id) || { routeCount: 0, studentTotal: 0 };
@@ -409,11 +413,12 @@ export async function getRouteLanding(token: string, routeId: string): Promise<R
   const { data: r } = await sb
     .from("routes")
     .select(
-      "id, topic, description, cover_path, cover_prompt, visibility, category, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status"
+      "id, topic, description, cover_path, cover_prompt, visibility, blocked, category, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status"
     )
     .eq("id", routeId)
     .maybeSingle();
   if (!r) return null;
+  if (r.blocked) return null; // ruta fuera del aire por el admin
   const isOwner = r.owner_id === user.id;
   if (!isOwner && r.visibility !== "public") return null;
 

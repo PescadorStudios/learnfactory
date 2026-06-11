@@ -49,6 +49,8 @@ alter table public.routes add column if not exists student_count int not null de
 alter table public.routes add column if not exists favorite_count int not null default 0;
 -- Categoría de la ruta (las existentes caen en 'otros' por el default)
 alter table public.routes add column if not exists category text not null default 'otros';
+-- Moderación del admin: 'fuera del aire' (oculta en todas partes, reversible)
+alter table public.routes add column if not exists blocked boolean not null default false;
 create index if not exists routes_visibility_idx on public.routes(visibility);
 create index if not exists routes_owner_idx on public.routes(owner_id);
 create index if not exists routes_category_idx on public.routes(category);

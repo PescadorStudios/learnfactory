@@ -692,6 +692,7 @@ export async function getMyRoutes(token: string): Promise<RouteSummary[]> {
     .from("routes")
     .select("id, topic, status, created_at, visibility, cover_path, description, category")
     .eq("owner_id", user.id)
+    .eq("blocked", false)
     .order("created_at", { ascending: false });
   if (!routes?.length) return [];
 
@@ -750,11 +751,13 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
   const sb = supabaseAdmin();
   const { data: route } = await sb
     .from("routes")
-    .select("id, topic, status, sintesis, tree, owner_id, visibility, cover_path, description")
+    .select("id, topic, status, sintesis, tree, owner_id, visibility, blocked, cover_path, description")
     .eq("id", routeId)
     .single();
-  // Acceso: dueño siempre; cualquiera si la ruta es pública.
+  // Acceso: dueño siempre; cualquiera si la ruta es pública. Si está fuera del
+  // aire (blocked) por el admin, no la abre nadie.
   if (!route) return null;
+  if (route.blocked) return null;
   const isOwner = route.owner_id === user.id;
   if (!isOwner && route.visibility !== "public") return null;
 
@@ -831,11 +834,12 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
 
   const sb = supabaseAdmin();
   const [{ data: route }, { data: lesson }] = await Promise.all([
-    sb.from("routes").select("topic, sintesis, owner_id, visibility").eq("id", routeId).single(),
+    sb.from("routes").select("topic, sintesis, owner_id, visibility, blocked").eq("id", routeId).single(),
     sb.from("lessons").select("*").eq("route_id", routeId).eq("node_id", nodeId).single(),
   ]);
-  // Acceso: dueño siempre; cualquiera si la ruta es pública.
+  // Acceso: dueño siempre; cualquiera si la ruta es pública. Bloqueada → nadie.
   if (!route || !lesson) return null;
+  if (route.blocked) return null;
   if (route.owner_id !== user.id && route.visibility !== "public") return null;
 
   let audioUrl: string | null = null;

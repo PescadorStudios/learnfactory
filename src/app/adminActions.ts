@@ -4,8 +4,11 @@
 // Permiten al admin regalar cuota de creación de rutas a cualquier usuario.
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
+import { categoryLabel } from "@/lib/types";
 
 const AVATAR_BUCKET = "avatars";
+const COVER_BUCKET = "route-covers";
+const AUDIO_BUCKET = "lesson-audio";
 
 async function requireAdmin(token: string): Promise<{ id: string } | null> {
   const user = await getUserFromToken(token);
@@ -104,4 +107,110 @@ export async function adminGrantRoutes(token: string, userId: string, delta: num
   const { data: profile } = await sb.from("profiles").select("route_quota").eq("id", userId).single();
   const current = profile?.route_quota ?? 1;
   return adminSetUserQuota(token, userId, current + delta);
+}
+
+// ──────────────────────────────────────────────────
+//  Moderación de cursos. El admin ve TODAS las rutas (de cualquier usuario)
+//  y puede: ponerlas en privado, sacarlas del aire (blocked, reversible) o
+//  borrarlas para siempre.
+// ──────────────────────────────────────────────────
+
+export interface AdminRouteRow {
+  id: string;
+  topic: string;
+  ownerName: string;
+  ownerEmail: string;
+  visibility: "public" | "private";
+  blocked: boolean;
+  category: string;
+  categoryLabel: string;
+  coverUrl: string | null;
+  studentCount: number;
+  createdAt: string;
+}
+
+export async function adminListRoutes(token: string, search = ""): Promise<AdminRouteRow[]> {
+  const admin = await requireAdmin(token);
+  if (!admin) return [];
+  const sb = supabaseAdmin();
+
+  let q = sb
+    .from("routes")
+    .select("id, topic, owner_id, visibility, blocked, category, cover_path, student_count, created_at")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  const term = search.trim();
+  if (term) q = q.ilike("topic", `%${term}%`);
+
+  const { data: routes } = await q;
+  const rows = routes || [];
+  if (rows.length === 0) return [];
+
+  // Datos del creador de cada ruta
+  const ownerIds = [...new Set(rows.map(r => r.owner_id))];
+  const { data: owners } = await sb.from("profiles").select("id, username, display_name, email").in("id", ownerIds);
+  const ownerMap = new Map((owners || []).map(o => [o.id, o]));
+
+  return rows.map(r => {
+    const o = ownerMap.get(r.owner_id);
+    return {
+      id: r.id,
+      topic: r.topic,
+      ownerName: o?.display_name || (o?.username ? `@${o.username}` : o?.email) || "—",
+      ownerEmail: o?.email || "",
+      visibility: r.visibility === "private" ? "private" : "public",
+      blocked: Boolean(r.blocked),
+      category: r.category || "otros",
+      categoryLabel: categoryLabel(r.category || "otros"),
+      coverUrl: r.cover_path ? sb.storage.from(COVER_BUCKET).getPublicUrl(r.cover_path).data.publicUrl : null,
+      studentCount: r.student_count ?? 0,
+      createdAt: r.created_at,
+    };
+  });
+}
+
+/** Cambia la visibilidad de cualquier ruta (público/privado). */
+export async function adminSetRouteVisibility(token: string, routeId: string, visibility: "public" | "private"): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false, error: "No autorizado" };
+  const sb = supabaseAdmin();
+  const { error } = await sb.from("routes").update({ visibility }).eq("id", routeId);
+  if (error) return { ok: false, error: "No se pudo cambiar la visibilidad." };
+  return { ok: true };
+}
+
+/** Saca del aire / reactiva una ruta. Bloqueada = invisible en todas partes (reversible). */
+export async function adminSetRouteBlocked(token: string, routeId: string, blocked: boolean): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false, error: "No autorizado" };
+  const sb = supabaseAdmin();
+  const { error } = await sb.from("routes").update({ blocked }).eq("id", routeId);
+  if (error) return { ok: false, error: "No se pudo actualizar el estado de la ruta." };
+  return { ok: true };
+}
+
+/** Borra para siempre cualquier ruta (audios + portadas + fila, cascada). */
+export async function adminDeleteRoute(token: string, routeId: string): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false, error: "No autorizado" };
+  const sb = supabaseAdmin();
+
+  const { data: route } = await sb.from("routes").select("topic").eq("id", routeId).single();
+  if (!route) return { ok: false, error: "Ruta no encontrada" };
+
+  // Storage: audios de lecciones y portadas viven bajo el prefijo routeId/
+  for (const bucket of [AUDIO_BUCKET, COVER_BUCKET]) {
+    try {
+      const { data: files } = await sb.storage.from(bucket).list(routeId, { limit: 200 });
+      if (files?.length) await sb.storage.from(bucket).remove(files.map(f => `${routeId}/${f.name}`));
+    } catch (e) {
+      console.warn(`[AdminDelete] No se pudo limpiar ${bucket}/${routeId}:`, e);
+    }
+  }
+
+  const { error } = await sb.from("routes").delete().eq("id", routeId);
+  if (error) return { ok: false, error: "No se pudo eliminar la ruta." };
+  console.log(`[AdminDelete] ✓ Ruta ${routeId} ("${route.topic}") eliminada por el admin.`);
+  return { ok: true };
 }
