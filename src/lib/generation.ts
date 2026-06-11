@@ -775,17 +775,17 @@ Devuelve SOLO este JSON:
 function subtitlesPromptPart(): string {
   return `
 PARTE A — "cues" (MECÁNICA: SUBTÍTULOS TRAMPA):
-La narración de ~3 minutos se divide en exactamente 40 "cues" (frases cortas de 8 a 13 palabras) que juntas forman una narración continua y natural (al concatenarlas se leen como prosa fluida).
+Primero redacta MENTALMENTE un mini-podcast de ~3 minutos: narración continua, fluida y de alta calidad (gancho → desarrollo → ejemplos → cierre), en segunda persona y con las REGLAS DE NARRACIÓN de arriba. Luego pártelo, SIN reescribir nada, en exactamente 40 "cues" consecutivos (frases de 8 a 13 palabras). El campo "texto" de cada cue es el GUION EXACTO DEL NARRADOR para ese tramo: al concatenar los 40 "texto" en orden se obtiene, palabra por palabra, lo que la voz dirá en el audio. NUNCA pongas en "texto" algo que la voz no vaya a decir.
 
-Exactamente 12 cues llevan además "textoAlterado": una versión del cue donde UNA palabra o frase clave fue cambiada de modo que CONTRADICE lo que el audio realmente dice. Reglas estrictas:
-- La alteración SIEMPRE afecta contenido clave: una cifra, un orden, una causa, un nombre conceptual, una relación (causa↔consecuencia, antes↔después, más↔menos).
-- El texto alterado debe leerse 100% natural y plausible por sí solo: PROHIBIDO que sea detectable solo leyendo; solo se nota al COMPARAR con lo que se oye.
-- Las 12 trampas se reparten por TODO el audio y nunca hay dos en cues consecutivos.
-- Al menos 2 trampas deben contradecir información que el audio estableció mucho antes (30+ segundos atrás), no solo la frase actual.
+Exactamente 12 de esos cues llevan además "textoAlterado". REGLA DE ORO de la trampa:
+- "textoAlterado" es una COPIA LITERAL de "texto" — mismas palabras, mismo orden, misma puntuación, misma longitud aproximada — EXCEPTO por UN solo elemento-trampa cambiado. NO reescribas ni reformules la frase: si cambias una palabra, TODO lo demás queda idéntico carácter por carácter.
+- El único cambio afecta contenido clave y CONTRADICE lo que el audio dice en ese mismo cue: una cifra (1789 → 1798), un nombre propio o conceptual, un "antes/después", una causa↔consecuencia, un "más/menos", "aumentó/disminuyó", un orden. Lo que se OYE será el "texto" verdadero; lo que se LEE será el "textoAlterado".
+- Como sólo cambia ese elemento, la trampa es IMPOSIBLE de notar leyendo el subtítulo aislado: sólo se detecta al comparar el subtítulo con la palabra que la voz pronuncia en ese instante.
+- Las 12 trampas se reparten por TODO el audio y NUNCA hay dos en cues consecutivos.
 
 Devuelve SOLO este JSON:
 {
-  "cues": [ { "texto": "frase que se narra..." }, { "texto": "frase que se narra...", "textoAlterado": "misma frase con el cambio trampa..." } ],
+  "cues": [ { "texto": "palabras exactas que dirá la voz..." }, { "texto": "en 1789 estalló la revolución que lo cambió todo", "textoAlterado": "en 1798 estalló la revolución que lo cambió todo" } ],
   "steps": [...]
 }`;
 }
