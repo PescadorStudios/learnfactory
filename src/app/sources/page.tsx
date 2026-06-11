@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useState, useRef, useEffect } from "react";
+import { Suspense, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2, Globe, Lock, Crown, Check } from "lucide-react";
+import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Sparkles } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { createRoute } from "../routeActions";
 import PremiumCheckout from "@/components/PremiumCheckout";
@@ -19,15 +19,18 @@ function Sources() {
   const [genError, setGenError] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("public");
   const [showPaywall, setShowPaywall] = useState(false);
+  const [topicInput, setTopicInput] = useState("");
 
   // States for inputs
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlValue, setUrlValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!topic) router.push("/");
-  }, [topic, router]);
+  const handleTopicSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = topicInput.trim();
+    if (t) router.push(`/sources?topic=${encodeURIComponent(t)}`);
+  };
 
   const addSource = (type: string, name: string, content?: string) => {
     setSources([...sources, { id: Math.random().toString(), type, name, content }]);
@@ -76,6 +79,44 @@ function Sources() {
       setIsGenerating(false);
     }
   };
+
+  // Sin tema todavía: pedirlo aquí mismo (el botón "Crear ruta nueva" entra sin ?topic=)
+  if (!topic) {
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center p-6 bg-zinc-950">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-xl text-center"
+        >
+          <div className="inline-flex items-center gap-2 mb-5 bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-full text-zinc-300 text-xs">
+            <Sparkles className="w-3.5 h-3.5 text-primary" /> Fase 1: Tu tema
+          </div>
+          <h1 className="text-3xl md:text-5xl font-bold mb-3">¿Qué quieres aprender?</h1>
+          <p className="text-zinc-400 mb-8">Escribe un tema y la IA construirá tu ruta: podcast, lecciones, debates y examen.</p>
+          <form onSubmit={handleTopicSubmit} className="flex flex-col sm:flex-row gap-3">
+            <input
+              autoFocus
+              value={topicInput}
+              onChange={e => setTopicInput(e.target.value)}
+              placeholder="Ej: La Revolución Francesa, Cálculo diferencial, Bitcoin..."
+              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl py-4 px-5 text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary transition-all"
+            />
+            <button
+              type="submit"
+              disabled={!topicInput.trim()}
+              className="inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white font-bold rounded-2xl px-6 py-4 transition-all disabled:opacity-50"
+            >
+              Continuar <ArrowRight className="w-5 h-5" />
+            </button>
+          </form>
+          <button onClick={() => router.push("/")} className="mt-6 text-sm text-zinc-500 hover:text-white transition-colors">
+            Volver al inicio
+          </button>
+        </motion.div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen flex flex-col p-6 md:p-12 relative overflow-hidden bg-zinc-950">

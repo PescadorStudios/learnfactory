@@ -62,8 +62,8 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
           )}
         </div>
 
-        {/* Cabecera del perfil */}
-        <div className="px-2 md:px-6 -mt-12 mb-8 flex flex-col md:flex-row md:items-end gap-4">
+        {/* Cabecera del perfil (relative z-10: debe pintarse SOBRE el banner posicionado) */}
+        <div className="relative z-10 px-2 md:px-6 -mt-12 mb-8 flex flex-col md:flex-row md:items-end gap-4">
           <div className="w-28 h-28 rounded-full overflow-hidden bg-zinc-800 border-4 border-zinc-950 shrink-0">
             {profile.avatarUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
