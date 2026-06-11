@@ -78,7 +78,11 @@ function LessonDispatcher() {
   // Descargar el audio (IndexedDB primero, luego Storage)
   useEffect(() => {
     if (!lesson || lesson.status !== "ready" || !lesson.attention || !lesson.audioUrl) return;
-    const audioKey = `audio_${routeId}_${nodeId}`;
+    // Versión por duración: al regenerar, el audio cambia (otra duración) y la
+    // URL de Storage es la misma, así que versionamos la clave de caché y la
+    // descarga para no servir el audio viejo contra los subtítulos nuevos.
+    const ver = lesson.audioDurationSeconds ?? 0;
+    const audioKey = `audio_${routeId}_${nodeId}_${ver}`;
     if (fetchedAudioFor.current === audioKey) return;
     fetchedAudioFor.current = audioKey;
 
@@ -87,7 +91,8 @@ function LessonDispatcher() {
       let blob = await getAudio(audioKey);
       if (!blob) {
         try {
-          const res = await fetch(lesson.audioUrl!);
+          const bustUrl = `${lesson.audioUrl}${lesson.audioUrl!.includes("?") ? "&" : "?"}v=${ver}`;
+          const res = await fetch(bustUrl, { cache: "no-store" });
           if (res.ok) {
             blob = await res.blob();
             await putAudio(audioKey, blob);
