@@ -3,10 +3,10 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle } from "lucide-react";
+import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle, Crown, Plus, Lock } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
-import { getProfileByUsername } from "@/app/socialActions";
-import type { PublicProfile } from "@/lib/types";
+import { getProfileByUsername, getPlan } from "@/app/socialActions";
+import type { PublicProfile, PlanState } from "@/lib/types";
 import AppHeader from "@/components/AppHeader";
 import RouteCard from "@/components/RouteCard";
 import FollowButton from "@/components/FollowButton";
@@ -16,6 +16,7 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
   const router = useRouter();
   const { token, loading, session } = useRequireAuth();
   const [profile, setProfile] = useState<PublicProfile | null>(null);
+  const [plan, setPlan] = useState<PlanState | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
@@ -25,6 +26,12 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
       else setNotFound(true);
     });
   }, [token, username]);
+
+  // Cuota de creación: privada, solo cuando es tu propio perfil
+  useEffect(() => {
+    if (!token || !profile?.isOwner) return;
+    getPlan(token).then(setPlan);
+  }, [token, profile?.isOwner]);
 
   if (loading || !session) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center"><Loader2 className="w-10 h-10 text-primary animate-spin" /></div>;
@@ -93,6 +100,63 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
             ) : null}
           </div>
         </div>
+
+        {/* Cuota de creación — privada (solo el dueño la ve) */}
+        {profile.isOwner && plan && (() => {
+          const atLimit = plan.routesUsed >= plan.routeQuota;
+          const isPremium = plan.plan === "premium";
+          const pct = plan.routeQuota > 0 ? Math.min(100, Math.round((plan.routesUsed / plan.routeQuota) * 100)) : 0;
+          return (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-5"
+            >
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-3.5 h-3.5 text-zinc-600" />
+                  <span className="text-xs text-zinc-500">Solo tú ves esto</span>
+                </div>
+                <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full ${
+                  isPremium ? "bg-amber-500/15 text-amber-300 border border-amber-500/40" : "bg-zinc-800 text-zinc-300 border border-zinc-700"
+                }`}>
+                  {isPremium && <Crown className="w-3.5 h-3.5" />} Plan {isPremium ? "Premium" : "Gratis"}
+                </span>
+              </div>
+
+              <div className="flex items-end justify-between gap-3 mb-2">
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-zinc-500 font-bold">Rutas creadas</p>
+                  <p className="text-2xl font-bold text-white">
+                    {plan.routesUsed}<span className="text-zinc-500 text-lg"> / {plan.routeQuota}</span>
+                  </p>
+                </div>
+                {atLimit ? (
+                  !isPremium ? (
+                    <button onClick={() => router.push("/sources")} className="inline-flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-full bg-amber-500 text-amber-950 hover:bg-amber-400 transition-all">
+                      <Crown className="w-4 h-4" /> Hazte Premium
+                    </button>
+                  ) : (
+                    <span className="text-sm text-zinc-500">Cuota completa</span>
+                  )
+                ) : (
+                  <button onClick={() => router.push("/sources")} className="inline-flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-full bg-primary text-white hover:bg-primary-hover transition-all">
+                    <Plus className="w-4 h-4" /> Crear ruta
+                  </button>
+                )}
+              </div>
+
+              <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                <div className={`h-full ${atLimit ? "bg-amber-500" : "bg-gradient-to-r from-primary to-secondary"}`} style={{ width: `${pct}%` }} />
+              </div>
+              {!isPremium && (
+                <p className="text-xs text-zinc-500 mt-2">
+                  {atLimit ? "Ya usaste tu ruta gratuita. Premium te da hasta 3 rutas." : "Plan gratuito: 1 ruta. Estudiar la biblioteca siempre es gratis."}
+                </p>
+              )}
+            </motion.div>
+          );
+        })()}
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10">
