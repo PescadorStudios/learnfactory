@@ -21,6 +21,12 @@ type Flash = { kind: "hit" | "miss"; id: number } | null;
 // Margen para reaccionar a una trampa que acaba de salir de pantalla
 const GRACE_SECONDS = 1.5;
 
+// El tiempo de cada cue se estima de forma lineal por caracteres sobre la
+// duración total, lo que ignora el silencio inicial del TTS y las pausas: por
+// eso los subtítulos se adelantan a la voz. Retrasamos su avance este margen
+// para que vayan un poco más lentos y queden alineados con lo que se oye.
+const SUBTITLE_LAG = 0.7;
+
 /**
  * MECÁNICA 2 — SUBTÍTULOS TRAMPA
  * Los subtítulos acompañan al audio, pero N de ellos contradicen lo narrado.
@@ -59,11 +65,12 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
     return () => cancelAnimationFrame(rafRef.current);
   }, [phase]);
 
-  // Cue visible: el último cuyo inicio ya pasó
+  // Cue visible: el último cuyo inicio ya pasó (con retraso para no adelantar la voz)
   const currentIndex = useMemo(() => {
+    const t = currentTime - SUBTITLE_LAG;
     let idx = -1;
     for (let i = 0; i < data.cues.length; i++) {
-      if (data.cues[i].atSeconds <= currentTime) idx = i;
+      if (data.cues[i].atSeconds <= t) idx = i;
       else break;
     }
     return idx;
@@ -103,7 +110,7 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
     let hit = tryCatch(currentIndex);
     if (!hit && currentIndex > 0) {
       const prev = data.cues[currentIndex - 1];
-      if (currentTime - prev.endSeconds < GRACE_SECONDS) hit = tryCatch(currentIndex - 1);
+      if ((currentTime - SUBTITLE_LAG) - prev.endSeconds < GRACE_SECONDS) hit = tryCatch(currentIndex - 1);
     }
     if (!hit) setFalseTaps(f => f + 1);
 
