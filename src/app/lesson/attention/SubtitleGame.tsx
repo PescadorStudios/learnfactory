@@ -21,11 +21,59 @@ type Flash = { kind: "hit" | "miss"; id: number } | null;
 // Margen para reaccionar a una trampa que acaba de salir de pantalla
 const GRACE_SECONDS = 1.5;
 
-// El tiempo de cada cue se estima de forma lineal por caracteres sobre la
-// duración total, lo que ignora el silencio inicial del TTS y las pausas: por
-// eso los subtítulos se adelantan a la voz. Retrasamos su avance este margen
-// para que vayan un poco más lentos y queden alineados con lo que se oye.
+// Retraso de respaldo si no se logra decodificar el audio: el tiempo de cada
+// cue viene estimado linealmente por caracteres y se adelanta a la voz.
 const SUBTITLE_LAG = 0.7;
+// Pequeño sesgo (mostrar el subtítulo justo después de empezar a oírlo) cuando
+// SÍ tenemos la línea de tiempo dinámica anclada a la voz real.
+const DYNAMIC_LAG = 0.15;
+
+/** Texto que REALMENTE se narra en un cue (en las trampas, el original). */
+function spokenText(c: { texto: string; alterado: boolean; original?: string }): string {
+  return c.alterado ? (c.original ?? c.texto) : c.texto;
+}
+
+/**
+ * Peso temporal de un fragmento narrado: nº de caracteres + un coste extra por
+ * la puntuación (las pausas de oración/cláusula consumen tiempo que el reparto
+ * lineal por caracteres ignoraba y que causaba la deriva a mitad del audio).
+ */
+function cueWeight(text: string): number {
+  let w = text.length;
+  for (const ch of text) {
+    if (ch === "." || ch === "!" || ch === "?" || ch === "…") w += 6;
+    else if (ch === "," || ch === ";" || ch === ":") w += 3;
+  }
+  return w;
+}
+
+/**
+ * Detecta dónde empieza y termina realmente la voz (recortando el silencio
+ * inicial/final del TTS) midiendo la amplitud en ventanas de 20 ms.
+ */
+function detectSpeechWindow(buf: AudioBuffer): { start: number; end: number } {
+  const ch = buf.getChannelData(0);
+  const sr = buf.sampleRate;
+  const win = Math.max(1, Math.floor(sr * 0.02));
+  const threshold = 0.015;
+  let start = 0;
+  let end = buf.duration;
+
+  for (let i = 0; i < ch.length; i += win) {
+    let max = 0;
+    const lim = Math.min(i + win, ch.length);
+    for (let j = i; j < lim; j++) { const a = Math.abs(ch[j]); if (a > max) max = a; }
+    if (max > threshold) { start = i / sr; break; }
+  }
+  for (let i = ch.length - 1; i >= 0; i -= win) {
+    let max = 0;
+    const lim = Math.max(0, i - win);
+    for (let j = i; j > lim; j--) { const a = Math.abs(ch[j]); if (a > max) max = a; }
+    if (max > threshold) { end = Math.min(buf.duration, (i / sr) + 0.05); break; }
+  }
+  if (end <= start + 1) { start = 0; end = buf.duration; }
+  return { start, end };
+}
 
 /**
  * MECÁNICA 2 — SUBTÍTULOS TRAMPA
@@ -46,6 +94,41 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
   const audioUrl = useMemo(() => URL.createObjectURL(audioBlob), [audioBlob]);
   useEffect(() => () => URL.revokeObjectURL(audioUrl), [audioUrl]);
 
+  // Línea de tiempo DINÁMICA: decodificamos el audio, detectamos dónde empieza
+  // y termina la voz, y repartimos los cues sobre esa ventana real ponderando
+  // pausas. Si falla, caemos a los atSeconds precalculados + retraso fijo.
+  const [timeline, setTimeline] = useState<number[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!AC) return;
+        const ctx = new AC();
+        const buf = await ctx.decodeAudioData(await audioBlob.arrayBuffer());
+        ctx.close();
+        if (cancelled) return;
+        const { start, end } = detectSpeechWindow(buf);
+        const weights = data.cues.map(c => cueWeight(spokenText(c)));
+        const total = weights.reduce((a, b) => a + b, 0) || 1;
+        const starts: number[] = [];
+        let cum = 0;
+        for (let i = 0; i < weights.length; i++) {
+          starts.push(start + (cum / total) * (end - start));
+          cum += weights[i];
+        }
+        setTimeline(starts);
+      } catch {
+        /* sin Web Audio: se usa el respaldo */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [audioBlob, data.cues]);
+
+  // Tiempos de inicio de cada cue (dinámicos si están disponibles) y su retraso.
+  const times = useMemo(() => timeline ?? data.cues.map(c => c.atSeconds), [timeline, data.cues]);
+  const lag = timeline ? DYNAMIC_LAG : SUBTITLE_LAG;
+
   const trampas = data.trampas;
   const passCount = Math.ceil(trampas * 0.75); // 12 → 9
   const maxScans = trampas + 5;
@@ -65,16 +148,16 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
     return () => cancelAnimationFrame(rafRef.current);
   }, [phase]);
 
-  // Cue visible: el último cuyo inicio ya pasó (con retraso para no adelantar la voz)
+  // Cue visible: el último cuyo inicio (real) ya pasó
   const currentIndex = useMemo(() => {
-    const t = currentTime - SUBTITLE_LAG;
+    const t = currentTime - lag;
     let idx = -1;
-    for (let i = 0; i < data.cues.length; i++) {
-      if (data.cues[i].atSeconds <= t) idx = i;
+    for (let i = 0; i < times.length; i++) {
+      if (times[i] <= t) idx = i;
       else break;
     }
     return idx;
-  }, [data.cues, currentTime]);
+  }, [times, currentTime, lag]);
 
   const startPlaying = () => {
     setPhase("playing");
@@ -109,14 +192,14 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
 
     let hit = tryCatch(currentIndex);
     if (!hit && currentIndex > 0) {
-      const prev = data.cues[currentIndex - 1];
-      if ((currentTime - SUBTITLE_LAG) - prev.endSeconds < GRACE_SECONDS) hit = tryCatch(currentIndex - 1);
+      // El cue previo dejó la pantalla cuando empezó el actual (times[currentIndex]).
+      if ((currentTime - lag) - times[currentIndex] < GRACE_SECONDS) hit = tryCatch(currentIndex - 1);
     }
     if (!hit) setFalseTaps(f => f + 1);
 
     setFlash({ kind: hit ? "hit" : "miss", id: Date.now() });
     setTimeout(() => setFlash(null), 700);
-  }, [phase, scansLeft, isPaused, currentIndex, currentTime, data.cues, caught]);
+  }, [phase, scansLeft, isPaused, currentIndex, currentTime, lag, times, data.cues, caught]);
 
   const handleRetry = () => {
     setCaught(new Set());
