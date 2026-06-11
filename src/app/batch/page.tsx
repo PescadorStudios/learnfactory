@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Layers, Loader2, Plus, X, Link as LinkIcon, Sparkles, ImagePlus,
+  Layers, Loader2, Plus, X, Link as LinkIcon, ImagePlus,
   Lock, AlertTriangle, Check, ChevronDown, ChevronUp, Rocket, BookOpen, ExternalLink,
 } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
@@ -18,6 +18,7 @@ import { getPlan } from "@/app/socialActions";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
 import { ROUTE_CATEGORIES, type PlanState, type RouteSummary } from "@/lib/types";
 import AppHeader from "@/components/AppHeader";
+import { LogoMark } from "@/components/Logo";
 
 const BATCH_MAX = 20;
 
@@ -391,7 +392,7 @@ export default function BatchPage() {
                         onClick={() => patchSlot(s.id, { coverOpen: !s.coverOpen })}
                         className="w-full flex items-center justify-between text-xs font-bold text-zinc-400 hover:text-white transition-colors py-1"
                       >
-                        <span className="inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-primary" /> Portada personalizada (opcional)</span>
+                        <span className="inline-flex items-center gap-1.5"><LogoMark className="w-3.5 h-3.5" /> Portada personalizada (opcional)</span>
                         {s.coverOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                       </button>
                       {s.coverOpen && (

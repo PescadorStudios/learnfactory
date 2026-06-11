@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Sparkles, Loader2, Plus, ChevronRight, Star, Crown, Users, Layers } from "lucide-react";
+import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
 import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
@@ -11,6 +11,7 @@ import type { RouteSummary, LibrarySection, FeaturedCreator, RouteCard as RouteC
 import AppHeader from "@/components/AppHeader";
 import RouteRow from "@/components/RouteRow";
 import RouteCard from "@/components/RouteCard";
+import { Logo, LogoMark } from "@/components/Logo";
 
 function HomeContent() {
   const router = useRouter();
@@ -94,9 +95,12 @@ function HomeContent() {
               className="rounded-3xl bg-gradient-to-br from-primary/20 via-zinc-900 to-secondary/20 border border-zinc-800 p-8 md:p-12 mb-10 relative overflow-hidden"
             >
               <div className="absolute top-[-30%] right-[-10%] w-[40%] h-[120%] rounded-full bg-primary/20 blur-[100px] pointer-events-none" />
+              {/* Símbolo de marca como marca de agua imponente */}
+              <LogoMark className="hidden md:block absolute -right-8 -top-8 w-64 h-64 opacity-[0.07] rotate-12 pointer-events-none" />
               <div className="relative z-10 max-w-2xl">
+                <Logo className="h-12 md:h-16 mb-6" glow />
                 <div className="inline-flex items-center gap-2 mb-4 bg-zinc-950/50 border border-zinc-800 px-3 py-1.5 rounded-full text-zinc-300 text-xs">
-                  <Sparkles className="w-3.5 h-3.5 text-primary" /> Biblioteca colectiva de conocimiento
+                  <LogoMark className="w-3.5 h-3.5" /> Biblioteca colectiva de conocimiento
                 </div>
                 <h1 className="text-3xl md:text-5xl font-bold mb-4 tracking-tight">
                   Aprende cualquier tema. <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">Crea el tuyo.</span>

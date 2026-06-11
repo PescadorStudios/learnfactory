@@ -2,9 +2,10 @@
 
 import { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Loader2, Sparkles, Upload, X, ImagePlus } from "lucide-react";
+import { Loader2, Upload, X, ImagePlus } from "lucide-react";
 import { generateRouteCover, uploadRouteCover } from "@/app/socialActions";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
+import { LogoMark } from "@/components/Logo";
 
 export default function CoverEditor({
   token,
@@ -145,7 +146,7 @@ export default function CoverEditor({
             disabled={busy !== null}
             className="flex-1 inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-2xl py-3 font-bold transition-all disabled:opacity-60"
           >
-            {busy === "ai" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            {busy === "ai" ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogoMark className="w-4 h-4" />}
             {busy === "ai" ? "Generando..." : "Generar con IA"}
           </button>
           <button

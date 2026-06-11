@@ -3,11 +3,12 @@
 import { Suspense, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileUp, Link as LinkIcon, Bot, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Sparkles, Tag } from "lucide-react";
+import { FileUp, Link as LinkIcon, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Tag } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { createRoute } from "../routeActions";
 import { ROUTE_CATEGORIES } from "@/lib/types";
 import PremiumCheckout from "@/components/PremiumCheckout";
+import { LogoMark } from "@/components/Logo";
 
 function Sources() {
   const router = useRouter();
@@ -92,7 +93,7 @@ function Sources() {
           className="w-full max-w-xl text-center"
         >
           <div className="inline-flex items-center gap-2 mb-5 bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-full text-zinc-300 text-xs">
-            <Sparkles className="w-3.5 h-3.5 text-primary" /> Fase 1: Tu tema
+            <LogoMark className="w-3.5 h-3.5" /> Fase 1: Tu tema
           </div>
           <h1 className="text-3xl md:text-5xl font-bold mb-3">¿Qué quieres aprender?</h1>
           <p className="text-zinc-400 mb-8">Escribe un tema y la IA construirá tu ruta: podcast, lecciones, debates y examen.</p>
@@ -214,7 +215,7 @@ function Sources() {
               className="w-full flex flex-col items-center justify-center p-8 bg-zinc-900/90 backdrop-blur-sm rounded-[22px] hover:bg-zinc-900/70 transition-all group"
             >
               <div className="w-16 h-16 bg-zinc-800 rounded-2xl flex items-center justify-center mb-4 group-hover:rotate-12 transition-transform">
-                <Bot className="w-8 h-8 text-accent" />
+                <LogoMark className="w-9 h-9" />
               </div>
               <h3 className="text-xl font-semibold mb-2">IA busca las mejores fuentes</h3>
               <p className="text-zinc-400 text-sm text-center max-w-md">
@@ -240,7 +241,7 @@ function Sources() {
                   <div className="flex items-center gap-3">
                     {s.type === "file" && <FileUp className="w-4 h-4 text-primary" />}
                     {s.type === "url" && <LinkIcon className="w-4 h-4 text-secondary" />}
-                    {s.type === "ai" && <Bot className="w-4 h-4 text-accent" />}
+                    {s.type === "ai" && <LogoMark className="w-4 h-4" />}
                     <span className="text-sm font-medium">{s.name}</span>
                   </div>
                   <button onClick={() => handleRemove(s.id)} className="text-zinc-500 hover:text-red-400 transition-colors">

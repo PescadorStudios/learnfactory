@@ -3,10 +3,11 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Sparkles, Loader2, LogIn, UserPlus } from "lucide-react";
+import { Loader2, LogIn, UserPlus } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/useAuth";
 import { registerUser } from "../routeActions";
+import { Logo } from "@/components/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -73,11 +74,8 @@ export default function LoginPage() {
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-md z-10"
       >
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 mb-4 bg-zinc-900/50 border border-zinc-800 px-4 py-2 rounded-full text-zinc-400 text-sm">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <span>LearnFactory</span>
-          </div>
+        <div className="flex flex-col items-center text-center mb-8">
+          <Logo className="h-14 mb-6" glow />
           <h1 className="text-4xl font-bold">
             {mode === "signin" ? "Bienvenido de vuelta" : "Crea tu cuenta"}
           </h1>

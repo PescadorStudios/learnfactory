@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, User, Settings, LogOut, Crown, Sparkles, Plus, Shield } from "lucide-react";
+import { Search, User, Settings, LogOut, Crown, Plus, Shield } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { getMyProfile, getPlan } from "@/app/socialActions";
 import { checkIsAdmin } from "@/app/adminActions";
+import { Logo } from "@/components/Logo";
 
 export default function AppHeader({ initialQuery = "" }: { initialQuery?: string }) {
   const router = useRouter();
@@ -46,11 +47,12 @@ export default function AppHeader({ initialQuery = "" }: { initialQuery?: string
   return (
     <header className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-900">
       <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-4">
-        <button onClick={() => router.push("/")} className="flex items-center gap-2 shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-bold text-white hidden sm:block">LearnFactory</span>
+        <button
+          onClick={() => router.push("/")}
+          className="flex items-center shrink-0 opacity-95 hover:opacity-100 transition-opacity"
+          aria-label="Inicio"
+        >
+          <Logo className="h-8" />
         </button>
 
         <form onSubmit={submitSearch} className="flex-1 max-w-md relative">
