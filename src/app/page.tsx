@@ -88,42 +88,101 @@ function HomeContent() {
           </div>
         ) : (
           <>
-            {/* Hero */}
+            {/* Hero — pieza central de la identidad */}
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              className="rounded-3xl bg-gradient-to-br from-primary/20 via-zinc-900 to-secondary/20 border border-zinc-800 p-8 md:p-12 mb-10 relative overflow-hidden"
+              transition={{ duration: 0.6, ease: "easeOut" }}
+              className="relative rounded-[2rem] overflow-hidden border border-zinc-800/80 bg-zinc-950 mb-12"
             >
-              <div className="absolute top-[-30%] right-[-10%] w-[40%] h-[120%] rounded-full bg-primary/20 blur-[100px] pointer-events-none" />
-              {/* Símbolo de marca como marca de agua imponente */}
-              <LogoMark className="hidden md:block absolute -right-8 -top-8 w-64 h-64 opacity-[0.07] rotate-12 pointer-events-none" />
-              <div className="relative z-10 max-w-2xl">
-                <Logo className="h-12 md:h-16 mb-6" glow />
-                <div className="inline-flex items-center gap-2 mb-4 bg-zinc-950/50 border border-zinc-800 px-3 py-1.5 rounded-full text-zinc-300 text-xs">
-                  <LogoMark className="w-3.5 h-3.5" /> Biblioteca colectiva de conocimiento
-                </div>
-                <h1 className="text-3xl md:text-5xl font-bold mb-4 tracking-tight">
-                  Aprende cualquier tema. <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">Crea el tuyo.</span>
-                </h1>
-                <p className="text-zinc-400 text-base md:text-lg mb-6 max-w-xl">
-                  Explora rutas creadas por la comunidad o genera la tuya con IA: podcast, lecciones, debates y exámenes.
-                </p>
-                <div className="flex flex-wrap gap-3">
+              {/* Capa 1: gradientes radiales profundos */}
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(59,130,246,0.16),transparent_55%)] pointer-events-none" />
+              {/* Capa 2: línea de luz superior */}
+              <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent pointer-events-none" />
+              {/* Capa 3: glow que respira */}
+              <motion.div
+                animate={{ opacity: [0.3, 0.6, 0.3] }}
+                transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
+                className="absolute -top-40 right-0 w-[32rem] h-[32rem] rounded-full bg-primary/25 blur-[130px] pointer-events-none"
+              />
+              {/* Capa 4: símbolo monumental desvanecido */}
+              <LogoMark className="hidden md:block absolute -right-20 top-1/2 -translate-y-1/2 w-[28rem] h-[28rem] opacity-[0.06] rotate-12 pointer-events-none" />
+
+              <div className="relative z-10 px-8 md:px-14 py-12 md:py-16 max-w-3xl">
+                {/* El logo ES el protagonista */}
+                <motion.div
+                  initial={{ opacity: 0, y: 22, filter: "blur(6px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  transition={{ duration: 0.8, ease: "easeOut" }}
+                >
+                  <Logo className="h-20 md:h-32 mb-7" glow />
+                </motion.div>
+
+                <motion.h1
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.25, duration: 0.6 }}
+                  className="text-3xl md:text-[3.4rem] md:leading-[1.08] font-bold mb-5 tracking-tight"
+                >
+                  Aprende cualquier tema.
+                  <br />
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-violet-400 to-secondary">
+                    Crea el tuyo con IA.
+                  </span>
+                </motion.h1>
+
+                <motion.p
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4, duration: 0.6 }}
+                  className="text-zinc-400 text-base md:text-lg mb-8 max-w-xl"
+                >
+                  La fábrica donde el conocimiento se convierte en rutas: podcast narrado,
+                  juegos de atención, debates y exámenes — creados por la comunidad o por ti.
+                </motion.p>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.55, duration: 0.6 }}
+                  className="flex flex-wrap gap-3"
+                >
                   <button
                     onClick={() => router.push("/sources")}
-                    className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-full px-6 py-3 font-bold transition-all"
+                    className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-full px-7 py-3.5 font-bold transition-all shadow-[0_0_30px_rgba(139,92,246,0.35)] hover:shadow-[0_0_45px_rgba(139,92,246,0.5)]"
                   >
                     <Plus className="w-5 h-5" /> Crear ruta nueva
                   </button>
                   {plan?.batchEnabled && (
                     <button
                       onClick={() => router.push("/batch")}
-                      className="inline-flex items-center gap-2 bg-violet-500/15 border border-violet-500/50 text-violet-300 hover:bg-violet-500/25 rounded-full px-6 py-3 font-bold transition-all"
+                      className="inline-flex items-center gap-2 bg-zinc-900/80 border border-violet-500/40 text-violet-300 hover:bg-violet-500/15 hover:border-violet-400 rounded-full px-7 py-3.5 font-bold transition-all backdrop-blur-sm"
                     >
                       <Layers className="w-5 h-5" /> Crear rutas en lote
                     </button>
                   )}
-                </div>
+                </motion.div>
+
+                {/* Sellos de la fábrica */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.75, duration: 0.8 }}
+                  className="mt-10 pt-6 border-t border-zinc-800/60 flex flex-wrap items-center gap-x-7 gap-y-2.5 text-xs text-zinc-500"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <LogoMark className="w-4 h-4" /> Podcast narrado por IA
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-1 h-1 rounded-full bg-primary/70" /> 3 juegos de atención
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-1 h-1 rounded-full bg-secondary/70" /> Debates socráticos
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-1 h-1 rounded-full bg-accent/70" /> Biblioteca colectiva
+                  </span>
+                </motion.div>
               </div>
             </motion.div>
 

@@ -6,7 +6,7 @@
 // ──────────────────────────────────────────────────
 
 export const LOGO_URL =
-  "https://res.cloudinary.com/deirdgemo/image/upload/v1781189366/B933D50E-4821-479F-B581-87555D2ED9B9_rqszuv.png";
+  "https://res.cloudinary.com/deirdgemo/image/upload/v1781192596/IMG_9266_nixp8t.png";
 export const LOGO_MARK_URL =
   "https://res.cloudinary.com/deirdgemo/image/upload/v1781189366/5BCE0556-1995-4039-9B48-9C36AE4F8716_js2w0v.png";
 
