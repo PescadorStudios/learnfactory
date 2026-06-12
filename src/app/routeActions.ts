@@ -32,6 +32,7 @@ import type {
   RouteCategory,
 } from "@/lib/types";
 import { ROUTE_CATEGORIES } from "@/lib/types";
+import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
 
 const AUDIO_BUCKET = "lesson-audio";
 const COVER_BUCKET = "route-covers";
@@ -784,11 +785,12 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
   const isOwner = route.owner_id === user.id;
   if (!isOwner && route.visibility !== "public") return null;
 
-  const [{ data: lessons }, { data: attempts }, { data: mastery }, { data: allUserAttempts }] = await Promise.all([
+  const [{ data: lessons }, { data: attempts }, { data: mastery }, { data: allUserAttempts }, { data: myProfile }] = await Promise.all([
     sb.from("lessons").select("node_id, status, error, generating_at").eq("route_id", routeId),
     sb.from("attempts").select("node_id, stars, passed, xp, created_at").eq("route_id", routeId).eq("user_id", user.id),
     sb.from("concept_mastery").select("concept_id, score, last_reviewed").eq("route_id", routeId).eq("user_id", user.id),
     sb.from("attempts").select("created_at").eq("user_id", user.id),
+    sb.from("profiles").select("routes_completed, avg_stars").eq("id", user.id).single(),
   ]);
 
   const masteryMap = new Map((mastery || []).map(m => [m.concept_id, m]));
@@ -835,6 +837,12 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
   const xpTotal = (attempts || []).reduce((sum, a) => sum + (a.xp || 0), 0);
   const streakDays = computeStreak((allUserAttempts || []).map(r => r.created_at));
 
+  // Reputación de explorador (para celebrar rank-ups) y % de esta ruta
+  const myRank = explorerRank(myProfile?.routes_completed ?? 0, myProfile?.avg_stars ?? 0).level;
+  const totalLessons = (lessons || []).length;
+  const passedNodes = new Set((attempts || []).filter(a => a.passed).map(a => a.node_id)).size;
+  const myCompletionPct = totalLessons > 0 ? Math.round((passedNodes / totalLessons) * 100) : 0;
+
   return {
     id: route.id,
     topic: route.topic,
@@ -848,6 +856,8 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
     coverUrl: coverUrlFor(route.cover_path),
     description: route.description ?? null,
     isOwner,
+    explorerRank: myRank,
+    myCompletionPct,
   };
 }
 
@@ -976,11 +986,144 @@ export async function saveAttempt(
     }, { onConflict: "user_id,route_id,concept_id" });
   }
 
+  // ── Reputación de dos vías ──
+  // Solo cuando el usuario aprueba un nodo que NUNCA había aprobado (prevBest
+  // null): es el único momento en que puede cambiar su % de la ruta.
+  let explorerRankUp: number | undefined;
+  if (input.passed && prevBest === null) {
+    try {
+      explorerRankUp = await updateReputation(user.id, routeId);
+    } catch (e) {
+      console.warn("[Reputation] No se pudo actualizar la reputación:", e);
+    }
+  }
+
   const newBest = input.passed && (prevBest === null || stars > prevBest);
   return {
     ok: true,
     xpGained: Math.max(0, Math.round(input.xp)),
     newBest,
     bestStars: Math.max(prevBest ?? 0, input.passed ? stars : 0),
+    explorerRankUp,
   };
+}
+
+/**
+ * Recalcula la reputación tras aprobar un nodo nuevo:
+ * - Si el estudiante cruzó el 80% de la ruta → graduate_count de la ruta y
+ *   graduates del creador (estudiantes DISTINTOS graduados en sus rutas).
+ * - Siempre: routes_completed y avg_stars del estudiante (desde la fuente).
+ * Devuelve el nuevo nivel de explorador si subió de rango.
+ */
+async function updateReputation(userId: string, routeId: string): Promise<number | undefined> {
+  const sb = supabaseAdmin();
+
+  // Rango ANTES (con los contadores almacenados)
+  const { data: profileBefore } = await sb
+    .from("profiles")
+    .select("routes_completed, avg_stars")
+    .eq("id", userId)
+    .single();
+  const rankBefore = explorerRank(profileBefore?.routes_completed ?? 0, profileBefore?.avg_stars ?? 0).level;
+
+  // ¿El estudiante acaba de cruzar el 80% de ESTA ruta?
+  const [{ count: totalLessons }, { data: myPassed }] = await Promise.all([
+    sb.from("lessons").select("id", { count: "exact", head: true }).eq("route_id", routeId),
+    sb.from("attempts").select("node_id").eq("route_id", routeId).eq("user_id", userId).eq("passed", true),
+  ]);
+  const total = totalLessons ?? 0;
+  const done = new Set((myPassed || []).map(r => r.node_id)).size;
+  // El nodo recién aprobado es el que pudo cruzar el umbral
+  const justGraduated = total > 0 && done / total >= GRADUATE_THRESHOLD && (done - 1) / total < GRADUATE_THRESHOLD;
+
+  if (justGraduated) {
+    // graduate_count de la ruta: recomputar desde la fuente (sin drift)
+    const { data: routeRow } = await sb.from("routes").select("owner_id").eq("id", routeId).single();
+    const { data: allPassed } = await sb
+      .from("attempts")
+      .select("user_id, node_id")
+      .eq("route_id", routeId)
+      .eq("passed", true);
+    const perUser = new Map<string, Set<string>>();
+    for (const a of allPassed || []) {
+      if (!perUser.has(a.user_id)) perUser.set(a.user_id, new Set());
+      perUser.get(a.user_id)!.add(a.node_id);
+    }
+    let graduateCount = 0;
+    for (const nodes of perUser.values()) {
+      if (nodes.size / total >= GRADUATE_THRESHOLD) graduateCount++;
+    }
+    await sb.from("routes").update({ graduate_count: graduateCount }).eq("id", routeId);
+
+    // graduates del creador: +1 solo si este estudiante no había graduado
+    // ya OTRA ruta suya (cuenta estudiantes distintos; el backfill corrige drift)
+    if (routeRow?.owner_id && routeRow.owner_id !== userId) {
+      const { data: ownerRoutes } = await sb.from("routes").select("id").eq("owner_id", routeRow.owner_id).neq("id", routeId);
+      const otherIds = (ownerRoutes || []).map(r => r.id);
+      let alreadyCounted = false;
+      if (otherIds.length > 0) {
+        const [{ data: otherPassed }, { data: otherLessons }] = await Promise.all([
+          sb.from("attempts").select("route_id, node_id").eq("user_id", userId).eq("passed", true).in("route_id", otherIds),
+          sb.from("lessons").select("route_id").in("route_id", otherIds),
+        ]);
+        const totals = new Map<string, number>();
+        for (const l of otherLessons || []) totals.set(l.route_id, (totals.get(l.route_id) ?? 0) + 1);
+        const doneByRoute = new Map<string, Set<string>>();
+        for (const a of otherPassed || []) {
+          if (!doneByRoute.has(a.route_id)) doneByRoute.set(a.route_id, new Set());
+          doneByRoute.get(a.route_id)!.add(a.node_id);
+        }
+        for (const [rid, nodes] of doneByRoute) {
+          const t = totals.get(rid) ?? 0;
+          if (t > 0 && nodes.size / t >= GRADUATE_THRESHOLD) { alreadyCounted = true; break; }
+        }
+      }
+      if (!alreadyCounted) {
+        const { data: ownerProfile } = await sb.from("profiles").select("graduates").eq("id", routeRow.owner_id).single();
+        await sb.from("profiles").update({ graduates: (ownerProfile?.graduates ?? 0) + 1 }).eq("id", routeRow.owner_id);
+        console.log(`[Reputation] 🎓 Nuevo graduado para ${routeRow.owner_id} (ruta ${routeId}).`);
+      }
+    }
+  }
+
+  // Reputación de explorador: recomputar desde la fuente (solo sus intentos)
+  const { data: allMine } = await sb
+    .from("attempts")
+    .select("route_id, node_id, stars")
+    .eq("user_id", userId)
+    .eq("passed", true);
+  const bestByNode = new Map<string, number>();
+  const doneByRoute = new Map<string, Set<string>>();
+  for (const a of allMine || []) {
+    const key = `${a.route_id}/${a.node_id}`;
+    bestByNode.set(key, Math.max(bestByNode.get(key) ?? 0, a.stars));
+    if (!doneByRoute.has(a.route_id)) doneByRoute.set(a.route_id, new Set());
+    doneByRoute.get(a.route_id)!.add(a.node_id);
+  }
+  const bests = [...bestByNode.values()];
+  const avgStars = bests.length ? bests.reduce((a, b) => a + b, 0) / bests.length : 0;
+
+  const touchedIds = [...doneByRoute.keys()];
+  let routesCompleted = 0;
+  if (touchedIds.length > 0) {
+    const { data: lessonRows } = await sb.from("lessons").select("route_id").in("route_id", touchedIds);
+    const totals = new Map<string, number>();
+    for (const l of lessonRows || []) totals.set(l.route_id, (totals.get(l.route_id) ?? 0) + 1);
+    for (const [rid, nodes] of doneByRoute) {
+      const t = totals.get(rid) ?? 0;
+      if (t > 0 && nodes.size / t >= GRADUATE_THRESHOLD) routesCompleted++;
+    }
+  }
+
+  await sb.from("profiles").update({
+    routes_completed: routesCompleted,
+    avg_stars: Math.round(avgStars * 100) / 100,
+  }).eq("id", userId);
+
+  const rankAfter = explorerRank(routesCompleted, avgStars).level;
+  if (rankAfter > rankBefore) {
+    console.log(`[Reputation] ⬆️ ${userId} sube a rango de explorador ${rankAfter}.`);
+    return rankAfter;
+  }
+  return undefined;
 }

@@ -12,6 +12,8 @@ import AppHeader from "@/components/AppHeader";
 import RouteRow from "@/components/RouteRow";
 import RouteCard from "@/components/RouteCard";
 import { Logo, LogoMark } from "@/components/Logo";
+import { RankPill } from "@/components/ReputationBadge";
+import { creatorRank } from "@/lib/reputation";
 
 function HomeContent() {
   const router = useRouter();
@@ -261,7 +263,8 @@ function HomeContent() {
                         )}
                       </div>
                       <p className="font-bold text-white text-sm truncate w-full">{c.displayName || `@${c.username}`}</p>
-                      <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1"><Users className="w-3 h-3" /> {c.studentTotal} · {c.routeCount} rutas</p>
+                      <div className="mt-1.5"><RankPill track="creator" rank={creatorRank(c.graduates)} size="xs" /></div>
+                      <p className="text-xs text-zinc-500 flex items-center gap-1 mt-1.5"><Users className="w-3 h-3" /> {c.studentTotal} · {c.routeCount} rutas</p>
                     </button>
                   ))}
                 </div>

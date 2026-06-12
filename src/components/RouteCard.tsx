@@ -2,8 +2,18 @@
 
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Star, Users, BookOpen, Lock } from "lucide-react";
+import { Star, Users, BookOpen, Lock, Hammer } from "lucide-react";
 import type { RouteCard as RouteCardData } from "@/lib/types";
+import { creatorRank } from "@/lib/reputation";
+
+/** Color del @creador según su rango (estatus visible en toda la biblioteca). */
+const CREATOR_TIER_TEXT: Record<string, string> = {
+  zinc: "text-zinc-600",
+  bronze: "text-amber-600",
+  silver: "text-zinc-300",
+  gold: "text-amber-400",
+  legend: "text-violet-400",
+};
 
 /** Tarjeta de ruta estilo Netflix (portada 16:9 + overlay). */
 export default function RouteCard({ route, compact = false }: { route: RouteCardData; compact?: boolean }) {
@@ -45,9 +55,15 @@ export default function RouteCard({ route, compact = false }: { route: RouteCard
         <span className="flex items-center gap-1">
           <Users className="w-3 h-3" /> {route.studentCount}
         </span>
-        {route.creator.username && (
-          <span className="truncate ml-auto text-zinc-600">@{route.creator.username}</span>
-        )}
+        {route.creator.username && (() => {
+          const rank = creatorRank(route.creator.graduates ?? 0);
+          return (
+            <span className={`truncate ml-auto flex items-center gap-1 ${CREATOR_TIER_TEXT[rank.tier]}`} title={`Creador ${rank.name}`}>
+              {rank.level >= 2 && <Hammer className="w-3 h-3 shrink-0" />}
+              @{route.creator.username}
+            </span>
+          );
+        })()}
       </div>
     </motion.button>
   );

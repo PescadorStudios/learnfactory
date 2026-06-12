@@ -13,6 +13,7 @@ import type {
   LibrarySection,
   FeaturedCreator,
   RouteLanding,
+  RouteStudent,
   RouteVisibility,
   RouteCategory,
   Plan,
@@ -70,6 +71,7 @@ interface ProfileRow {
   username: string | null;
   display_name: string | null;
   avatar_path: string | null;
+  graduates?: number;
 }
 
 function toRouteCard(r: RouteRow, creator?: ProfileRow): RouteCard {
@@ -88,6 +90,7 @@ function toRouteCard(r: RouteRow, creator?: ProfileRow): RouteCard {
       username: creator?.username ?? null,
       displayName: creator?.display_name ?? null,
       avatarUrl: publicUrl(AVATAR_BUCKET, creator?.avatar_path ?? null),
+      graduates: creator?.graduates ?? 0,
     },
   };
 }
@@ -130,13 +133,14 @@ export async function getMyProfile(token: string): Promise<{
   avatarUrl: string | null;
   bannerUrl: string | null;
   email: string;
+  profilePublic: boolean;
 } | null> {
   const user = await getUserFromToken(token);
   if (!user) return null;
   const sb = supabaseAdmin();
   const { data: p } = await sb
     .from("profiles")
-    .select("username, display_name, bio, avatar_path, banner_path")
+    .select("username, display_name, bio, avatar_path, banner_path, profile_public")
     .eq("id", user.id)
     .single();
   return {
@@ -147,6 +151,7 @@ export async function getMyProfile(token: string): Promise<{
     avatarUrl: publicUrl(AVATAR_BUCKET, p?.avatar_path ?? null),
     bannerUrl: publicUrl(AVATAR_BUCKET, p?.banner_path ?? null),
     email: user.email,
+    profilePublic: p?.profile_public !== false,
   };
 }
 
@@ -154,7 +159,7 @@ const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 
 export async function updateProfile(
   token: string,
-  input: { username?: string; displayName?: string; bio?: string }
+  input: { username?: string; displayName?: string; bio?: string; profilePublic?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
   const user = await getUserFromToken(token);
   if (!user) return { ok: false, error: "Sesión inválida" };
@@ -180,6 +185,7 @@ export async function updateProfile(
 
   if (input.displayName !== undefined) patch.display_name = input.displayName.trim().slice(0, 60) || null;
   if (input.bio !== undefined) patch.bio = input.bio.trim().slice(0, 280) || null;
+  if (input.profilePublic !== undefined) patch.profile_public = Boolean(input.profilePublic);
 
   if (Object.keys(patch).length === 0) return { ok: true };
 
@@ -224,12 +230,41 @@ export async function getProfileByUsername(token: string, username: string): Pro
 
   const { data: profile } = await sb
     .from("profiles")
-    .select("id, username, display_name, bio, avatar_path, banner_path, plan")
+    .select("id, username, display_name, bio, avatar_path, banner_path, plan, profile_public, routes_completed, avg_stars, graduates")
     .eq("username", username.toLowerCase())
     .maybeSingle();
   if (!profile) return null;
 
   const isOwner = viewer?.id === profile.id;
+  const profilePublic = profile.profile_public !== false;
+
+  // Perfil privado y no es el dueño: vista mínima (identidad + rangos),
+  // sin rutas ni stats detalladas.
+  if (!profilePublic && !isOwner) {
+    return {
+      id: profile.id,
+      username: profile.username,
+      displayName: profile.display_name,
+      bio: null,
+      avatarUrl: publicUrl(AVATAR_BUCKET, profile.avatar_path),
+      bannerUrl: null,
+      plan: (profile.plan as Plan) || "free",
+      isOwner: false,
+      isFollowing: false,
+      profilePublic: false,
+      stats: {
+        routeCount: 0,
+        studentTotal: 0,
+        ratingAvg: null,
+        followers: 0,
+        following: 0,
+        routesCompleted: profile.routes_completed ?? 0,
+        avgStars: profile.avg_stars ?? 0,
+        graduates: profile.graduates ?? 0,
+      },
+      routes: [],
+    };
+  }
 
   // Rutas: públicas para todos; si es el dueño, también las privadas.
   // Las que están fuera del aire (blocked) no aparecen para nadie.
@@ -262,12 +297,16 @@ export async function getProfileByUsername(token: string, username: string): Pro
     plan: (profile.plan as Plan) || "free",
     isOwner,
     isFollowing: Boolean(isFollowingRow),
+    profilePublic,
     stats: {
       routeCount: publicRoutes.length,
       studentTotal,
       ratingAvg: ratingCount ? Math.round((ratingSum / ratingCount) * 10) / 10 : null,
       followers: followers ?? 0,
       following: following ?? 0,
+      routesCompleted: profile.routes_completed ?? 0,
+      avgStars: profile.avg_stars ?? 0,
+      graduates: profile.graduates ?? 0,
     },
     routes,
   };
@@ -282,7 +321,7 @@ async function fetchCreators(ownerIds: string[]): Promise<Map<string, ProfileRow
   if (ownerIds.length === 0) return new Map();
   const { data } = await sb
     .from("profiles")
-    .select("id, username, display_name, avatar_path")
+    .select("id, username, display_name, avatar_path, graduates")
     .in("id", ownerIds);
   return new Map((data || []).map(p => [p.id, p as ProfileRow]));
 }
@@ -383,6 +422,7 @@ export async function getFeaturedCreators(token: string): Promise<FeaturedCreato
         avatarUrl: publicUrl(AVATAR_BUCKET, c.avatar_path),
         routeCount: a.routeCount,
         studentTotal: a.studentTotal,
+        graduates: c.graduates ?? 0,
       } as FeaturedCreator;
     })
     .filter((c): c is FeaturedCreator => c !== null);
@@ -428,7 +468,7 @@ export async function getRouteLanding(token: string | null, routeId: string): Pr
 
   const [{ data: creator }, { count: totalNodes }, myRatingRow, myFavRow, { data: passedAttempts }] =
     await Promise.all([
-      sb.from("profiles").select("id, username, display_name, avatar_path").eq("id", r.owner_id).single(),
+      sb.from("profiles").select("id, username, display_name, avatar_path, graduates").eq("id", r.owner_id).single(),
       sb.from("lessons").select("id", { count: "exact", head: true }).eq("route_id", routeId),
       user
         ? sb.from("route_ratings").select("stars").eq("route_id", routeId).eq("user_id", user.id).maybeSingle().then(res => res.data)
@@ -473,12 +513,85 @@ export async function getRouteLanding(token: string | null, routeId: string): Pr
       username: creator?.username ?? null,
       displayName: creator?.display_name ?? null,
       avatarUrl: publicUrl(AVATAR_BUCKET, creator?.avatar_path ?? null),
+      graduates: creator?.graduates ?? 0,
     },
     myRating: myRatingRow?.stars ?? null,
     isFavorite: Boolean(myFavRow),
     isOwner,
     myCompletedNodes,
   };
+}
+
+/**
+ * Estudiantes de una ruta (para la ficha). Privacidad:
+ * - El DUEÑO de la ruta ve a todos sus estudiantes con identidad y link.
+ * - Otros viewers ven con identidad solo a los de perfil público; los privados
+ *   aparecen como "Explorador anónimo" (solo % y rango).
+ * El propio creador no se lista como estudiante de su ruta.
+ */
+export async function getRouteStudents(token: string | null, routeId: string): Promise<RouteStudent[]> {
+  const viewer = token ? await getUserFromToken(token) : null;
+  const sb = supabaseAdmin();
+
+  const { data: route } = await sb
+    .from("routes")
+    .select("owner_id, visibility, blocked")
+    .eq("id", routeId)
+    .maybeSingle();
+  if (!route || route.blocked) return [];
+  const isRouteOwner = viewer?.id === route.owner_id;
+  if (!isRouteOwner && route.visibility !== "public") return [];
+
+  const [{ count: totalLessons }, { data: passed }] = await Promise.all([
+    sb.from("lessons").select("id", { count: "exact", head: true }).eq("route_id", routeId),
+    sb.from("attempts").select("user_id, node_id, stars").eq("route_id", routeId).eq("passed", true),
+  ]);
+  const total = totalLessons ?? 0;
+  if (total === 0 || !passed?.length) return [];
+
+  // Mejor estrella por nodo y nodos completados, por estudiante
+  const byUser = new Map<string, Map<string, number>>();
+  for (const a of passed) {
+    if (a.user_id === route.owner_id) continue; // el creador no es su propio estudiante
+    if (!byUser.has(a.user_id)) byUser.set(a.user_id, new Map());
+    const nodes = byUser.get(a.user_id)!;
+    nodes.set(a.node_id, Math.max(nodes.get(a.node_id) ?? 0, a.stars));
+  }
+  if (byUser.size === 0) return [];
+
+  const ranked = [...byUser.entries()]
+    .map(([userId, nodes]) => {
+      const bests = [...nodes.values()];
+      return {
+        userId,
+        completionPct: Math.min(100, Math.round((nodes.size / total) * 100)),
+        avgStars: bests.length ? Math.round((bests.reduce((a, b) => a + b, 0) / bests.length) * 10) / 10 : null,
+      };
+    })
+    .sort((a, b) => (b.completionPct - a.completionPct) || ((b.avgStars ?? 0) - (a.avgStars ?? 0)))
+    .slice(0, 50);
+
+  const { data: profiles } = await sb
+    .from("profiles")
+    .select("id, username, display_name, avatar_path, profile_public, routes_completed, avg_stars")
+    .in("id", ranked.map(r => r.userId));
+  const profileMap = new Map((profiles || []).map(p => [p.id, p]));
+
+  return ranked.map(r => {
+    const p = profileMap.get(r.userId);
+    // El dueño de la ruta ve a todos; otros solo a los perfiles públicos
+    const anonymous = !p || (p.profile_public === false && !isRouteOwner);
+    return {
+      username: anonymous ? null : (p?.username ?? null),
+      displayName: anonymous ? null : (p?.display_name ?? null),
+      avatarUrl: anonymous ? null : publicUrl(AVATAR_BUCKET, p?.avatar_path ?? null),
+      anonymous,
+      completionPct: r.completionPct,
+      avgStars: r.avgStars,
+      routesCompleted: p?.routes_completed ?? 0,
+      explorerAvgStars: p?.avg_stars ?? 0,
+    };
+  });
 }
 
 // ──────────────────────────────────────────────────

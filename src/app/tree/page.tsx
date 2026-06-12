@@ -3,11 +3,12 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home, Info, Wand2, X } from "lucide-react";
+import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home, Info, Wand2, X, Compass } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { useRouteRealtime } from "@/lib/useRouteRealtime";
 import { getRoute, retryLesson, resumeRoute, regenerateLesson } from "../routeActions";
 import type { RouteDetail, TreeNode, NodeState } from "@/lib/types";
+import { EXPLORER_RANKS } from "@/lib/reputation";
 
 const NODE_TYPE_LABELS: Record<string, string> = {
   theory: "Teoría",
@@ -64,12 +65,19 @@ function KnowledgeTree() {
   const [regenNode, setRegenNode] = useState<TreeNode | null>(null);
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenBusy, setRegenBusy] = useState(false);
+  // Subida de rango de explorador (comparada con el último rango visto)
+  const [rankUp, setRankUp] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     if (!token || !routeId) return;
     const data = await getRoute(token, routeId);
-    if (data) setRoute(data);
-    else setNotFound(true);
+    if (data) {
+      setRoute(data);
+      // 🎉 Momento de gloria: ¿subió el rango de explorador desde la última vez?
+      const seen = parseInt(localStorage.getItem("lf_explorer_rank") || "1", 10);
+      if (data.explorerRank > seen && data.explorerRank > 1) setRankUp(data.explorerRank);
+      localStorage.setItem("lf_explorer_rank", String(data.explorerRank));
+    } else setNotFound(true);
   }, [token, routeId]);
 
   useEffect(() => {
@@ -463,6 +471,55 @@ function KnowledgeTree() {
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
+
+      {/* 🏅 Subida de rango de EXPLORADOR: el momento de gloria */}
+      <AnimatePresence>
+        {rankUp && (() => {
+          const r = EXPLORER_RANKS.find(x => x.level === rankUp) ?? EXPLORER_RANKS[1];
+          const legend = r.tier === "legend";
+          return (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setRankUp(null)}>
+              <motion.div
+                initial={{ scale: 0.7, opacity: 0, y: 30 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 200, damping: 18 }}
+                onClick={e => e.stopPropagation()}
+                className={`bg-zinc-900 rounded-3xl p-8 w-full max-w-sm text-center relative border ${
+                  legend ? "border-violet-400/60 shadow-[0_0_70px_rgba(139,92,246,0.45)]" : "border-amber-400/50 shadow-[0_0_50px_rgba(251,191,36,0.3)]"
+                }`}
+              >
+                <button onClick={() => setRankUp(null)} className="absolute top-4 right-4 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+                <motion.div
+                  initial={{ rotate: -20, scale: 0 }}
+                  animate={{ rotate: 0, scale: 1 }}
+                  transition={{ delay: 0.15, type: "spring", stiffness: 220 }}
+                  className={`w-20 h-20 mx-auto mb-4 rounded-3xl border-2 flex items-center justify-center ${
+                    legend
+                      ? "bg-violet-500/15 border-violet-400/70 shadow-[0_0_30px_rgba(139,92,246,0.5)]"
+                      : "bg-amber-400/10 border-amber-400/60 shadow-[0_0_24px_rgba(251,191,36,0.4)]"
+                  }`}
+                >
+                  <Compass className={`w-10 h-10 ${legend ? "text-violet-300" : "text-amber-300"}`} />
+                </motion.div>
+                <p className={`text-xs uppercase tracking-widest font-bold mb-1 ${legend ? "text-violet-400" : "text-amber-400"}`}>
+                  ¡Subiste de rango como explorador!
+                </p>
+                <h3 className="text-3xl font-bold mb-2">{r.name}</h3>
+                <p className="text-zinc-400 text-sm mb-6">
+                  Cada ruta que dominas te hace más sabio. Tu nueva medalla ya brilla en tu perfil.
+                </p>
+                <button
+                  onClick={() => setRankUp(null)}
+                  className={`w-full py-3 rounded-2xl font-bold text-white transition-all ${legend ? "bg-violet-500 hover:bg-violet-400" : "bg-amber-500 hover:bg-amber-400 text-amber-950"}`}
+                >
+                  Seguir explorando
+                </button>
+              </motion.div>
+            </div>
+          );
+        })()}
       </AnimatePresence>
     </main>
   );

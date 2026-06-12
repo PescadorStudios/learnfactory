@@ -2,14 +2,16 @@
 
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
-import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle, Crown, Plus, Lock } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle, Crown, Plus, Lock, EyeOff, Hammer, X, GraduationCap } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getProfileByUsername, getPlan } from "@/app/socialActions";
 import type { PublicProfile, PlanState } from "@/lib/types";
+import { explorerRank, creatorRank, explorerProgress, creatorProgress } from "@/lib/reputation";
 import AppHeader from "@/components/AppHeader";
 import RouteCard from "@/components/RouteCard";
 import FollowButton from "@/components/FollowButton";
+import { RankPill, RankCard } from "@/components/ReputationBadge";
 
 export default function ProfilePage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = use(params);
@@ -18,6 +20,7 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [plan, setPlan] = useState<PlanState | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [creatorRankUp, setCreatorRankUp] = useState<number | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -26,6 +29,16 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
       else setNotFound(true);
     });
   }, [token, username]);
+
+  // Celebración de rank-up de CREADOR: al visitar tu propio perfil, comparamos
+  // tu rango con el último que viste (localStorage) y celebramos si subió.
+  useEffect(() => {
+    if (!profile?.isOwner) return;
+    const level = creatorRank(profile.stats.graduates).level;
+    const seen = parseInt(localStorage.getItem("lf_creator_rank") || "1", 10);
+    if (level > seen && level > 1) setCreatorRankUp(level);
+    localStorage.setItem("lf_creator_rank", String(level));
+  }, [profile]);
 
   // Cuota de creación: privada, solo cuando es tu propio perfil
   useEffect(() => {
@@ -83,10 +96,15 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
           </div>
 
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2">
+            <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-2 flex-wrap">
               {profile.displayName || `@${profile.username}`}
             </h1>
             {profile.username && <p className="text-zinc-500">@{profile.username}</p>}
+            {/* Rangos: el estatus se lleva junto al nombre */}
+            <div className="flex flex-wrap gap-2 mt-2">
+              <RankPill track="explorer" rank={explorerRank(s.routesCompleted, s.avgStars)} />
+              <RankPill track="creator" rank={creatorRank(s.graduates)} />
+            </div>
             {profile.bio && <p className="text-zinc-300 mt-2 max-w-xl">{profile.bio}</p>}
           </div>
 
@@ -100,6 +118,29 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
             ) : null}
           </div>
         </div>
+
+        {/* ── REPUTACIÓN: las dos vías, con camino de medallas y meta visible ── */}
+        <div className="grid md:grid-cols-2 gap-4 mb-8">
+          <RankCard
+            track="explorer"
+            progress={explorerProgress(s.routesCompleted, s.avgStars)}
+            statLabel={`${s.routesCompleted} ${s.routesCompleted === 1 ? "ruta completada" : "rutas completadas"}${s.avgStars > 0 ? ` · ${s.avgStars.toFixed(1)}★ de media` : ""}`}
+          />
+          <RankCard
+            track="creator"
+            progress={creatorProgress(s.graduates)}
+            statLabel={`${s.graduates} ${s.graduates === 1 ? "estudiante graduado" : "estudiantes graduados"} (≥80% completado)`}
+          />
+        </div>
+
+        {/* Perfil privado (viewer ajeno): solo identidad y rangos */}
+        {!profile.profilePublic && !profile.isOwner && (
+          <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-8 text-center mb-8">
+            <EyeOff className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
+            <p className="text-zinc-400 font-bold mb-1">Este perfil es privado</p>
+            <p className="text-zinc-600 text-sm">Su dueño solo comparte sus rangos de reputación.</p>
+          </div>
+        )}
 
         {/* Cuota de creación — privada (solo el dueño la ve) */}
         {profile.isOwner && plan && (() => {
@@ -158,10 +199,12 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
           );
         })()}
 
+        {(profile.profilePublic || profile.isOwner) && (<>
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-10">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-10">
           <Stat icon={<BookOpen className="w-4 h-4 text-primary" />} label="Rutas" value={s.routeCount} />
           <Stat icon={<Users className="w-4 h-4 text-secondary" />} label="Estudiantes" value={s.studentTotal} />
+          <Stat icon={<GraduationCap className="w-4 h-4 text-emerald-400" />} label="Graduados" value={s.graduates} />
           <Stat icon={<Star className="w-4 h-4 text-amber-400" />} label="Valoración" value={s.ratingAvg ?? "—"} />
           <Stat icon={<Users className="w-4 h-4 text-zinc-400" />} label="Seguidores" value={s.followers} />
         </div>
@@ -175,7 +218,45 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
             {profile.routes.map(r => <RouteCard key={r.id} route={r} compact />)}
           </div>
         )}
+        </>)}
       </div>
+
+      {/* 🎉 Celebración de rank-up de CREADOR */}
+      <AnimatePresence>
+        {creatorRankUp && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setCreatorRankUp(null)}>
+            <motion.div
+              initial={{ scale: 0.7, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 200, damping: 18 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-zinc-900 border border-violet-500/40 rounded-3xl p-8 w-full max-w-sm text-center relative shadow-[0_0_60px_rgba(139,92,246,0.35)]"
+            >
+              <button onClick={() => setCreatorRankUp(null)} className="absolute top-4 right-4 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+              <motion.div
+                initial={{ rotate: -15, scale: 0 }}
+                animate={{ rotate: 0, scale: 1 }}
+                transition={{ delay: 0.15, type: "spring", stiffness: 220 }}
+                className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-violet-500/15 border-2 border-violet-400/70 flex items-center justify-center shadow-[0_0_30px_rgba(139,92,246,0.5)]"
+              >
+                <Hammer className="w-10 h-10 text-violet-300" />
+              </motion.div>
+              <p className="text-xs uppercase tracking-widest font-bold text-violet-400 mb-1">¡Subiste de rango como creador!</p>
+              <h3 className="text-3xl font-bold mb-2">{creatorRank(s.graduates).name}</h3>
+              <p className="text-zinc-400 text-sm mb-6">
+                {s.graduates} estudiantes ya se graduaron de tus rutas. Tu conocimiento está dejando huella.
+              </p>
+              <button
+                onClick={() => setCreatorRankUp(null)}
+                className="w-full py-3 rounded-2xl bg-violet-500 hover:bg-violet-400 text-white font-bold transition-all"
+              >
+                Seguir creando
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

@@ -27,6 +27,11 @@ alter table public.profiles add column if not exists route_quota int not null de
 alter table public.profiles add column if not exists premium_since timestamptz;
 -- Creación de rutas en lote: exclusiva, el admin la activa manualmente por usuario
 alter table public.profiles add column if not exists batch_enabled boolean not null default false;
+-- Reputación de dos vías (explorador/creador):
+alter table public.profiles add column if not exists routes_completed int not null default 0;
+alter table public.profiles add column if not exists avg_stars real not null default 0;
+alter table public.profiles add column if not exists graduates int not null default 0;
+alter table public.profiles add column if not exists profile_public boolean not null default true;
 
 create table if not exists public.routes (
   id uuid primary key default gen_random_uuid(),
@@ -51,6 +56,8 @@ alter table public.routes add column if not exists favorite_count int not null d
 alter table public.routes add column if not exists category text not null default 'otros';
 -- Moderación del admin: 'fuera del aire' (oculta en todas partes, reversible)
 alter table public.routes add column if not exists blocked boolean not null default false;
+-- Reputación: estudiantes que terminaron ≥80% de esta ruta
+alter table public.routes add column if not exists graduate_count int not null default 0;
 create index if not exists routes_visibility_idx on public.routes(visibility);
 create index if not exists routes_owner_idx on public.routes(owner_id);
 create index if not exists routes_category_idx on public.routes(category);
@@ -180,6 +187,64 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 `;
 
+// Recomputa la reputación desde la fuente (attempts/lessons). Idempotente:
+// corrige cualquier drift de los contadores en vivo cada vez que se ejecuta.
+const REPUTATION_BACKFILL_SQL = `
+-- Graduados por ruta: usuarios con ≥80% de las lecciones aprobadas
+update public.routes set graduate_count = 0;
+update public.routes r set graduate_count = g.cnt
+from (
+  with totals as (select route_id, count(*) as total from public.lessons group by route_id),
+       up as (select route_id, user_id, count(distinct node_id) as done
+              from public.attempts where passed group by route_id, user_id)
+  select up.route_id, count(*) as cnt
+  from up join totals t using (route_id)
+  where t.total > 0 and up.done::numeric >= t.total * 0.8
+  group by up.route_id
+) g
+where g.route_id = r.id;
+
+-- Graduados por creador: estudiantes DISTINTOS graduados en alguna de sus rutas
+update public.profiles set graduates = 0;
+update public.profiles p set graduates = s.cnt
+from (
+  with totals as (select route_id, count(*) as total from public.lessons group by route_id),
+       up as (select route_id, user_id, count(distinct node_id) as done
+              from public.attempts where passed group by route_id, user_id)
+  select r.owner_id, count(distinct up.user_id) as cnt
+  from up
+  join totals t using (route_id)
+  join public.routes r on r.id = up.route_id
+  where t.total > 0 and up.done::numeric >= t.total * 0.8
+  group by r.owner_id
+) s
+where s.owner_id = p.id;
+
+-- Explorador: rutas completadas (≥80%) por usuario
+update public.profiles set routes_completed = 0;
+update public.profiles p set routes_completed = s.cnt
+from (
+  with totals as (select route_id, count(*) as total from public.lessons group by route_id),
+       up as (select route_id, user_id, count(distinct node_id) as done
+              from public.attempts where passed group by route_id, user_id)
+  select up.user_id, count(*) as cnt
+  from up join totals t using (route_id)
+  where t.total > 0 and up.done::numeric >= t.total * 0.8
+  group by up.user_id
+) s
+where s.user_id = p.id;
+
+-- Explorador: media global de la mejor estrella por nodo
+update public.profiles set avg_stars = 0;
+update public.profiles p set avg_stars = s.avg
+from (
+  with best as (select user_id, route_id, node_id, max(stars) as b
+                from public.attempts where passed group by user_id, route_id, node_id)
+  select user_id, avg(b)::real as avg from best group by user_id
+) s
+where s.user_id = p.id;
+`;
+
 async function main() {
   // 1) Esquema vía Postgres directo
   // Quitar sslmode de la URL (pisa la config ssl del cliente) y aceptar el
@@ -193,6 +258,8 @@ async function main() {
   console.log("✓ Conectado a Postgres");
   await client.query(SCHEMA_SQL);
   console.log("✓ Esquema creado/verificado (profiles, routes, lessons, attempts, concept_mastery)");
+  await client.query(REPUTATION_BACKFILL_SQL);
+  console.log("✓ Reputación recomputada (graduate_count, graduates, routes_completed, avg_stars)");
   await client.end();
 
   // 2) Bucket de audio

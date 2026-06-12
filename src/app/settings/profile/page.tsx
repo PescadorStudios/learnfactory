@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Camera, ImageIcon, Check, ArrowLeft } from "lucide-react";
+import { Loader2, Camera, ImageIcon, Check, ArrowLeft, Globe, EyeOff } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getMyProfile, updateProfile, uploadProfileImage } from "@/app/socialActions";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
@@ -17,6 +17,7 @@ function ProfileSettings() {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
+  const [profilePublic, setProfilePublic] = useState(true);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [bannerUrl, setBannerUrl] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -35,6 +36,7 @@ function ProfileSettings() {
         setUsername(p.username || "");
         setDisplayName(p.displayName || "");
         setBio(p.bio || "");
+        setProfilePublic(p.profilePublic);
         setAvatarUrl(p.avatarUrl);
         setBannerUrl(p.bannerUrl);
       }
@@ -47,7 +49,7 @@ function ProfileSettings() {
     setSaving(true);
     setError("");
     setSaved(false);
-    const res = await updateProfile(token, { username, displayName, bio });
+    const res = await updateProfile(token, { username, displayName, bio, profilePublic });
     setSaving(false);
     if (!res.ok) {
       setError(res.error || "No se pudo guardar.");
@@ -171,6 +173,31 @@ function ProfileSettings() {
               className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-2xl py-3 px-4 text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary resize-none"
             />
             <p className="text-right text-xs text-zinc-600">{bio.length}/280</p>
+          </div>
+
+          {/* Privacidad del perfil */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                {profilePublic ? <Globe className="w-5 h-5 text-primary shrink-0 mt-0.5" /> : <EyeOff className="w-5 h-5 text-zinc-500 shrink-0 mt-0.5" />}
+                <div>
+                  <p className="font-bold text-sm">{profilePublic ? "Perfil público" : "Perfil privado"}</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {profilePublic
+                      ? "Cualquiera puede ver tu perfil, tus rutas y tu reputación."
+                      : "Aparecerás como \"Explorador anónimo\" en las listas de estudiantes. Los creadores de las rutas que estudias sí pueden ver tu perfil."}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfilePublic(v => !v)}
+                className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${profilePublic ? "bg-primary" : "bg-zinc-700"}`}
+                aria-label="Alternar perfil público"
+              >
+                <span className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${profilePublic ? "left-6" : "left-1"}`} />
+              </button>
+            </div>
           </div>
 
           {error && <p className="text-rose-400 text-sm">{error}</p>}

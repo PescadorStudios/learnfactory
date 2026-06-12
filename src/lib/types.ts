@@ -274,7 +274,7 @@ export interface RouteCard {
   ratingCount: number;
   studentCount: number;
   favoriteCount: number;
-  creator: { username: string | null; displayName: string | null; avatarUrl: string | null };
+  creator: { username: string | null; displayName: string | null; avatarUrl: string | null; graduates: number };
 }
 
 export interface LibrarySection {
@@ -289,6 +289,7 @@ export interface FeaturedCreator {
   avatarUrl: string | null;
   routeCount: number;
   studentTotal: number;
+  graduates: number;
 }
 
 export interface ProfileStats {
@@ -297,6 +298,13 @@ export interface ProfileStats {
   ratingAvg: number | null;
   followers: number;
   following: number;
+  // Reputación de dos vías
+  /** Rutas que este usuario completó (≥80% de lecciones aprobadas). */
+  routesCompleted: number;
+  /** Media global de la mejor estrella por nodo (calidad como explorador). */
+  avgStars: number;
+  /** Estudiantes distintos graduados (≥80%) en sus rutas (vía creador). */
+  graduates: number;
 }
 
 export interface PublicProfile {
@@ -309,8 +317,27 @@ export interface PublicProfile {
   plan: Plan;
   isOwner: boolean;
   isFollowing: boolean;
+  /** false = el dueño ocultó su perfil: terceros ven solo la vista mínima. */
+  profilePublic: boolean;
   stats: ProfileStats;
   routes: RouteCard[];
+}
+
+/** Estudiante de una ruta (lista de la ficha). */
+export interface RouteStudent {
+  /** null si el perfil es privado y el viewer no es el dueño de la ruta. */
+  username: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  /** true → mostrar como "Explorador anónimo" sin link. */
+  anonymous: boolean;
+  /** % de la ruta completado (0-100). */
+  completionPct: number;
+  /** Media de estrellas del estudiante EN ESTA ruta. */
+  avgStars: number | null;
+  /** Reputación de explorador (para el badge). */
+  routesCompleted: number;
+  explorerAvgStars: number;
 }
 
 /** Ficha (landing) de una ruta antes de estudiarla. */
@@ -328,7 +355,7 @@ export interface RouteLanding {
   favoriteCount: number;
   completionAvg: number | null;
   totalNodes: number;
-  creator: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null };
+  creator: { id: string; username: string | null; displayName: string | null; avatarUrl: string | null; graduates: number };
   myRating: number | null;
   isFavorite: boolean;
   isOwner: boolean;
@@ -359,6 +386,10 @@ export interface RouteDetail {
   coverUrl: string | null;
   description: string | null;
   isOwner: boolean;
+  /** Rango de explorador del usuario (1-5), para celebrar rank-ups en el árbol. */
+  explorerRank: number;
+  /** % de ESTA ruta completado por el usuario (0-100). */
+  myCompletionPct: number;
 }
 
 export interface LessonData {
@@ -403,4 +434,6 @@ export interface SaveAttemptResult {
   xpGained: number;
   newBest: boolean;
   bestStars: number;
+  /** Si este intento hizo subir el rango de explorador, el nuevo nivel (2-5). */
+  explorerRankUp?: number;
 }

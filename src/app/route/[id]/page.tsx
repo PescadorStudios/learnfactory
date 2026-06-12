@@ -3,14 +3,16 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X, Share2, Check, Pencil } from "lucide-react";
+import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X, Share2, Check, Pencil, GraduationCap, EyeOff } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
-import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility, updateRouteInfo } from "@/app/socialActions";
+import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility, updateRouteInfo, getRouteStudents } from "@/app/socialActions";
 import { setRouteCategory, deleteRoute } from "@/app/routeActions";
-import { ROUTE_CATEGORIES, categoryLabel, type RouteLanding } from "@/lib/types";
+import { ROUTE_CATEGORIES, categoryLabel, type RouteLanding, type RouteStudent } from "@/lib/types";
+import { explorerRank, creatorRank as creatorRankOf } from "@/lib/reputation";
 import AppHeader from "@/components/AppHeader";
 import StarRating from "@/components/StarRating";
 import CoverEditor from "@/components/CoverEditor";
+import { RankPill } from "@/components/ReputationBadge";
 
 export default function RouteLandingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -20,6 +22,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
   const [data, setData] = useState<RouteLanding | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [editingCover, setEditingCover] = useState(false);
+  const [students, setStudents] = useState<RouteStudent[] | null>(null);
 
   // estado local optimista
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
@@ -58,6 +61,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
       setTopicDraft(d.topic);
       setDescDraft(d.description || "");
     });
+    getRouteStudents(token, id).then(setStudents);
   }, [token, id, loading]);
 
   // Acciones que requieren cuenta: el anónimo va a registrarse y vuelve aquí
@@ -257,6 +261,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
               <span className="text-zinc-400 text-sm group-hover:text-white transition-colors">
                 {data.creator.displayName || `@${data.creator.username}`}
               </span>
+              <RankPill track="creator" rank={creatorRankOf(data.creator.graduates)} size="xs" />
             </button>
 
             {!editingInfo && data.description && <p className="text-zinc-300 mb-5 leading-relaxed">{data.description}</p>}
@@ -374,6 +379,79 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
             )}
           </div>
         </div>
+
+        {/* ── ESTUDIANTES: la comunidad de la ruta, con su reputación ── */}
+        {students && students.length > 0 && (
+          <section className="mt-12">
+            <h2 className="text-xl font-bold mb-1 flex items-center gap-2">
+              <GraduationCap className="w-5 h-5 text-emerald-400" />
+              {data.isOwner ? "Tus estudiantes" : "Estudiantes de esta ruta"}
+            </h2>
+            <p className="text-zinc-500 text-sm mb-5">
+              {data.isOwner
+                ? "Las personas que están aprendiendo con tu conocimiento. Los que llegan al 80% cuentan como graduados para tu rango de creador."
+                : "Personas que están recorriendo esta ruta. Visita sus perfiles."}
+            </p>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {students.map((st, i) => {
+                const rank = explorerRank(st.routesCompleted, st.explorerAvgStars);
+                const clickable = !st.anonymous && st.username;
+                const inner = (
+                  <>
+                    <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-800 flex items-center justify-center shrink-0">
+                      {st.anonymous ? (
+                        <EyeOff className="w-4 h-4 text-zinc-600" />
+                      ) : st.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={st.avatarUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-sm font-bold text-zinc-500">{(st.displayName || st.username || "?")[0]?.toUpperCase()}</span>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-bold truncate ${st.anonymous ? "text-zinc-500 italic" : "text-white"}`}>
+                          {st.anonymous ? "Explorador anónimo" : (st.displayName || `@${st.username}`)}
+                        </span>
+                        <RankPill track="explorer" rank={rank} size="xs" />
+                      </div>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${st.completionPct >= 80 ? "bg-emerald-500" : "bg-gradient-to-r from-primary to-secondary"}`}
+                            style={{ width: `${st.completionPct}%` }}
+                          />
+                        </div>
+                        <span className={`text-[11px] font-bold shrink-0 ${st.completionPct >= 80 ? "text-emerald-400" : "text-zinc-500"}`}>
+                          {st.completionPct}%
+                        </span>
+                        {st.avgStars !== null && (
+                          <span className="text-[11px] text-amber-400 shrink-0 flex items-center gap-0.5">
+                            <Star className="w-3 h-3 fill-current" /> {st.avgStars}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {st.completionPct >= 80 && <GraduationCap className="w-4 h-4 text-emerald-400 shrink-0" />}
+                  </>
+                );
+                return clickable ? (
+                  <button
+                    key={i}
+                    onClick={() => router.push(`/u/${st.username}`)}
+                    className="flex items-center gap-3 bg-zinc-900/80 border border-zinc-800 hover:border-primary rounded-2xl p-3 text-left transition-all"
+                  >
+                    {inner}
+                  </button>
+                ) : (
+                  <div key={i} className="flex items-center gap-3 bg-zinc-900/60 border border-zinc-800/70 rounded-2xl p-3">
+                    {inner}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
 
       {editingCover && token && (
