@@ -24,9 +24,10 @@ const GRACE_SECONDS = 1.5;
 // Retraso de respaldo si no se logra decodificar el audio: el tiempo de cada
 // cue viene estimado linealmente por caracteres y se adelanta a la voz.
 const SUBTITLE_LAG = 0.7;
-// Pequeño sesgo (mostrar el subtítulo justo después de empezar a oírlo) cuando
-// SÍ tenemos la línea de tiempo dinámica anclada a la voz real.
-const DYNAMIC_LAG = 0.15;
+// Con la línea de tiempo dinámica anclada a la voz real, el subtítulo se
+// muestra un pelín ANTES de oír la frase (lag negativo = adelanto). Regla de
+// juego justo: la voz NUNCA debe ir por delante del texto.
+const DYNAMIC_LAG = -0.12;
 
 /** Texto que REALMENTE se narra en un cue (en las trampas, el original). */
 function spokenText(c: { texto: string; alterado: boolean; original?: string }): string {
@@ -54,19 +55,25 @@ function cueWeight(text: string): number {
 const FRAME_SEC = 0.02; // ventanas de 20 ms
 
 /**
- * Sincronización por MAPA DE TIEMPO HABLADO + ANCLAJE A INICIOS DE FRASE.
+ * Sincronización por ALINEACIÓN GLOBAL cues ↔ segmentos de voz.
  *
- * El reparto lineal sobre la ventana de voz fallaba cuando el TTS hacía pausas
- * internas desiguales (entre oraciones puede callar 0.2 s o 1 s): el texto
- * "avanzaba" durante el silencio y la voz quedaba delante o detrás.
+ * Historia del problema: el reparto por caracteres deriva (el TTS no habla a
+ * ritmo constante) y el anclaje local "al onset más cercano" solo corregía
+ * errores < 0.35 s — cuando la estimación derivaba más, enganchaba el onset
+ * equivocado y la voz quedaba por delante del texto.
  *
- * 1. Se clasifica cada ventana de 20 ms como voz/silencio (umbral adaptativo
- *    al volumen real del clip) y se acumula SOLO el tiempo con voz.
- * 2. El texto de los cues se reparte sobre ese tiempo hablado: durante una
- *    pausa el texto no avanza, da igual cuánto dure.
- * 3. Cada inicio de cue se "imanta" al arranque de voz real más cercano tras
- *    una pausa (los cues son frases: casi siempre empiezan tras un silencio),
- *    corrigiendo el error residual de ritmo. Monotonicidad garantizada.
+ * Solución definitiva:
+ * 1. Se clasifica cada ventana de 20 ms como voz/silencio (umbral adaptativo)
+ *    y se extraen los SEGMENTOS de voz reales (frases separadas por pausas
+ *    de ≥160 ms) con su tiempo hablado acumulado.
+ * 2. Cada cue tiene un "objetivo" de tiempo hablado (proporcional a sus
+ *    caracteres hablados). Una PROGRAMACIÓN DINÁMICA asigna cada cue a un
+ *    segmento (asignación monótona, varios cues pueden compartir segmento si
+ *    el TTS no pausó entre frases) minimizando el error TOTAL — la deriva ya
+ *    no puede acumularse porque la alineación es global, no codiciosa.
+ * 3. El inicio del cue cae en el arranque exacto de su segmento (onset real
+ *    de la frase) o, si comparte segmento, en el punto del tiempo hablado que
+ *    le corresponde dentro de él.
  */
 function computeCueTimeline(buf: AudioBuffer, weights: number[]): number[] | null {
   const ch = buf.getChannelData(0);
@@ -106,44 +113,70 @@ function computeCueTimeline(buf: AudioBuffer, weights: number[]): number[] | nul
   const totalVoiced = cumVoiced[nFrames];
   if (totalVoiced < 1) return null; // no se detectó voz: usar respaldo
 
-  // Inicios de frase: transición silencio→voz tras una pausa de ≥160 ms
-  const onsets: number[] = [];
+  // Segmentos de voz: frases reales separadas por pausas de ≥160 ms (8 frames)
+  interface Segment { startFrame: number; startSec: number; cumStart: number }
+  const segments: Segment[] = [];
   let silentRun = nFrames; // el arranque cuenta como pausa previa
   for (let f = 0; f < nFrames; f++) {
     if (voiced[f]) {
-      if (silentRun >= 8) onsets.push(f * FRAME_SEC);
+      if (silentRun >= 8) segments.push({ startFrame: f, startSec: f * FRAME_SEC, cumStart: cumVoiced[f] });
       silentRun = 0;
     } else silentRun++;
   }
+  if (segments.length === 0) return null;
 
-  // Repartir el texto sobre el tiempo hablado y convertir a tiempo de reloj
+  // Objetivo de tiempo hablado de cada cue (inicio, proporcional al texto)
   const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
-  const starts: number[] = [];
+  const targets: number[] = [];
   let cum = 0;
-  let f = 0;
-  for (let i = 0; i < weights.length; i++) {
-    const target = (cum / totalWeight) * totalVoiced;
-    // `<=` hace que tras una pausa el cue caiga en el primer frame CON voz
-    // (el texto se reanuda cuando la voz se reanuda, no durante el silencio)
-    while (f < nFrames && cumVoiced[f + 1] <= target) f++;
-    starts.push(f * FRAME_SEC);
-    cum += weights[i];
+  for (const w of weights) {
+    targets.push((cum / totalWeight) * totalVoiced);
+    cum += w;
   }
 
-  // Imantar cada inicio al onset real más cercano (±0.35 s), sin desordenar
-  const SNAP = 0.35;
-  let oi = 0;
-  for (let i = 0; i < starts.length; i++) {
-    while (oi < onsets.length - 1 && onsets[oi + 1] <= starts[i] + SNAP) {
-      if (Math.abs(onsets[oi + 1] - starts[i]) <= Math.abs(onsets[oi] - starts[i])) oi++;
-      else break;
-    }
-    if (oi < onsets.length && Math.abs(onsets[oi] - starts[i]) <= SNAP) {
-      const prev = i > 0 ? starts[i - 1] : -Infinity;
-      if (onsets[oi] > prev + 0.15) starts[i] = onsets[oi];
+  // ── Alineación global por programación dinámica ──
+  // dp[i][k] = mejor coste de colocar los cues 0..i con el cue i en el
+  // segmento k (asignación monótona no decreciente).
+  const M = targets.length;
+  const K = segments.length;
+  const cost = (i: number, k: number) => Math.abs(segments[k].cumStart - targets[i]);
+  const dp: number[][] = Array.from({ length: M }, () => new Array<number>(K).fill(Infinity));
+  const parent: number[][] = Array.from({ length: M }, () => new Array<number>(K).fill(-1));
+  for (let k = 0; k < K; k++) dp[0][k] = cost(0, k);
+  for (let i = 1; i < M; i++) {
+    // prefijo mínimo de dp[i-1][0..k] para asignación O(M·K)
+    let bestPrev = Infinity;
+    let bestPrevK = -1;
+    for (let k = 0; k < K; k++) {
+      if (dp[i - 1][k] < bestPrev) { bestPrev = dp[i - 1][k]; bestPrevK = k; }
+      dp[i][k] = bestPrev + cost(i, k);
+      parent[i][k] = bestPrevK;
     }
   }
-  for (let i = 1; i < starts.length; i++) {
+  // Reconstruir la asignación cue → segmento
+  const assign = new Array<number>(M);
+  let bestK = 0;
+  for (let k = 1; k < K; k++) if (dp[M - 1][k] < dp[M - 1][bestK]) bestK = k;
+  assign[M - 1] = bestK;
+  for (let i = M - 1; i > 0; i--) assign[i - 1] = parent[i][assign[i]];
+
+  // ── Tiempos de reloj ──
+  const starts: number[] = new Array(M);
+  for (let i = 0; i < M; i++) {
+    const seg = segments[assign[i]];
+    if (i === 0 || assign[i] !== assign[i - 1]) {
+      // Primer cue del segmento: arranca exactamente con la frase (onset real)
+      starts[i] = seg.startSec;
+    } else {
+      // Comparte segmento (el TTS no pausó): avanzar dentro del segmento hasta
+      // el tiempo hablado que le corresponde a este cue
+      const into = Math.max(0, targets[i] - seg.cumStart);
+      let f = seg.startFrame;
+      while (f < nFrames - 1 && cumVoiced[f + 1] - seg.cumStart < into) f++;
+      starts[i] = f * FRAME_SEC;
+    }
+  }
+  for (let i = 1; i < M; i++) {
     if (starts[i] <= starts[i - 1]) starts[i] = starts[i - 1] + 0.05;
   }
   return starts;
