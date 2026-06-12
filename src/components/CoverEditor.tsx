@@ -24,7 +24,7 @@ export default function CoverEditor({
   onUpdated: (url: string) => void;
   onClose: () => void;
 }) {
-  const [prompt, setPrompt] = useState(currentPrompt || `Portada elegante para un curso sobre ${topic}`);
+  const [prompt, setPrompt] = useState(currentPrompt || `Thumbnail de YouTube llamativo y clickeable para un curso sobre ${topic}, con un título corto en mayúsculas, colores vibrantes y un sujeto principal grande`);
   const [preview, setPreview] = useState<string | null>(currentCoverUrl);
   const [reference, setReference] = useState<string | null>(null);
   const [busy, setBusy] = useState<"ai" | "upload" | null>(null);

@@ -267,17 +267,17 @@ export interface ReferenceImage {
   data: string;
 }
 
-/** Construye un prompt de portada elegante a partir del tema y la tesis global. */
+/** Construye un prompt de portada estilo thumbnail de YouTube a partir del tema. */
 export function buildCoverPrompt(topic: string, tesisGlobal?: string): string {
-  const tesis = tesisGlobal ? ` La esencia del tema: ${tesisGlobal}.` : "";
-  return `Ilustración editorial elegante y moderna para la portada de un curso sobre "${topic}".${tesis} Estilo: arte digital sofisticado, composición limpia, iluminación cinematográfica, paleta rica y armónica. Formato apaisado 16:9. SIN texto, SIN letras, SIN palabras, SIN logos. Una sola imagen evocadora y profesional que represente el concepto central.`;
+  const tesis = tesisGlobal ? ` Esencia del tema: ${tesisGlobal}.` : "";
+  return `Thumbnail de YouTube de altísimo impacto y clickeable para un curso sobre "${topic}".${tesis} Estilo: imagen llamativa y vibrante, sujeto principal grande y nítido con fuerte profundidad de campo, iluminación dramática y cinematográfica, colores muy saturados y de alto contraste, atmósfera épica. Incluye un TÍTULO CORTO Y POTENTE (2 a 4 palabras, en MAYÚSCULAS) que capture la esencia de "${topic}", en una tipografía sans-serif gruesa y muy legible, con borde/contorno grueso y sombra para máximo contraste, ubicado a un lado para no tapar al sujeto. Ortografía perfecta. Formato apaisado 16:9, composición de thumbnail profesional que invite a hacer clic.`;
 }
 
 /**
  * Agente de dirección de arte: convierte la idea del usuario (pocas palabras)
- * en un prompt de portada de alto impacto para el modelo de imagen. Si hay
- * imagen de referencia (foto del autor/creador), el prompt indica integrarla
- * como protagonista. Si el agente falla, cae al prompt base.
+ * en un prompt de portada estilo THUMBNAIL DE YOUTUBE de alto impacto (con
+ * texto gancho corto). Si hay imagen de referencia (foto del autor/creador),
+ * el prompt la integra como protagonista. Si el agente falla, cae al base.
  */
 export async function craftCoverPrompt(topic: string, idea: string, hasReference: boolean): Promise<string> {
   const fallback = buildCoverPrompt(topic);
@@ -285,22 +285,22 @@ export async function craftCoverPrompt(topic: string, idea: string, hasReference
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const refNote = hasReference
-      ? `El usuario adjuntó una IMAGEN DE REFERENCIA (normalmente la foto del autor o creador del curso). El prompt DEBE pedir integrar a la persona/elemento de la imagen de referencia como protagonista de la portada, fotorrealista y favorecedor, bien iluminado.`
-      : `No hay imagen de referencia.`;
-    const prompt = `Eres director de arte senior especializado en portadas de cursos online de alto impacto (estilo thumbnail premium de Netflix/MasterClass).
+      ? `El usuario adjuntó una IMAGEN DE REFERENCIA (normalmente la foto del autor o creador del curso). El prompt DEBE pedir colocar a esa persona como PROTAGONISTA del thumbnail, grande y a un lado, fotorrealista y favorecedor, con una expresión expresiva y cautivadora (como los youtubers exitosos), muy bien iluminado.`
+      : `No hay imagen de referencia: usa un sujeto, escena u objeto icónico del tema como protagonista.`;
+    const prompt = `Eres un diseñador experto en THUMBNAILS DE YOUTUBE virales y altamente clickeables (estilo MrBeast / canales educativos top): imágenes que detienen el scroll y dan ganas de hacer clic.
 
 Curso: "${topic}"
 Idea del usuario (puede ser muy breve o vaga): "${idea || "(no dio idea; usa el tema del curso)"}"
 ${refNote}
 
-Escribe UN prompt en español para un modelo de generación de imágenes que produzca una portada espectacular. Reglas:
-- Amplifica la idea del usuario respetando su intención; si es vaga, decide tú la mejor dirección visual para que el curso VENDA.
-- Describe: sujeto/escena principal, estilo visual, iluminación cinematográfica, paleta de colores, composición y atmósfera.
+Escribe UN prompt en español para un modelo de generación de imágenes que produzca un thumbnail espectacular. Reglas:
+- Amplifica la idea del usuario respetando su intención; si es vaga, decide tú la dirección visual más atractiva para que el curso reciba clics.
+- TEXTO GANCHO OBLIGATORIO: define un título corto y potente de 2 a 4 palabras en MAYÚSCULAS (capta la esencia o promesa del curso) y pide renderizarlo dentro de la imagen, indicándolo entre comillas y EXACTO, con tipografía sans-serif gruesa, muy legible, borde/contorno grueso y sombra para máximo contraste, ortografía perfecta, ubicado a un lado sin tapar al sujeto.
+- Estilo thumbnail: sujeto principal grande y nítido, colores muy saturados y de alto contraste, iluminación dramática, profundidad de campo (fondo desenfocado), atmósfera épica o emocional. Puedes sugerir un elemento gráfico de acento (flecha, círculo, brillo) si suma.
 - Formato apaisado 16:9.
-- PROHIBIDO texto, letras, palabras, números o logos dentro de la imagen (dilo explícitamente al final).
-- Máximo 120 palabras.
+- Máximo 130 palabras.
 
-Responde SOLO con el prompt, sin comillas ni explicaciones.`;
+Responde SOLO con el prompt, sin comillas externas ni explicaciones.`;
     const result = await withTimeout(model.generateContent(prompt), 30_000, "Agente de prompt de portada");
     const text = result.response.text().trim();
     if (text.length < 30) return fallback;
