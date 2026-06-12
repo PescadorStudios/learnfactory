@@ -405,9 +405,13 @@ export async function getMyFavorites(token: string): Promise<RouteCard[]> {
 //  FICHA DE RUTA (LANDING)
 // ──────────────────────────────────────────────────
 
-export async function getRouteLanding(token: string, routeId: string): Promise<RouteLanding | null> {
-  const user = await getUserFromToken(token);
-  if (!user) return null;
+/**
+ * Ficha pública de una ruta. `token` puede ser null: los visitantes anónimos
+ * (links compartidos en redes) ven la landing de rutas públicas; solo al dar
+ * "Estudiar" se les pide registro.
+ */
+export async function getRouteLanding(token: string | null, routeId: string): Promise<RouteLanding | null> {
+  const user = token ? await getUserFromToken(token) : null;
   const sb = supabaseAdmin();
 
   const { data: r } = await sb
@@ -419,15 +423,19 @@ export async function getRouteLanding(token: string, routeId: string): Promise<R
     .maybeSingle();
   if (!r) return null;
   if (r.blocked) return null; // ruta fuera del aire por el admin
-  const isOwner = r.owner_id === user.id;
+  const isOwner = user ? r.owner_id === user.id : false;
   if (!isOwner && r.visibility !== "public") return null;
 
-  const [{ data: creator }, { count: totalNodes }, { data: myRatingRow }, { data: myFavRow }, { data: passedAttempts }] =
+  const [{ data: creator }, { count: totalNodes }, myRatingRow, myFavRow, { data: passedAttempts }] =
     await Promise.all([
       sb.from("profiles").select("id, username, display_name, avatar_path").eq("id", r.owner_id).single(),
       sb.from("lessons").select("id", { count: "exact", head: true }).eq("route_id", routeId),
-      sb.from("route_ratings").select("stars").eq("route_id", routeId).eq("user_id", user.id).maybeSingle(),
-      sb.from("favorites").select("route_id").eq("route_id", routeId).eq("user_id", user.id).maybeSingle(),
+      user
+        ? sb.from("route_ratings").select("stars").eq("route_id", routeId).eq("user_id", user.id).maybeSingle().then(res => res.data)
+        : Promise.resolve(null),
+      user
+        ? sb.from("favorites").select("route_id").eq("route_id", routeId).eq("user_id", user.id).maybeSingle().then(res => res.data)
+        : Promise.resolve(null),
       sb.from("attempts").select("user_id, node_id").eq("route_id", routeId).eq("passed", true),
     ]);
 
@@ -444,7 +452,7 @@ export async function getRouteLanding(token: string, routeId: string): Promise<R
     const ratios = [...perUser.values()].map(s => Math.min(1, s.size / total));
     completionAvg = Math.round((ratios.reduce((a, b) => a + b, 0) / ratios.length) * 100);
   }
-  const myCompletedNodes = perUser.get(user.id)?.size ?? 0;
+  const myCompletedNodes = user ? (perUser.get(user.id)?.size ?? 0) : 0;
 
   return {
     id: r.id,
@@ -565,10 +573,28 @@ export async function setRouteVisibility(token: string, routeId: string, visibil
   return { ok: true };
 }
 
-export async function updateRouteDescription(token: string, routeId: string, description: string): Promise<{ ok: boolean }> {
+/** El creador edita la info de la ficha: título y descripción. */
+export async function updateRouteInfo(
+  token: string,
+  routeId: string,
+  info: { topic?: string; description?: string }
+): Promise<{ ok: boolean; error?: string }> {
   const owner = await assertOwner(token, routeId);
-  if (!owner) return { ok: false };
-  await supabaseAdmin().from("routes").update({ description: description.trim().slice(0, 280) || null }).eq("id", routeId);
+  if (!owner) return { ok: false, error: "Solo el creador puede editar la ruta." };
+
+  const patch: { topic?: string; description?: string | null } = {};
+  if (info.topic !== undefined) {
+    const t = info.topic.trim().slice(0, 140);
+    if (!t) return { ok: false, error: "El título no puede quedar vacío." };
+    patch.topic = t;
+  }
+  if (info.description !== undefined) {
+    patch.description = info.description.trim().slice(0, 400) || null;
+  }
+  if (Object.keys(patch).length === 0) return { ok: true };
+
+  const { error } = await supabaseAdmin().from("routes").update(patch).eq("id", routeId);
+  if (error) return { ok: false, error: "No se pudo guardar la información." };
   return { ok: true };
 }
 

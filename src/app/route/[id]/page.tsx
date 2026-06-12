@@ -3,9 +3,9 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X } from "lucide-react";
-import { useRequireAuth } from "@/lib/useAuth";
-import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility } from "@/app/socialActions";
+import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X, Share2, Check, Pencil } from "lucide-react";
+import { useAuth } from "@/lib/useAuth";
+import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility, updateRouteInfo } from "@/app/socialActions";
 import { setRouteCategory, deleteRoute } from "@/app/routeActions";
 import { ROUTE_CATEGORIES, categoryLabel, type RouteLanding } from "@/lib/types";
 import AppHeader from "@/components/AppHeader";
@@ -15,7 +15,8 @@ import CoverEditor from "@/components/CoverEditor";
 export default function RouteLandingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { token, loading, session } = useRequireAuth();
+  // La ficha es pública: los visitantes anónimos (links de redes) pueden verla.
+  const { token, loading, session } = useAuth();
   const [data, setData] = useState<RouteLanding | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [editingCover, setEditingCover] = useState(false);
@@ -32,9 +33,17 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  // edición de info (solo dueño)
+  const [editingInfo, setEditingInfo] = useState(false);
+  const [topicDraft, setTopicDraft] = useState("");
+  const [descDraft, setDescDraft] = useState("");
+  const [savingInfo, setSavingInfo] = useState(false);
+  const [infoError, setInfoError] = useState("");
 
   useEffect(() => {
-    if (!token) return;
+    if (loading) return;
     getRouteLanding(token, id).then(d => {
       if (!d) { setNotFound(true); return; }
       setData(d);
@@ -46,21 +55,60 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
       setRatingCount(d.ratingCount);
       setVisibility(d.visibility);
       setCategory(d.category);
+      setTopicDraft(d.topic);
+      setDescDraft(d.description || "");
     });
-  }, [token, id]);
+  }, [token, id, loading]);
+
+  // Acciones que requieren cuenta: el anónimo va a registrarse y vuelve aquí
+  const requireLogin = (next: string) => {
+    router.push(`/login?mode=signup&next=${encodeURIComponent(next)}`);
+  };
+
+  const handleStudy = () => {
+    const dest = `/tree?route=${id}`;
+    if (!session) { requireLogin(dest); return; }
+    router.push(dest);
+  };
+
+  const handleShare = async () => {
+    const url = `${window.location.origin}/route/${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      // Fallback: compartir nativo en móvil
+      if (navigator.share) navigator.share({ title: data?.topic, url }).catch(() => {});
+    }
+  };
 
   const handleRate = async (stars: number) => {
-    if (!token) return;
+    if (!token) { requireLogin(`/route/${id}`); return; }
     setMyRating(stars);
     const res = await rateRoute(token, id, stars);
     if (res.ok) { setRatingAvg(res.ratingAvg); setRatingCount(res.ratingCount); }
   };
 
   const handleFavorite = async () => {
-    if (!token) return;
+    if (!token) { requireLogin(`/route/${id}`); return; }
     setIsFavorite(f => !f);
     const res = await toggleFavorite(token, id);
     if (res.ok) { setIsFavorite(res.isFavorite); setFavoriteCount(res.favoriteCount); }
+  };
+
+  const handleSaveInfo = async () => {
+    if (!token || savingInfo) return;
+    setSavingInfo(true);
+    setInfoError("");
+    const res = await updateRouteInfo(token, id, { topic: topicDraft, description: descDraft });
+    setSavingInfo(false);
+    if (res.ok) {
+      setData(d => (d ? { ...d, topic: topicDraft.trim(), description: descDraft.trim() || null } : d));
+      setEditingInfo(false);
+    } else {
+      setInfoError(res.error || "No se pudo guardar.");
+    }
   };
 
   const handleVisibility = async (v: "public" | "private") => {
@@ -88,7 +136,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
     }
   };
 
-  if (loading || !session) {
+  if (loading) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center"><Loader2 className="w-10 h-10 text-primary animate-spin" /></div>;
   }
 
@@ -142,7 +190,57 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
 
           {/* Info */}
           <div className="md:col-span-3">
-            <h1 className="text-3xl md:text-4xl font-bold mb-3">{data.topic}</h1>
+            {editingInfo ? (
+              <div className="mb-5 bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4">
+                <label className="text-xs uppercase tracking-wider text-zinc-500 font-bold">Título</label>
+                <input
+                  value={topicDraft}
+                  onChange={e => setTopicDraft(e.target.value)}
+                  maxLength={140}
+                  className="w-full mt-1 mb-3 bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3.5 text-lg font-bold text-white focus:outline-none focus:border-primary"
+                />
+                <label className="text-xs uppercase tracking-wider text-zinc-500 font-bold">Descripción</label>
+                <textarea
+                  value={descDraft}
+                  onChange={e => setDescDraft(e.target.value)}
+                  rows={4}
+                  maxLength={400}
+                  placeholder="¿Qué va a aprender quien tome esta ruta? ¿Para quién es?"
+                  className="w-full mt-1 bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 px-3.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-primary resize-none"
+                />
+                <p className="text-right text-[11px] text-zinc-600 mt-0.5">{descDraft.length}/400</p>
+                {infoError && <p className="text-rose-400 text-sm mb-2">{infoError}</p>}
+                <div className="flex gap-2 mt-1">
+                  <button
+                    onClick={handleSaveInfo}
+                    disabled={savingInfo}
+                    className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-xl px-5 py-2 text-sm font-bold transition-all disabled:opacity-60"
+                  >
+                    {savingInfo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Guardar
+                  </button>
+                  <button
+                    onClick={() => { setEditingInfo(false); setTopicDraft(data.topic); setDescDraft(data.description || ""); setInfoError(""); }}
+                    disabled={savingInfo}
+                    className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-sm font-bold hover:bg-zinc-700 transition-all"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-3 mb-3">
+                <h1 className="text-3xl md:text-4xl font-bold">{data.topic}</h1>
+                {data.isOwner && (
+                  <button
+                    onClick={() => setEditingInfo(true)}
+                    title="Editar título y descripción"
+                    className="shrink-0 mt-1.5 w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-primary text-zinc-400 hover:text-white flex items-center justify-center transition-all"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            )}
 
             <button
               onClick={() => data.creator.username && router.push(`/u/${data.creator.username}`)}
@@ -161,7 +259,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
               </span>
             </button>
 
-            {data.description && <p className="text-zinc-300 mb-5 leading-relaxed">{data.description}</p>}
+            {!editingInfo && data.description && <p className="text-zinc-300 mb-5 leading-relaxed">{data.description}</p>}
 
             {/* Métricas */}
             <div className="flex flex-wrap gap-4 mb-6 text-sm">
@@ -191,10 +289,10 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
             {/* Acciones */}
             <div className="flex flex-wrap items-center gap-3 mb-6">
               <button
-                onClick={() => router.push(`/tree?route=${id}`)}
-                className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-2xl px-8 py-3.5 font-bold text-lg transition-all"
+                onClick={handleStudy}
+                className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white rounded-2xl px-8 py-3.5 font-bold text-lg transition-all shadow-[0_0_25px_rgba(139,92,246,0.3)]"
               >
-                <Play className="w-5 h-5" /> {data.myCompletedNodes > 0 ? "Continuar" : "Estudiar"}
+                <Play className="w-5 h-5" /> {data.myCompletedNodes > 0 ? "Continuar" : session ? "Estudiar" : "Estudiar gratis"}
               </button>
               <button
                 onClick={handleFavorite}
@@ -204,13 +302,31 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
               >
                 <Heart className={`w-5 h-5 ${isFavorite ? "fill-current" : ""}`} /> {favoriteCount}
               </button>
+              <button
+                onClick={handleShare}
+                title="Copiar link de la ruta"
+                className={`inline-flex items-center gap-2 rounded-2xl px-5 py-3.5 font-bold transition-all border ${
+                  linkCopied ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" : "bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700"
+                }`}
+              >
+                {linkCopied ? <Check className="w-5 h-5" /> : <Share2 className="w-5 h-5" />}
+                {linkCopied ? "¡Copiado!" : "Compartir"}
+              </button>
             </div>
 
-            {/* Calificar */}
-            <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 mb-4">
-              <p className="text-sm text-zinc-400 mb-2">{myRating ? "Tu calificación" : "Califica esta ruta"}</p>
-              <StarRating value={myRating} onRate={handleRate} size="w-7 h-7" />
-            </div>
+            {!session && (
+              <p className="text-zinc-500 text-sm mb-6 -mt-2">
+                Crea tu cuenta gratis en segundos y empieza a estudiar esta ruta de inmediato.
+              </p>
+            )}
+
+            {/* Calificar (solo con cuenta) */}
+            {session && (
+              <div className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-4 mb-4">
+                <p className="text-sm text-zinc-400 mb-2">{myRating ? "Tu calificación" : "Califica esta ruta"}</p>
+                <StarRating value={myRating} onRate={handleRate} size="w-7 h-7" />
+              </div>
+            )}
 
             {/* Controles del dueño */}
             {data.isOwner && (

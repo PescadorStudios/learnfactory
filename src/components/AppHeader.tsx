@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, User, Settings, LogOut, Crown, Plus, Shield } from "lucide-react";
+import { Search, User, Settings, LogOut, Crown, Plus, Shield, LogIn } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { getMyProfile, getPlan } from "@/app/socialActions";
@@ -11,7 +11,7 @@ import { Logo } from "@/components/Logo";
 
 export default function AppHeader({ initialQuery = "" }: { initialQuery?: string }) {
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, session, loading } = useAuth();
   const [q, setQ] = useState(initialQuery);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profile, setProfile] = useState<{ username: string | null; avatarUrl: string | null } | null>(null);
@@ -65,6 +65,15 @@ export default function AppHeader({ initialQuery = "" }: { initialQuery?: string
           />
         </form>
 
+        {/* Visitante anónimo (link compartido): invitarlo a entrar */}
+        {!loading && !session ? (
+          <button
+            onClick={() => router.push("/login")}
+            className="flex items-center gap-1.5 bg-primary hover:bg-primary-hover text-white rounded-full px-5 py-2 text-sm font-bold transition-all shrink-0"
+          >
+            <LogIn className="w-4 h-4" /> Entrar
+          </button>
+        ) : (<>
         <button
           onClick={() => router.push("/sources")}
           className="hidden sm:flex items-center gap-1.5 bg-primary hover:bg-primary-hover text-white rounded-full px-4 py-2 text-sm font-bold transition-all shrink-0"
@@ -121,6 +130,7 @@ export default function AppHeader({ initialQuery = "" }: { initialQuery?: string
             </div>
           )}
         </div>
+        </>)}
       </div>
     </header>
   );

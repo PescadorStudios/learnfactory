@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Loader2, LogIn, UserPlus } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase/client";
@@ -9,10 +9,15 @@ import { useAuth } from "@/lib/useAuth";
 import { registerUser } from "../routeActions";
 import { Logo } from "@/components/Logo";
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Destino tras entrar (p. ej. /tree?route=<id> desde un link compartido).
+  // Solo rutas internas para evitar open redirects.
+  const rawNext = searchParams.get("next") || "/";
+  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
   const { session, loading } = useAuth();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">(searchParams.get("mode") === "signup" ? "signup" : "signin");
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -20,8 +25,8 @@ export default function LoginPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!loading && session) router.push("/");
-  }, [loading, session, router]);
+    if (!loading && session) router.push(next);
+  }, [loading, session, router, next]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,7 +62,7 @@ export default function LoginPage() {
         setBusy(false);
         return;
       }
-      router.push("/");
+      router.push(next);
     } catch {
       setError("Error de conexión. Intenta de nuevo.");
       setBusy(false);
@@ -152,5 +157,13 @@ export default function LoginPage() {
         </form>
       </motion.div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-zinc-950" />}>
+      <LoginContent />
+    </Suspense>
   );
 }

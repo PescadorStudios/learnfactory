@@ -13,6 +13,7 @@ import {
   generateBossExam,
   generateCoverImage,
   buildCoverPrompt,
+  craftCoverPrompt,
 } from "@/lib/generation";
 import type {
   Tree,
@@ -106,7 +107,8 @@ export async function createRoute(
   topic: string,
   sourcesStr: string,
   visibility: "public" | "private" = "public",
-  category?: string
+  category?: string,
+  cover?: { prompt?: string; reference?: string }
 ): Promise<{ routeId?: string; error?: string; quotaReached?: boolean }> {
   const user = await getUserFromToken(token);
   if (!user) return { error: "Sesión inválida" };
@@ -164,8 +166,11 @@ export async function createRoute(
 
   // Pregenerar todo en segundo plano después de responder
   after(() => generateRouteLessons(route.id));
-  // Generar portada con IA en background (no bloquea la respuesta)
-  after(() => generateAndStoreCover(route.id, topic, buildCoverPrompt(topic, pack.sintesis?.tesisGlobal)));
+  // Portada con IA en background: si el usuario dio su prompt/referencia se
+  // usan (se genera UNA sola vez, sin gastar la automática); si no, prompt base.
+  const coverPrompt = cover?.prompt?.trim() || buildCoverPrompt(topic, pack.sintesis?.tesisGlobal);
+  const coverRefs = toCoverReference(cover?.reference);
+  after(() => generateAndStoreCover(route.id, topic, coverPrompt, coverRefs));
 
   console.log(`[Route] ✓ Ruta ${route.id} creada con ${lessonRows.length} lecciones. Generación en background iniciada.`);
   return { routeId: route.id };
@@ -243,6 +248,24 @@ export interface BatchRouteInput {
   coverPrompt?: string;
   /** Imagen de referencia opcional para la portada (base64, con o sin prefijo data URL). */
   coverReference?: string;
+}
+
+/**
+ * Agente de dirección de arte: convierte unas pocas palabras del usuario en un
+ * prompt de portada de alto impacto (editable antes de crear la ruta).
+ */
+export async function suggestCoverPrompt(
+  token: string,
+  topic: string,
+  idea: string,
+  hasReference: boolean
+): Promise<{ ok: boolean; prompt?: string; error?: string }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+  const t = topic.trim().slice(0, 140);
+  if (!t) return { ok: false, error: "Primero escribe el tema de la ruta." };
+  const prompt = await craftCoverPrompt(t, idea.trim().slice(0, 300), hasReference);
+  return { ok: true, prompt };
 }
 
 /** Decodifica base64 (con o sin prefijo data URL) a referencia para Gemini. */

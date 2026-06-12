@@ -3,9 +3,10 @@
 import { Suspense, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileUp, Link as LinkIcon, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Tag } from "lucide-react";
+import { FileUp, Link as LinkIcon, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Tag, ImagePlus, Wand2, UserRound } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
-import { createRoute } from "../routeActions";
+import { createRoute, suggestCoverPrompt } from "../routeActions";
+import { fileToResizedDataUrl } from "@/lib/imageUtils";
 import { ROUTE_CATEGORIES } from "@/lib/types";
 import PremiumCheckout from "@/components/PremiumCheckout";
 import { LogoMark } from "@/components/Logo";
@@ -28,6 +29,32 @@ function Sources() {
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlValue, setUrlValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Portada: idea breve → el agente redacta el prompt (editable) + referencia
+  const [coverIdea, setCoverIdea] = useState("");
+  const [coverPrompt, setCoverPrompt] = useState("");
+  const [coverReference, setCoverReference] = useState<string | null>(null);
+  const [craftingPrompt, setCraftingPrompt] = useState(false);
+  const coverRefInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCraftPrompt = async () => {
+    if (!token || craftingPrompt) return;
+    setCraftingPrompt(true);
+    const res = await suggestCoverPrompt(token, topic, coverIdea, Boolean(coverReference));
+    setCraftingPrompt(false);
+    if (res.ok && res.prompt) setCoverPrompt(res.prompt);
+  };
+
+  const handleCoverReference = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      setCoverReference(await fileToResizedDataUrl(file, 1024, 1024));
+    } catch {
+      setGenError("No se pudo leer la imagen de referencia.");
+    }
+  };
 
   const handleTopicSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,7 +94,10 @@ function Sources() {
     const sourcesStr = sources.map(s => s.name).join(",");
     try {
       // Crea la ruta (síntesis + árbol) y arranca la pregeneración en background
-      const result = await createRoute(token, topic, sourcesStr, visibility, category);
+      const result = await createRoute(token, topic, sourcesStr, visibility, category, {
+        prompt: coverPrompt.trim() || undefined,
+        reference: coverReference ?? undefined,
+      });
       if (result.routeId) {
         router.push(`/tree?route=${result.routeId}`);
       } else if (result.quotaReached) {
@@ -300,6 +330,81 @@ function Sources() {
                 </div>
                 <p className="text-xs text-zinc-500">Solo para ti. No aparece en la biblioteca pública.</p>
               </button>
+            </div>
+
+            {/* Portada de la ruta: el agente redacta el prompt de alto impacto */}
+            <div className="bg-zinc-950/70 border border-zinc-800 rounded-2xl p-4 mb-4">
+              <label className="text-xs uppercase tracking-wider text-zinc-500 font-bold flex items-center gap-1.5 mb-1">
+                <LogoMark className="w-3.5 h-3.5" /> Portada de la ruta
+              </label>
+              <p className="text-xs text-zinc-600 mb-3">
+                Di en pocas palabras qué quieres en la portada y la IA redacta el prompt perfecto. Si la dejas vacía, se genera automática.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-2 mb-3">
+                <input
+                  value={coverIdea}
+                  onChange={e => setCoverIdea(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleCraftPrompt(); } }}
+                  maxLength={300}
+                  placeholder='Ej: "yo enseñando frente a una pizarra", "estilo cómic épico"...'
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl py-2.5 px-3.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={handleCraftPrompt}
+                  disabled={craftingPrompt}
+                  className="shrink-0 inline-flex items-center justify-center gap-2 bg-primary/15 border border-primary/40 text-primary hover:bg-primary/25 rounded-xl px-4 py-2.5 text-sm font-bold transition-all disabled:opacity-60"
+                >
+                  {craftingPrompt ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                  {craftingPrompt ? "Redactando..." : "Redactar con IA"}
+                </button>
+              </div>
+
+              {coverPrompt && (
+                <div className="mb-3">
+                  <label className="text-[11px] uppercase tracking-wider text-zinc-600 font-bold">Prompt de la portada (puedes editarlo)</label>
+                  <textarea
+                    value={coverPrompt}
+                    onChange={e => setCoverPrompt(e.target.value)}
+                    rows={4}
+                    maxLength={1200}
+                    className="w-full mt-1 bg-zinc-900 border border-primary/30 rounded-xl p-3 text-xs text-zinc-200 focus:outline-none focus:border-primary resize-none leading-relaxed"
+                  />
+                </div>
+              )}
+
+              {/* Referencia: recomendada si el autor/creador va en la portada */}
+              {coverReference ? (
+                <div className="flex items-center gap-3">
+                  <div className="relative inline-block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={coverReference} alt="referencia" className="h-16 rounded-lg border border-zinc-700 object-cover" />
+                    <button
+                      onClick={() => setCoverReference(null)}
+                      className="absolute -top-2 -right-2 w-5 h-5 bg-zinc-800 border border-zinc-600 rounded-full flex items-center justify-center text-zinc-300 hover:text-white"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-emerald-400/90 flex items-center gap-1.5"><Check className="w-3.5 h-3.5" /> La IA integrará esta imagen en la portada.</p>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => coverRefInputRef.current?.click()}
+                  className="w-full flex items-center gap-3 bg-zinc-900 border border-zinc-800 border-dashed hover:border-primary rounded-xl px-4 py-3 text-left transition-all group"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0 group-hover:bg-primary/15 transition-colors">
+                    <UserRound className="w-5 h-5 text-zinc-500 group-hover:text-primary transition-colors" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-zinc-300 flex items-center gap-1.5"><ImagePlus className="w-3.5 h-3.5" /> Imagen de referencia (opcional)</p>
+                    <p className="text-xs text-zinc-600">¿Sales tú o el autor del conocimiento en la portada? Sube su foto y la IA la integra.</p>
+                  </div>
+                </button>
+              )}
+              <input ref={coverRefInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleCoverReference} />
             </div>
 
             {genError && <p className="text-rose-400 text-sm mb-3 text-center">{genError}</p>}

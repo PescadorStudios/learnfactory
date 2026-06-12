@@ -29,14 +29,15 @@ export function useAuth() {
   };
 }
 
-/** Igual que useAuth, pero redirige a /login si no hay sesión */
+/** Igual que useAuth, pero redirige a /login si no hay sesión (y vuelve aquí tras entrar) */
 export function useRequireAuth() {
   const router = useRouter();
   const auth = useAuth();
 
   useEffect(() => {
     if (!auth.loading && !auth.session) {
-      router.push("/login");
+      const next = `${window.location.pathname}${window.location.search}`;
+      router.push(next && next !== "/" ? `/login?next=${encodeURIComponent(next)}` : "/login");
     }
   }, [auth.loading, auth.session, router]);
 

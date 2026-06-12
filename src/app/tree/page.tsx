@@ -177,7 +177,7 @@ function KnowledgeTree() {
   const showResume = recoverableCount > 0 || queueStalled;
 
   return (
-    <main className="min-h-screen bg-zinc-950 p-6 md:p-12 relative overflow-y-auto">
+    <main className="min-h-screen bg-zinc-950 px-3 py-6 sm:p-6 md:p-12 relative overflow-y-auto overflow-x-hidden">
       <div className="fixed top-0 inset-x-0 h-96 bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
 
       {/* Celebración al completar un nodo */}
@@ -204,7 +204,7 @@ function KnowledgeTree() {
       <div className="max-w-3xl mx-auto relative z-10 pt-10">
         <header className="mb-12 text-center">
           {/* Stats */}
-          <div className="flex justify-center items-center gap-3 mb-6">
+          <div className="flex flex-wrap justify-center items-center gap-2 sm:gap-3 mb-6">
             <button onClick={() => router.push("/")} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2 text-zinc-400 hover:text-white transition-colors">
               <Home className="w-4 h-4" />
             </button>
@@ -231,7 +231,7 @@ function KnowledgeTree() {
           <motion.h1
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-3xl md:text-5xl font-bold mb-4"
+            className="text-2xl sm:text-3xl md:text-5xl font-bold mb-4 break-words px-2"
           >
             Ruta de <span className="text-primary">{route.topic}</span>
           </motion.h1>
@@ -304,15 +304,15 @@ function KnowledgeTree() {
               className="relative"
             >
               {levelIndex !== route.tree.levels.length - 1 && (
-                <div className="absolute left-8 top-24 bottom-[-3rem] w-0.5 bg-zinc-800" />
+                <div className="absolute left-5 sm:left-8 top-20 sm:top-24 bottom-[-3rem] w-0.5 bg-zinc-800" />
               )}
 
-              <div className="flex items-start gap-6">
-                <div className="w-16 h-16 shrink-0 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center font-bold text-xl text-zinc-500 z-10 relative">
+              <div className="flex items-start gap-3 sm:gap-6">
+                <div className="w-10 h-10 sm:w-16 sm:h-16 shrink-0 bg-zinc-900 border border-zinc-800 rounded-full flex items-center justify-center font-bold text-base sm:text-xl text-zinc-500 z-10 relative">
                   {level.id}
                 </div>
-                <div className="flex-1 pt-2">
-                  <h2 className="text-2xl font-bold mb-1">{level.title}</h2>
+                <div className="flex-1 min-w-0 pt-1 sm:pt-2">
+                  <h2 className="text-lg sm:text-2xl font-bold mb-1 break-words">{level.title}</h2>
                   <p className="text-zinc-500 text-sm mb-6">{level.description}</p>
 
                   <div className="grid gap-4 sm:grid-cols-2">

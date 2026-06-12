@@ -274,6 +274,44 @@ export function buildCoverPrompt(topic: string, tesisGlobal?: string): string {
 }
 
 /**
+ * Agente de dirección de arte: convierte la idea del usuario (pocas palabras)
+ * en un prompt de portada de alto impacto para el modelo de imagen. Si hay
+ * imagen de referencia (foto del autor/creador), el prompt indica integrarla
+ * como protagonista. Si el agente falla, cae al prompt base.
+ */
+export async function craftCoverPrompt(topic: string, idea: string, hasReference: boolean): Promise<string> {
+  const fallback = buildCoverPrompt(topic);
+  if (!apiKey) return fallback;
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const refNote = hasReference
+      ? `El usuario adjuntó una IMAGEN DE REFERENCIA (normalmente la foto del autor o creador del curso). El prompt DEBE pedir integrar a la persona/elemento de la imagen de referencia como protagonista de la portada, fotorrealista y favorecedor, bien iluminado.`
+      : `No hay imagen de referencia.`;
+    const prompt = `Eres director de arte senior especializado en portadas de cursos online de alto impacto (estilo thumbnail premium de Netflix/MasterClass).
+
+Curso: "${topic}"
+Idea del usuario (puede ser muy breve o vaga): "${idea || "(no dio idea; usa el tema del curso)"}"
+${refNote}
+
+Escribe UN prompt en español para un modelo de generación de imágenes que produzca una portada espectacular. Reglas:
+- Amplifica la idea del usuario respetando su intención; si es vaga, decide tú la mejor dirección visual para que el curso VENDA.
+- Describe: sujeto/escena principal, estilo visual, iluminación cinematográfica, paleta de colores, composición y atmósfera.
+- Formato apaisado 16:9.
+- PROHIBIDO texto, letras, palabras, números o logos dentro de la imagen (dilo explícitamente al final).
+- Máximo 120 palabras.
+
+Responde SOLO con el prompt, sin comillas ni explicaciones.`;
+    const result = await withTimeout(model.generateContent(prompt), 30_000, "Agente de prompt de portada");
+    const text = result.response.text().trim();
+    if (text.length < 30) return fallback;
+    return text.slice(0, 1200);
+  } catch (e) {
+    console.warn("[CoverPrompt] Agente falló, usando prompt base:", e);
+    return fallback;
+  }
+}
+
+/**
  * Genera una imagen de portada con Gemini (Nano Banana) y devuelve el binario.
  * - Fuerza relación de aspecto 16:9 vía `imageConfig` (tamaño exacto de tarjeta).
  * - Acepta imágenes de referencia (p. ej., foto del autor) como `inlineData`.
