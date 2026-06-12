@@ -7,6 +7,7 @@ import { FileUp, Link as LinkIcon, ArrowRight, X, Loader2, Globe, Lock, Crown, C
 import { useRequireAuth } from "@/lib/useAuth";
 import { createRoute, suggestCoverPrompt } from "../routeActions";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
+import { extractUrls } from "@/lib/urlUtils";
 import { ROUTE_CATEGORIES } from "@/lib/types";
 import PremiumCheckout from "@/components/PremiumCheckout";
 import { LogoMark } from "@/components/Logo";
@@ -63,7 +64,19 @@ function Sources() {
   };
 
   const addSource = (type: string, name: string, content?: string) => {
-    setSources([...sources, { id: Math.random().toString(), type, name, content }]);
+    setSources(prev => [...prev, { id: Math.random().toString(), type, name, content }]);
+  };
+
+  /** Añade varias URLs de golpe (pegadas juntas), sin duplicar las existentes. */
+  const addUrls = (urls: string[]) => {
+    if (urls.length === 0) return;
+    setSources(prev => {
+      const existing = new Set(prev.map(s => s.name));
+      const nuevos = urls
+        .filter(u => !existing.has(u))
+        .map(u => ({ id: Math.random().toString(), type: "url", name: u }));
+      return [...prev, ...nuevos];
+    });
   };
 
   const handleRemove = (id: string) => {
@@ -72,8 +85,22 @@ function Sources() {
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (urlValue.trim()) {
-      addSource("url", urlValue.trim());
+    const v = urlValue.trim();
+    if (!v) return;
+    // Si el campo trae varias URLs (pegadas juntas), se agregan todas
+    const urls = extractUrls(v);
+    if (urls.length > 0) addUrls(urls);
+    else addSource("url", v);
+    setUrlValue("");
+    setShowUrlInput(false);
+  };
+
+  /** Pegar varias URLs a la vez: se agregan todas, listas para generar. */
+  const handleUrlPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const urls = extractUrls(e.clipboardData.getData("text"));
+    if (urls.length >= 2) {
+      e.preventDefault();
+      addUrls(urls);
       setUrlValue("");
       setShowUrlInput(false);
     }
@@ -218,11 +245,13 @@ function Sources() {
                 >
                   <LinkIcon className="w-8 h-8 text-secondary mb-4" />
                   <input
-                    type="url"
+                    type="text"
+                    inputMode="url"
                     autoFocus
                     value={urlValue}
                     onChange={(e) => setUrlValue(e.target.value)}
-                    placeholder="https://..."
+                    onPaste={handleUrlPaste}
+                    placeholder="https://... (puedes pegar varias a la vez)"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-3 px-4 mb-4 text-white placeholder:text-zinc-600 focus:outline-none focus:border-secondary"
                   />
                   <div className="flex gap-2 w-full">

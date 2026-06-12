@@ -16,6 +16,7 @@ import { useRequireAuth } from "@/lib/useAuth";
 import { createRouteBatch, getMyRoutes, type BatchRouteInput } from "@/app/routeActions";
 import { getPlan } from "@/app/socialActions";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
+import { extractUrls } from "@/lib/urlUtils";
 import { ROUTE_CATEGORIES, type PlanState, type RouteSummary } from "@/lib/types";
 import AppHeader from "@/components/AppHeader";
 import { LogoMark } from "@/components/Logo";
@@ -81,7 +82,20 @@ export default function BatchPage() {
   const addLink = (slot: Slot) => {
     const v = slot.linkDraft.trim();
     if (!v) return;
-    patchSlot(slot.id, { links: [...slot.links, v], linkDraft: "" });
+    // Si el campo trae varias URLs (pegadas juntas), se agregan todas
+    const urls = extractUrls(v);
+    const nuevos = (urls.length > 0 ? urls : [v]).filter(u => !slot.links.includes(u));
+    patchSlot(slot.id, { links: [...slot.links, ...nuevos], linkDraft: "" });
+  };
+
+  /** Pegar varias URLs a la vez en un placeholder: quedan listas, sin generar. */
+  const handleLinkPaste = (slot: Slot, e: React.ClipboardEvent<HTMLInputElement>) => {
+    const urls = extractUrls(e.clipboardData.getData("text"));
+    if (urls.length >= 2) {
+      e.preventDefault();
+      const nuevos = urls.filter(u => !slot.links.includes(u));
+      patchSlot(slot.id, { links: [...slot.links, ...nuevos], linkDraft: "" });
+    }
   };
 
   const handleReference = async (slotId: number, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -343,7 +357,8 @@ export default function BatchPage() {
                               value={s.linkDraft}
                               onChange={e => patchSlot(s.id, { linkDraft: e.target.value })}
                               onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addLink(s); } }}
-                              placeholder="https://... (web, YouTube o archivo)"
+                              onPaste={e => handleLinkPaste(s, e)}
+                              placeholder="https://... (puedes pegar varias a la vez)"
                               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-secondary"
                             />
                           </div>
