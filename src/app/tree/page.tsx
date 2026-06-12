@@ -368,7 +368,7 @@ function KnowledgeTree() {
                                 </span>
                               )}
                             </div>
-                            <h3 className={`font-semibold truncate ${isCompleted ? "text-primary-100" : "text-white"}`}>
+                            <h3 className={`font-semibold break-words hyphens-auto ${isCompleted ? "text-primary-100" : "text-white"}`}>
                               {node.title}
                             </h3>
                             {state.bestStars !== null && (
