@@ -34,45 +34,119 @@ function spokenText(c: { texto: string; alterado: boolean; original?: string }):
 }
 
 /**
- * Peso temporal de un fragmento narrado: nº de caracteres + un coste extra por
- * la puntuación (las pausas de oración/cláusula consumen tiempo que el reparto
- * lineal por caracteres ignoraba y que causaba la deriva a mitad del audio).
+ * Peso temporal de un fragmento narrado, en "caracteres hablados".
+ * - Los dígitos pesan ×5: "1789" son 4 caracteres pero se pronuncia
+ *   "mil setecientos ochenta y nueve". Las cifras son justo el material
+ *   típico de las trampas, así que este error local importaba mucho.
+ * - "%" se narra "por ciento". La puntuación NO suma: las pausas reales
+ *   se miden físicamente en el audio (ver mapa de tiempo hablado).
  */
 function cueWeight(text: string): number {
-  let w = text.length;
+  let w = 0;
   for (const ch of text) {
-    if (ch === "." || ch === "!" || ch === "?" || ch === "…") w += 6;
-    else if (ch === "," || ch === ";" || ch === ":") w += 3;
+    if (ch >= "0" && ch <= "9") w += 5;
+    else if (ch === "%") w += 10;
+    else w += 1;
   }
-  return w;
+  return Math.max(1, w);
 }
 
+const FRAME_SEC = 0.02; // ventanas de 20 ms
+
 /**
- * Detecta dónde empieza y termina realmente la voz (recortando el silencio
- * inicial/final del TTS) midiendo la amplitud en ventanas de 20 ms.
+ * Sincronización por MAPA DE TIEMPO HABLADO + ANCLAJE A INICIOS DE FRASE.
+ *
+ * El reparto lineal sobre la ventana de voz fallaba cuando el TTS hacía pausas
+ * internas desiguales (entre oraciones puede callar 0.2 s o 1 s): el texto
+ * "avanzaba" durante el silencio y la voz quedaba delante o detrás.
+ *
+ * 1. Se clasifica cada ventana de 20 ms como voz/silencio (umbral adaptativo
+ *    al volumen real del clip) y se acumula SOLO el tiempo con voz.
+ * 2. El texto de los cues se reparte sobre ese tiempo hablado: durante una
+ *    pausa el texto no avanza, da igual cuánto dure.
+ * 3. Cada inicio de cue se "imanta" al arranque de voz real más cercano tras
+ *    una pausa (los cues son frases: casi siempre empiezan tras un silencio),
+ *    corrigiendo el error residual de ritmo. Monotonicidad garantizada.
  */
-function detectSpeechWindow(buf: AudioBuffer): { start: number; end: number } {
+function computeCueTimeline(buf: AudioBuffer, weights: number[]): number[] | null {
   const ch = buf.getChannelData(0);
   const sr = buf.sampleRate;
-  const win = Math.max(1, Math.floor(sr * 0.02));
-  const threshold = 0.015;
-  let start = 0;
-  let end = buf.duration;
+  const win = Math.max(1, Math.floor(sr * FRAME_SEC));
+  const nFrames = Math.ceil(ch.length / win);
+  if (nFrames < 10 || weights.length === 0) return null;
 
-  for (let i = 0; i < ch.length; i += win) {
+  // Energía (pico) por ventana
+  const energy = new Float32Array(nFrames);
+  for (let f = 0; f < nFrames; f++) {
     let max = 0;
-    const lim = Math.min(i + win, ch.length);
-    for (let j = i; j < lim; j++) { const a = Math.abs(ch[j]); if (a > max) max = a; }
-    if (max > threshold) { start = i / sr; break; }
+    const lim = Math.min((f + 1) * win, ch.length);
+    for (let j = f * win; j < lim; j++) { const a = Math.abs(ch[j]); if (a > max) max = a; }
+    energy[f] = max;
   }
-  for (let i = ch.length - 1; i >= 0; i -= win) {
-    let max = 0;
-    const lim = Math.max(0, i - win);
-    for (let j = i; j > lim; j--) { const a = Math.abs(ch[j]); if (a > max) max = a; }
-    if (max > threshold) { end = Math.min(buf.duration, (i / sr) + 0.05); break; }
+
+  // Umbral adaptativo: fracción del volumen típico de la voz (percentil 90)
+  const sorted = Array.from(energy).sort((a, b) => a - b);
+  const p90 = sorted[Math.floor(sorted.length * 0.9)] || 0;
+  const threshold = Math.max(0.008, p90 * 0.08);
+
+  // Voz/silencio con cierre de microhuecos (≤100 ms no es una pausa real)
+  const voiced = new Uint8Array(nFrames);
+  for (let f = 0; f < nFrames; f++) voiced[f] = energy[f] > threshold ? 1 : 0;
+  let gap = 0;
+  for (let f = 0; f < nFrames; f++) {
+    if (voiced[f]) {
+      if (gap > 0 && gap <= 5) for (let k = f - gap; k < f; k++) voiced[k] = 1;
+      gap = 0;
+    } else gap++;
   }
-  if (end <= start + 1) { start = 0; end = buf.duration; }
-  return { start, end };
+
+  // Tiempo hablado acumulado al inicio de cada ventana
+  const cumVoiced = new Float32Array(nFrames + 1);
+  for (let f = 0; f < nFrames; f++) cumVoiced[f + 1] = cumVoiced[f] + (voiced[f] ? FRAME_SEC : 0);
+  const totalVoiced = cumVoiced[nFrames];
+  if (totalVoiced < 1) return null; // no se detectó voz: usar respaldo
+
+  // Inicios de frase: transición silencio→voz tras una pausa de ≥160 ms
+  const onsets: number[] = [];
+  let silentRun = nFrames; // el arranque cuenta como pausa previa
+  for (let f = 0; f < nFrames; f++) {
+    if (voiced[f]) {
+      if (silentRun >= 8) onsets.push(f * FRAME_SEC);
+      silentRun = 0;
+    } else silentRun++;
+  }
+
+  // Repartir el texto sobre el tiempo hablado y convertir a tiempo de reloj
+  const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
+  const starts: number[] = [];
+  let cum = 0;
+  let f = 0;
+  for (let i = 0; i < weights.length; i++) {
+    const target = (cum / totalWeight) * totalVoiced;
+    // `<=` hace que tras una pausa el cue caiga en el primer frame CON voz
+    // (el texto se reanuda cuando la voz se reanuda, no durante el silencio)
+    while (f < nFrames && cumVoiced[f + 1] <= target) f++;
+    starts.push(f * FRAME_SEC);
+    cum += weights[i];
+  }
+
+  // Imantar cada inicio al onset real más cercano (±0.35 s), sin desordenar
+  const SNAP = 0.35;
+  let oi = 0;
+  for (let i = 0; i < starts.length; i++) {
+    while (oi < onsets.length - 1 && onsets[oi + 1] <= starts[i] + SNAP) {
+      if (Math.abs(onsets[oi + 1] - starts[i]) <= Math.abs(onsets[oi] - starts[i])) oi++;
+      else break;
+    }
+    if (oi < onsets.length && Math.abs(onsets[oi] - starts[i]) <= SNAP) {
+      const prev = i > 0 ? starts[i - 1] : -Infinity;
+      if (onsets[oi] > prev + 0.15) starts[i] = onsets[oi];
+    }
+  }
+  for (let i = 1; i < starts.length; i++) {
+    if (starts[i] <= starts[i - 1]) starts[i] = starts[i - 1] + 0.05;
+  }
+  return starts;
 }
 
 /**
@@ -94,9 +168,10 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
   const audioUrl = useMemo(() => URL.createObjectURL(audioBlob), [audioBlob]);
   useEffect(() => () => URL.revokeObjectURL(audioUrl), [audioUrl]);
 
-  // Línea de tiempo DINÁMICA: decodificamos el audio, detectamos dónde empieza
-  // y termina la voz, y repartimos los cues sobre esa ventana real ponderando
-  // pausas. Si falla, caemos a los atSeconds precalculados + retraso fijo.
+  // Línea de tiempo DINÁMICA: decodificamos el audio, medimos dónde hay voz
+  // real (y dónde pausas) y repartimos los cues sobre el tiempo hablado,
+  // anclándolos a los inicios de frase detectados. Si algo falla, caemos a
+  // los atSeconds precalculados + retraso fijo.
   const [timeline, setTimeline] = useState<number[] | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -108,16 +183,9 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
         const buf = await ctx.decodeAudioData(await audioBlob.arrayBuffer());
         ctx.close();
         if (cancelled) return;
-        const { start, end } = detectSpeechWindow(buf);
         const weights = data.cues.map(c => cueWeight(spokenText(c)));
-        const total = weights.reduce((a, b) => a + b, 0) || 1;
-        const starts: number[] = [];
-        let cum = 0;
-        for (let i = 0; i < weights.length; i++) {
-          starts.push(start + (cum / total) * (end - start));
-          cum += weights[i];
-        }
-        setTimeline(starts);
+        const starts = computeCueTimeline(buf, weights);
+        if (starts) setTimeline(starts);
       } catch {
         /* sin Web Audio: se usa el respaldo */
       }
