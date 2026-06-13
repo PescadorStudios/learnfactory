@@ -156,6 +156,7 @@ export default function SpyGame({ nodeTitle, audioSrc, data, durationSeconds, on
             duration={durationSeconds}
             isPaused={isPaused}
             onTogglePause={togglePause}
+            audioRef={audioRef}
           />
         </div>
       )}

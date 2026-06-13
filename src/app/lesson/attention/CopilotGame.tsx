@@ -275,6 +275,7 @@ export default function CopilotGame({ nodeTitle, audioSrc, data, durationSeconds
             duration={durationSeconds}
             isPaused={isPaused}
             onTogglePause={togglePause}
+            audioRef={audioRef}
             disabled={activeIdx !== null || Boolean(correction)}
           />
         </div>

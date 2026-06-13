@@ -408,6 +408,7 @@ export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSecond
             duration={durationSeconds}
             isPaused={isPaused}
             onTogglePause={togglePause}
+            audioRef={audioRef}
           />
         </div>
       )}

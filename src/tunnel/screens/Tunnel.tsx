@@ -21,6 +21,8 @@ import { NeuralWeb } from "../world/NeuralWeb";
 import { DustField } from "../world/DustField";
 import { StationLights } from "../world/StationLights";
 import { StationLabels } from "../world/StationLabels";
+import { SpeedWarp } from "../world/SpeedWarp";
+import { Bloom } from "../world/Bloom";
 import { StationChallenge } from "./StationChallenge";
 import { Narrator } from "./Narrator";
 import { Minimap } from "./Minimap";
@@ -128,6 +130,10 @@ export function Tunnel() {
         <StationLights nodes={rail.nodes} />
         <StationLabels nodes={rail.nodes} />
         <DustField rail={rail} reduced={reduced} lowPower={lowPower} />
+        {/* Estela de "salto" al volar rápido (sin movimiento → invisible). */}
+        {!reduced && <SpeedWarp rt={rt} lowPower={lowPower} />}
+        {/* Bloom cinematográfico (toma el render). Solo desktop por rendimiento. */}
+        {!lowPower && <Bloom rt={rt} />}
       </Canvas>
 
       {/* ---------------------------------------------------- HUD (Capa 3) --- */}

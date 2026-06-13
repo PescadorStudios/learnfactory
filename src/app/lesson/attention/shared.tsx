@@ -1,7 +1,9 @@
 "use client";
 
+import { type RefObject } from "react";
 import { motion } from "framer-motion";
 import { X, Play, Pause, RefreshCw } from "lucide-react";
+import { usePlaybackRate } from "./usePlaybackRate";
 
 /** Barras de ecualizador animadas mientras suena el podcast. */
 export function EqBars({ paused, bars = 24 }: { paused: boolean; bars?: number }) {
@@ -27,23 +29,26 @@ export function EqBars({ paused, bars = 24 }: { paused: boolean; bars?: number }
   );
 }
 
-/** Barra inferior: pausa + progreso + tiempo. */
+/** Barra inferior: pausa + progreso + tiempo + velocidad (1×/1.5×/2×). */
 export function AudioControls({
   currentTime,
   duration,
   isPaused,
   onTogglePause,
+  audioRef,
   disabled = false,
 }: {
   currentTime: number;
   duration: number;
   isPaused: boolean;
   onTogglePause: () => void;
+  audioRef: RefObject<HTMLAudioElement | null>;
   disabled?: boolean;
 }) {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const { rate, cycle } = usePlaybackRate(audioRef);
   return (
-    <div className="mt-6 flex items-center gap-4">
+    <div className="mt-6 flex items-center gap-3">
       <button
         onClick={onTogglePause}
         disabled={disabled}
@@ -57,6 +62,18 @@ export function AudioControls({
       <span className="text-xs text-zinc-500 tabular-nums shrink-0">
         {Math.floor(currentTime / 60)}:{String(Math.floor(currentTime % 60)).padStart(2, "0")}
       </span>
+      <button
+        onClick={cycle}
+        aria-label={`Velocidad de reproducción: ${rate}×. Tocar para cambiar.`}
+        title="Velocidad de reproducción"
+        className={`shrink-0 h-9 min-w-[3rem] px-2.5 rounded-full border text-xs font-bold tabular-nums transition-colors ${
+          rate === 1
+            ? "bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-primary"
+            : "bg-primary/15 border-primary text-primary"
+        }`}
+      >
+        {rate}×
+      </button>
     </div>
   );
 }

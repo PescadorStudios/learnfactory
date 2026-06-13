@@ -43,6 +43,12 @@ const ENTER_RADIUS = 3.6; // distancia en el plano para ofrecer "Entrar"
 const ENTER_SPEED = 4.5; // velocidad por debajo de la cual se puede entrar
 const FOCUS_DEADBAND = 1.25; // mueve el minimapa solo tras avanzar esto (mundo)
 
+// Empuje cinematográfico con la velocidad ("salto cuántico"). reduced-motion-safe.
+const FOV_KICK = 6; // grados extra de FOV a tope de velocidad (sensación de salto)
+const FOV_TAU = 0.35; // suavizado del FOV
+const FOG_TIGHTEN = 22; // cuánto se cierra la niebla (far) a tope de velocidad
+const FOG_TAU = 0.5; // suavizado de la niebla
+
 export function CameraRig({
   rail,
   input,
@@ -85,6 +91,8 @@ export function CameraRig({
   const lookV = useRef(new THREE.Vector3());
   const lastFocus = useRef({ x: Infinity, z: Infinity });
   const prevNear = useRef<{ id: string | null; can: boolean }>({ id: null, can: false });
+  const baseFov = useRef<number | null>(null); // FOV original del lienzo (se captura 1 vez)
+  const baseFar = useRef<number | null>(null); // niebla far original (se captura 1 vez)
 
   // (Re)arranca centrado en la primera capa de estaciones al cambiar de grafo.
   useEffect(() => {
@@ -156,6 +164,24 @@ export function CameraRig({
     camera.position.set(fx.current + lean, cy, fz.current - BACK);
     lookV.current.set(fx.current, 0, fz.current + LOOK_AHEAD);
     camera.lookAt(lookV.current);
+
+    // --- 4b) Empuje con la velocidad: el FOV se abre y la niebla se cierra. ---
+    const sN = THREE.MathUtils.clamp(speed / SPEED, 0, 1);
+    const cam = camera as THREE.PerspectiveCamera;
+    if (cam.isPerspectiveCamera) {
+      if (baseFov.current == null) baseFov.current = cam.fov;
+      const targetFov = st.reducedMotion ? baseFov.current : baseFov.current + sN * FOV_KICK;
+      if (Math.abs(cam.fov - targetFov) > 0.01) {
+        cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-dt / FOV_TAU));
+        cam.updateProjectionMatrix();
+      }
+    }
+    const fog = state.scene.fog as THREE.Fog | null;
+    if (fog && fog.isFog) {
+      if (baseFar.current == null) baseFar.current = fog.far;
+      const targetFar = st.reducedMotion ? baseFar.current : baseFar.current - sN * FOG_TIGHTEN;
+      fog.far += (targetFar - fog.far) * (1 - Math.exp(-dt / FOG_TAU));
+    }
 
     // --- 5) Proximidad → ofrecer "Entrar" (el piloto decide; no atraca solo). ---
     focusV.current.set(fx.current, 0, fz.current);
