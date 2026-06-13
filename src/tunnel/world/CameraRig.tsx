@@ -27,26 +27,26 @@ import type { TunnelRuntime } from "./types";
 import type { FlyInput } from "../hooks/useFlyControls";
 import { buildNavGraph, nearestStation } from "./graphNav";
 
-const SPEED = 16; // u/seg a fondo (en el plano)
+const SPEED = 20; // u/seg a fondo (en el plano) — más recorrido entre estaciones
 const ACCEL_TAU = 0.16; // inercia al acelerar (resorte rápido)
 const COAST_TAU = 0.55; // inercia al soltar (momentum hasta parar)
 const STOP_EPS = 0.05; // por debajo, sin input, se detiene del todo
 const TAU_E = 0.8; // suavizado de energía (biofeedback)
 
 // Encuadre de la cámara de persecución (por encima y detrás del foco).
-const HEIGHT = 6; // altura sobre el plano
-const BACK = 8.5; // cuánto se queda por detrás del foco (−Z)
-const LOOK_AHEAD = 7; // hacia dónde mira por delante del foco (+Z)
+const HEIGHT = 7; // altura sobre el plano
+const BACK = 12; // cuánto se queda por detrás del foco (−Z) — vista más amplia del trayecto
+const LOOK_AHEAD = 11; // hacia dónde mira por delante del foco (+Z) — anticipa el siguiente nodo
 const LEAN = 0.14; // ladeo lateral con la velocidad en X (vida, no marea)
 
-const ENTER_RADIUS = 3.6; // distancia en el plano para ofrecer "Entrar"
-const ENTER_SPEED = 4.5; // velocidad por debajo de la cual se puede entrar
+const ENTER_RADIUS = 5.5; // distancia en el plano para ofrecer "Entrar" (escala con la separación)
+const ENTER_SPEED = 5.5; // velocidad por debajo de la cual se puede entrar
 const FOCUS_DEADBAND = 1.25; // mueve el minimapa solo tras avanzar esto (mundo)
 
 // Empuje cinematográfico con la velocidad ("salto cuántico"). reduced-motion-safe.
 const FOV_KICK = 6; // grados extra de FOV a tope de velocidad (sensación de salto)
 const FOV_TAU = 0.35; // suavizado del FOV
-const FOG_TIGHTEN = 22; // cuánto se cierra la niebla (far) a tope de velocidad
+const FOG_TIGHTEN = 38; // cuánto se cierra la niebla (far) a tope de velocidad
 const FOG_TAU = 0.5; // suavizado de la niebla
 
 export function CameraRig({

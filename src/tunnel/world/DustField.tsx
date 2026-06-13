@@ -24,7 +24,7 @@ export function DustField({
   reduced: boolean;
   lowPower: boolean;
 }) {
-  const count = reduced ? 160 : lowPower ? 340 : 720;
+  const count = reduced ? 240 : lowPower ? 520 : 1100;
 
   const { geom, mat } = useMemo(() => {
     // Caja envolvente del grafo, con margen para que las motas rodeen el vuelo.
@@ -50,8 +50,8 @@ export function DustField({
       minZ = -5;
       maxZ = 5;
     }
-    const padXY = 10;
-    const padZ = 6;
+    const padXY = 12;
+    const padZ = 10;
     const x0 = minX - padXY,
       xs = maxX - minX + padXY * 2;
     const y0 = minY - padXY,

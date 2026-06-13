@@ -119,11 +119,11 @@ export function Tunnel() {
       <Canvas
         style={{ position: "fixed", inset: 0 }}
         dpr={lowPower ? [1, 1.5] : [1, 2]}
-        camera={{ fov: 72, near: 0.1, far: 320, position: [0, 0, -8] }}
+        camera={{ fov: 72, near: 0.1, far: 600, position: [0, 0, -8] }}
         gl={{ antialias: !lowPower, powerPreference: "high-performance" }}
       >
         <color attach="background" args={["#05060c"]} />
-        <fog attach="fog" args={["#05060c", 14, 90]} />
+        <fog attach="fog" args={["#05060c", 14, 150]} />
         <ambientLight intensity={0.3} />
         <CameraRig rail={rail} input={input} rt={rt} />
         <NeuralWeb rail={rail} />

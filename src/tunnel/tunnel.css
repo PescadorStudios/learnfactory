@@ -70,7 +70,7 @@
 /* ----------------------------------------------------------------- Lobby --- */
 
 .lobby {
-  max-width: 960px;
+  max-width: 1040px;
   margin: 0 auto;
   padding: clamp(28px, 6vw, 72px) 20px 120px;
 }
@@ -224,6 +224,262 @@
   opacity: 0.4;
   cursor: not-allowed;
   box-shadow: none;
+}
+
+/* Cabecera del lobby (entrada animada). */
+.lobby__head {
+  animation: lobby-rise 0.5s ease both;
+}
+
+/* Barra de herramientas: búsqueda + viaje aleatorio. Pegajosa al hacer scroll. */
+.lobby__toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 32px 0 6px;
+  padding: 12px 0;
+  background: linear-gradient(to bottom, var(--bg) 60%, transparent);
+}
+
+.lobby__search {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.lobby__search-icon {
+  position: absolute;
+  left: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.lobby__search-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 42px 0 44px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+.lobby__search-input::placeholder {
+  color: var(--muted);
+}
+.lobby__search-input:focus {
+  border-color: var(--cyan);
+  background: var(--panel-2);
+  box-shadow: 0 0 0 3px rgba(51, 225, 237, 0.16);
+}
+/* Quita la X nativa del input[type=search]: usamos la nuestra. */
+.lobby__search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.lobby__search-clear {
+  position: absolute;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.16s ease, background 0.16s ease;
+}
+.lobby__search-clear:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.lobby__random {
+  flex-shrink: 0;
+  height: 48px;
+  padding: 0 20px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+.lobby__random:hover:not(:disabled) {
+  border-color: var(--violet);
+  background: var(--panel-2);
+  transform: translateY(-1px);
+}
+.lobby__random:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Chips de categoría (filtro rápido). */
+.cat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 8px 0 4px;
+}
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.cat-chip:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.cat-chip--on {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.cat-chip__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.cat-chip__count {
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Secciones por categoría. */
+.cat-section {
+  margin-top: 30px;
+  animation: lobby-rise 0.5s ease both;
+}
+.cat-section .cards {
+  margin-top: 14px;
+}
+.cat-section__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cat-section__bar {
+  width: 4px;
+  height: 22px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.cat-section__name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.cat-section__count {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cat-section__all {
+  margin-left: auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease;
+}
+.cat-section__all:hover {
+  color: var(--text);
+  border-color: var(--cyan);
+}
+
+/* Acento de color en la tarjeta (barrita superior, aparece al activar/hover). */
+.card {
+  overflow: hidden;
+}
+.card__accent {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+.card:hover .card__accent,
+.card--on .card__accent {
+  opacity: 0.9;
+}
+
+/* Estado vacío de búsqueda. */
+.lobby__empty {
+  margin: 40px 0;
+  padding: 36px 24px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+}
+.lobby__empty-title {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Botón-enlace inline (limpiar, ver todos). */
+.linkish {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--cyan);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.linkish:hover {
+  color: var(--text);
+}
+
+@keyframes lobby-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lobby__head,
+  .cat-section {
+    animation: none;
+  }
 }
 
 /* ------------------------------------------------------------ Rail debug --- */

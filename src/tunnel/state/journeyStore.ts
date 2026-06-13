@@ -112,8 +112,12 @@ interface JourneyState {
   // --- Acciones de catálogo / selección ---
   loadCatalog: () => Promise<void>;
   toggleSelect: (id: string) => void;
+  /** Activa/desactiva varias lecciones a la vez (p. ej. toda una categoría). */
+  toggleMany: (ids: string[]) => void;
   clearSelection: () => void;
   startJourney: () => Promise<void>;
+  /** Arma el túnel con una selección ALEATORIA (3-5 temas) y arranca al instante. */
+  assembleRandom: () => void;
   backToLobby: () => void;
 
   // --- Acciones de travesía ---
@@ -204,6 +208,22 @@ export const useJourney = create<JourneyState>((set, get) => ({
     });
   },
 
+  toggleMany(ids) {
+    if (ids.length === 0) return;
+    const cur = new Set(get().selectedIds);
+    const allOn = ids.every((id) => cur.has(id));
+    if (allOn) {
+      // Todas ya estaban: la acción "quita todo" de la categoría.
+      const drop = new Set(ids);
+      set({ selectedIds: get().selectedIds.filter((id) => !drop.has(id)) });
+    } else {
+      // Añade las que faltan, preservando el orden de selección (= carriles).
+      const merged = [...get().selectedIds];
+      for (const id of ids) if (!cur.has(id)) merged.push(id);
+      set({ selectedIds: merged });
+    }
+  },
+
   clearSelection() {
     set({ selectedIds: [] });
   },
@@ -229,6 +249,21 @@ export const useJourney = create<JourneyState>((set, get) => ({
     } catch (e) {
       set({ assembling: false, error: errMsg(e) });
     }
+  },
+
+  assembleRandom() {
+    const { catalog, assembling } = get();
+    if (assembling || catalog.length === 0) return;
+    // Baraja (Fisher-Yates) y toma 3-5 temas (o todos si hay menos). El orden
+    // barajado también randomiza la disposición de carriles en el riel.
+    const ids = catalog.map((l) => l.id);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+    const k = Math.min(ids.length, 3 + Math.floor(Math.random() * 3)); // 3..5
+    set({ selectedIds: ids.slice(0, k) });
+    void get().startJourney();
   },
 
   backToLobby() {

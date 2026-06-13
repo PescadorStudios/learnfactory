@@ -32,7 +32,7 @@ const STREAK_GAIN = 0.5; // suma por racha de aciertos
 const SPEED_GAIN = 0.25; // suma por velocidad de vuelo
 const RADIUS = 0.6;
 const THRESHOLD = 0.55; // solo lo brillante florece (el fondo oscuro no)
-const SPEED_NORM = 16; // = SPEED del rig: normaliza velocidad a 0-1
+const SPEED_NORM = 20; // = SPEED del rig: normaliza velocidad a 0-1
 const TAU = 0.5; // suavizado de la fuerza (sin parpadeos bruscos)
 
 export function Bloom({ rt }: { rt: MutableRefObject<TunnelRuntime> }) {

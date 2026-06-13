@@ -16,12 +16,12 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import type { TunnelRuntime } from "./types";
 
-const SPEED_NORM = 16; // = SPEED del rig
-const RADIUS = 7; // dispersión lateral (X)
-const VSPREAD = 5; // dispersión vertical (Y)
-const AHEAD = 60; // hasta dónde nacen por delante (dentro de la niebla)
-const BEHIND = -16; // al pasar esto por detrás, reciclan adelante
-const MAX_LEN = 6; // longitud máxima de la estela (a tope de velocidad)
+const SPEED_NORM = 20; // = SPEED del rig
+const RADIUS = 9; // dispersión lateral (X)
+const VSPREAD = 6; // dispersión vertical (Y)
+const AHEAD = 100; // hasta dónde nacen por delante (dentro de la niebla)
+const BEHIND = -22; // al pasar esto por detrás, reciclan adelante
+const MAX_LEN = 8; // longitud máxima de la estela (a tope de velocidad)
 const MAX_OPACITY = 0.5;
 
 export function SpeedWarp({
