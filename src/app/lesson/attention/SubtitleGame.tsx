@@ -320,7 +320,7 @@ export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSecond
   const currentCue = currentIndex >= 0 ? data.cues[currentIndex] : null;
 
   return (
-    <main className="min-h-screen bg-zinc-950 flex flex-col overflow-hidden">
+    <main className="h-[100dvh] bg-zinc-950 flex flex-col overflow-hidden">
       <audio ref={audioRef} src={audioSrc} onEnded={() => setPhase("results")} preload="auto" />
       <GameHeader onExit={onExit} />
 

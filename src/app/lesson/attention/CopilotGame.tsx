@@ -166,7 +166,7 @@ export default function CopilotGame({ nodeTitle, audioSrc, data, durationSeconds
   const activeCp = activeIdx !== null ? data.checkpoints[activeIdx] : null;
 
   return (
-    <main className="min-h-screen bg-zinc-950 flex flex-col overflow-hidden">
+    <main className="h-[100dvh] bg-zinc-950 flex flex-col overflow-hidden">
       <audio ref={audioRef} src={audioSrc} onEnded={handleEnded} preload="auto" />
       <GameHeader onExit={onExit} dots={phase !== "briefing" ? dots : undefined} />
 

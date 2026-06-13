@@ -91,7 +91,7 @@ export default function SpyGame({ nodeTitle, audioSrc, data, durationSeconds, on
   const dots = answers.map(a => (a === null ? "pending" : a ? "correct" : "wrong") as "pending" | "correct" | "wrong");
 
   return (
-    <main className="min-h-screen bg-zinc-950 flex flex-col overflow-hidden">
+    <main className="h-[100dvh] bg-zinc-950 flex flex-col overflow-hidden">
       <audio ref={audioRef} src={audioSrc} onEnded={() => setPhase("questions")} preload="auto" />
       <GameHeader onExit={onExit} dots={phase !== "briefing" ? dots : undefined} />
 
