@@ -1,8 +1,0 @@
-# El Túnel (subproyecto Vite) — el node_modules de la raíz NO cubre subcarpetas
-node_modules
-dist
-dist-ssr
-*.local
-.DS_Store
-node_modules/.tmp
-*.tsbuildinfo
