@@ -887,4 +887,96 @@ body {
   .timer.is-urgent .timer__bar {
     animation: none;
   }
+  /* El narrador aparece y desaparece sin deslizamiento ni fundido. */
+  .narrator__line {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------ HUD + narrador (Fase 4) --- */
+
+/* Chip de racha en la barra superior (aparece a partir de 2 aciertos seguidos). */
+.hud__streak {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 190, 80, 0.45);
+  background: rgba(40, 28, 8, 0.55);
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffc861;
+  white-space: nowrap;
+  box-shadow: 0 0 18px -6px rgba(255, 190, 80, 0.7);
+}
+
+/* Frase del narrador: centrada arriba, no intercepta el puntero. */
+.narrator {
+  position: fixed;
+  top: clamp(70px, 12vh, 120px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  width: min(680px, 88vw);
+  padding: 0 16px;
+  text-align: center;
+  pointer-events: none;
+}
+.narrator__line {
+  margin: 0;
+  font-size: clamp(15px, 2.4vw, 20px);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.2px;
+  color: #e7ecff;
+  text-shadow: 0 0 18px rgba(90, 130, 255, 0.5), 0 1px 2px rgba(0, 0, 0, 0.65);
+  animation: narratorLife 3.6s ease forwards;
+}
+.narrator--good .narrator__line {
+  color: #d7fff0;
+  text-shadow: 0 0 22px rgba(60, 230, 170, 0.6), 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+.narrator--streak .narrator__line {
+  color: #fff0d6;
+  text-shadow: 0 0 28px rgba(255, 190, 80, 0.8), 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+.narrator--bad .narrator__line {
+  color: #ffd9de;
+  text-shadow: 0 0 18px rgba(255, 90, 120, 0.55), 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
+@keyframes narratorLife {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  9% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  82% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* Recap final: línea de aciertos + mejor racha. */
+.end-card__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 16px;
+  margin: 2px 0 4px;
+  font-size: 14px;
+  color: var(--text);
+}
+.end-card__stats strong {
+  color: var(--cyan);
+}
+.end-card__streak {
+  color: #ffc861;
+  font-weight: 600;
 }

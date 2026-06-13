@@ -53,6 +53,9 @@ export function TunnelTube({
     const u = material.uniforms;
     u.uTime.value += dt;
     u.uSpeed.value = rt.current.speed;
+    // Biofeedback: el brillo general sigue la energía (desempeño). ~0.75 apagado,
+    // ~1.35 en reposo, ~2.1 a tope. El suavizado ya viene de rt.energy (el rig).
+    u.uIntensity.value = 0.6 + rt.current.energy * 1.5;
     (u.uColor.value as THREE.Color).lerp(target, 1 - Math.exp(-dt * 2.5));
   });
 

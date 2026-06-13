@@ -80,8 +80,11 @@ export function SynapticParticles({
   useFrame((_, dt) => {
     if (!sampled) return;
     const { N, points, normals, binormals } = sampled;
-    const { geom, params, radii, angles } = data;
-    const advance = (0.018 + rt.current.speed * 0.011) * dt; // fracción/seg de la curva
+    const { geom, mat, params, radii, angles } = data;
+    // Biofeedback: con más energía, las partículas corren un poco más y brillan más.
+    const e = rt.current.energy;
+    mat.opacity = 0.5 + e * 0.5;
+    const advance = (0.018 + rt.current.speed * 0.011) * dt * (0.7 + e * 0.7); // frac/seg
     const pos = geom.getAttribute("position") as THREE.BufferAttribute;
     for (let i = 0; i < params.length; i++) {
       let p = params[i] + advance;

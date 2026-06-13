@@ -25,6 +25,7 @@ import { SynapticParticles } from "../world/SynapticParticles";
 import { StationLights } from "../world/StationLights";
 import { ForkVeins } from "../world/ForkVeins";
 import { StationChallenge } from "./StationChallenge";
+import { Narrator } from "./Narrator";
 import type { TunnelRuntime } from "../world/types";
 import type { ForkDirection, RailFork } from "../types/rail";
 
@@ -38,6 +39,8 @@ export function Tunnel() {
   const completed = useJourney((s) => s.completed);
   const activeStationId = useJourney((s) => s.activeStationId);
   const captured = useJourney((s) => s.captured);
+  const streak = useJourney((s) => s.streak);
+  const bestStreak = useJourney((s) => s.bestStreak);
   const toggleDebug = useJourney((s) => s.toggleDebug);
   const backToLobby = useJourney((s) => s.backToLobby);
   const setReducedMotion = useJourney((s) => s.setReducedMotion);
@@ -54,7 +57,7 @@ export function Tunnel() {
   // scroll → avance (inercia). lenis vive mientras el túnel está montado.
   useScrollDrive(true);
 
-  const rt = useRef<TunnelRuntime>({ speed: 0, u: 0, distance: 0 });
+  const rt = useRef<TunnelRuntime>({ speed: 0, u: 0, distance: 0, energy: 0.5 });
 
   const path = useMemo(
     () => (rail ? resolvePath(rail, choices) : null),
@@ -201,6 +204,11 @@ export function Tunnel() {
         <div className="hud__progress" aria-hidden>
           <span className="hud__bar" style={{ width: `${progressPct}%` }} />
         </div>
+        {streak >= 2 && (
+          <span className="hud__streak" title="Racha de aciertos">
+            ⚡ ×{streak}
+          </span>
+        )}
         <span className="hud__caps" title="Datos capturados">
           ✦ {captured.length}
         </span>
@@ -208,6 +216,9 @@ export function Tunnel() {
           Mapa
         </button>
       </header>
+
+      {/* Narrador reactivo (Capa 3): se desvanece solo. */}
+      <Narrator />
 
       {/* Reto de la estación atracada (Capa 3). key = remonta por estación. */}
       {activeNode && <StationChallenge key={activeNode.id} node={activeNode} />}
@@ -256,6 +267,17 @@ export function Tunnel() {
             {captured.length === 1 ? "dato" : "datos"} sin sentir que estudiabas.
           </p>
           {captured.length > 0 && (
+            <div className="end-card__stats">
+              <span>
+                <strong>{captured.filter((c) => c.success).length}</strong>/
+                {captured.length} aciertos
+              </span>
+              {bestStreak >= 2 && (
+                <span className="end-card__streak">mejor racha ⚡×{bestStreak}</span>
+              )}
+            </div>
+          )}
+          {captured.length > 0 && (
             <ul className="end-card__caps">
               {captured.slice(-4).map((c) => (
                 <li key={c.id}>
@@ -264,9 +286,7 @@ export function Tunnel() {
               ))}
             </ul>
           )}
-          <p className="muted small">
-            El recap compartible y el scoring completos llegan en fases siguientes.
-          </p>
+          <p className="muted small">El recap compartible llega en la fase final.</p>
           <div className="end-card__btns">
             <button type="button" className="cta" onClick={backToLobby}>
               Volver al lobby

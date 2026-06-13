@@ -6,6 +6,10 @@
 // scroll (input), progreso (output del rig de cámara) y modo reduced-motion.
 // Fase 3 añade el ATRAQUE a estaciones: en qué estación está atracada la cámara
 // (reto en curso), qué estaciones ya se resolvieron y los datos capturados.
+// Fase 4 añade BIOFEEDBACK y NARRADOR: una energía 0-1 que sube al acertar y baja
+// al fallar (el mundo la lee y reacciona), la racha de aciertos y la frase
+// reactiva del narrador. Sigue agnóstico: energía/racha/frase son DESEMPEÑO, no
+// contenido — nada temático entra aquí.
 // El render lee de aquí; el rig de cámara escribe progreso/forks/atraque aquí.
 // ============================================================================
 
@@ -36,6 +40,16 @@ export interface Captured {
   niche?: string;
   reward: string;
   success: boolean;
+}
+
+/** Tono del narrador (define color/glow de la frase). Agnóstico al tema. */
+export type NarrationTone = "calm" | "good" | "bad" | "streak";
+
+/** Frase reactiva del narrador. `id` incremental → la UI re-anima cada frase. */
+export interface Narration {
+  text: string;
+  tone: NarrationTone;
+  id: number;
 }
 
 interface JourneyState {
@@ -72,6 +86,16 @@ interface JourneyState {
   /** Datos capturados en orden de visita (HUD/recap). */
   captured: Captured[];
 
+  // --- Biofeedback / narrador (Fase 4) ---
+  /** Energía 0-1: sube al acertar, baja al fallar. El mundo la lee y reacciona. */
+  energy: number;
+  /** Aciertos consecutivos (se reinicia al fallar). */
+  streak: number;
+  /** Mejor racha del trayecto (para el recap). */
+  bestStreak: number;
+  /** Última frase del narrador (transient; la UI la desvanece). */
+  narration: Narration | null;
+
   /** Accesibilidad: cámara estática, menos partículas, sin parallax. */
   reducedMotion: boolean;
   /** Alterna el mapa de debug (Capa 0) sobre el mundo 3D. */
@@ -98,6 +122,10 @@ interface JourneyState {
   dockStation: (stationId: string) => void;
   /** El reto terminó: marca la estación, captura su reward y suelta el atraque. */
   completeStation: (stationId: string, result: ChallengeResult) => void;
+
+  // --- Narrador (Fase 4) ---
+  /** Emite una frase del narrador; la Capa 3 la muestra un instante. */
+  narrate: (text: string, tone: NarrationTone) => void;
 }
 
 const FRESH_TRAVERSAL = {
@@ -110,6 +138,10 @@ const FRESH_TRAVERSAL = {
   completed: {} as Record<string, boolean>,
   activeStationId: null as string | null,
   captured: [] as Captured[],
+  energy: 0.5,
+  streak: 0,
+  bestStreak: 0,
+  narration: null as Narration | null,
 };
 
 export const useJourney = create<JourneyState>((set, get) => ({
@@ -159,7 +191,14 @@ export const useJourney = create<JourneyState>((set, get) => ({
         selectedIds.map((id) => provider.getLesson(id))
       );
       const rail = assembleRail(lessons);
-      set({ rail, phase: "tunnel", assembling: false, ...FRESH_TRAVERSAL });
+      set({
+        rail,
+        phase: "tunnel",
+        assembling: false,
+        ...FRESH_TRAVERSAL,
+        // El narrador abre el viaje (frase agnóstica: sobre el trance, no el tema).
+        narration: { text: WELCOME, tone: "calm", id: 1 },
+      });
     } catch (e) {
       set({ assembling: false, error: errMsg(e) });
     }
@@ -176,6 +215,8 @@ export const useJourney = create<JourneyState>((set, get) => ({
       pendingForkId: null,
       atEnd: false,
     }));
+    // El narrador confirma la elección (evento raro → un render extra es inocuo).
+    get().narrate(pick(FORK_LINES), "calm");
   },
 
   setScrollVelocity(v) {
@@ -221,14 +262,69 @@ export const useJourney = create<JourneyState>((set, get) => ({
       reward: node?.pod?.reward ?? "",
       success: result.success,
     };
+
+    // Biofeedback: la energía sube al acertar (más si fue limpio) y baja al fallar.
+    // La racha premia aciertos seguidos. El mundo lee `energy` y reacciona.
+    const ratio =
+      result.total > 0 ? result.score / result.total : result.success ? 1 : 0;
+    const streak = result.success ? s.streak + 1 : 0;
+    const bestStreak = Math.max(s.bestStreak, streak);
+    let energy = s.energy + (result.success ? 0.16 + 0.1 * ratio : -0.18 + 0.05 * ratio);
+    if (streak >= 3) energy += 0.05; // racha alta: el túnel se enciende
+    energy = Math.max(0.12, Math.min(1, energy));
+
+    // Narrador reactivo (agnóstico: habla del desempeño, no del tema).
+    const tone: NarrationTone = result.success
+      ? streak >= 3
+        ? "streak"
+        : "good"
+      : "bad";
+    const text = result.success
+      ? streak >= 3
+        ? `Racha ×${streak} · el túnel arde contigo.`
+        : pick(GOOD_LINES)
+      : pick(BAD_LINES);
+
     set({
       completed: { ...s.completed, [stationId]: true },
       captured: [...s.captured, captured],
       activeStationId: null,
+      energy,
+      streak,
+      bestStreak,
+      narration: { text, tone, id: (s.narration?.id ?? 0) + 1 },
     });
+  },
+
+  narrate(text, tone) {
+    set((s) => ({ narration: { text, tone, id: (s.narration?.id ?? 0) + 1 } }));
   },
 }));
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+// --- Copia del narrador (Capa 3 lo muestra). Agnóstico: habla del desempeño y del
+//     "trance", nunca del tema. Cambiar estas frases no toca el motor. -----------
+const WELCOME = "Respira. Déjate llevar por la corriente.";
+
+const GOOD_LINES = [
+  "Lo cazaste. La corriente se aviva.",
+  "Bien visto. Tu mente se ilumina.",
+  "Eso es. La sinapsis chispea.",
+];
+
+const BAD_LINES = [
+  "Se escapó. La corriente titila.",
+  "Esta vez no. El pulso se atenúa.",
+];
+
+const FORK_LINES = [
+  "Tu instinto elige el camino.",
+  "Esa corriente te llama. Síguela.",
+];
+
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
 }

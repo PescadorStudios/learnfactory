@@ -25,6 +25,7 @@ const BASE_DRIFT = 3.6; // u/seg sin scroll (trance)
 const SCROLL_K = 0.45; // cuánto acelera el scroll
 const MAX_SPEED = 24;
 const TAU = 0.5; // inercia: constante de tiempo del resorte (seg)
+const TAU_E = 0.8; // biofeedback: constante de tiempo del suavizado de energía (seg)
 const BRAKE_DIST = 7; // zona de frenado antes de una parada (atraque/fork/fin)
 const DOCK_EPS = 0.6; // distancia a la que se considera "llegado" a la parada
 
@@ -65,6 +66,10 @@ export function CameraRig({
       : Math.min(MAX_SPEED, BASE_DRIFT + Math.abs(st.scrollVelocity) * SCROLL_K);
     speedRef.current += (target - speedRef.current) * (1 - Math.exp(-dt / TAU));
     rt.current.speed = speedRef.current;
+
+    // Biofeedback: acerca la energía de runtime al objetivo del store (suave, para
+    // que el brillo del mundo no salte). El mundo (tubo/partículas) lee rt.energy.
+    rt.current.energy += (st.energy - rt.current.energy) * (1 - Math.exp(-dt / TAU_E));
 
     let pct = 0;
     let showPrompt = false;

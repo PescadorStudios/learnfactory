@@ -38,7 +38,7 @@ Este MVP se construye **por fases** (ver el prompt original). Estado actual:
 | **1 — Esqueleto + datos** | Proyecto Vite/React/TS, contrato de datos, mock provider (3 nichos), lobby de selección, ensamblaje del grafo del riel en runtime + visualización debug | ✅ **Lista** |
 | **2 — El mundo neuronal** | Túnel procedural (tubo sobre `CatmullRomCurve3`), shader GLSL de corriente neuronal, partículas sinápticas, scroll→avance con inercia (lenis + resorte), avance automático (trance), forks con swipe / ← → y la vena no elegida alejándose, `prefers-reduced-motion` | ✅ **Lista** |
 | **3 — Estaciones + retos** | Atraque con frenado a cada estación, los dos minijuegos jugables (**El Impostor** y **Subtítulos Trampa**), captura del `reward` y datos acumulados en el HUD | ✅ **Lista** |
-| 4 — HUD + estado + biofeedback | Narrador, scoring, el mundo reacciona al desempeño | ⏳ pendiente |
+| **4 — HUD + estado + biofeedback** | Narrador reactivo (Capa 3), scoring (racha de aciertos + recap), y **biofeedback**: una energía del viaje que sube al acertar y baja al fallar — el mundo neuronal **se enciende o se atenúa** según tu desempeño | ✅ **Lista** |
 | 5 — Salida + pulido | Recap compartible, audio real (TTS/Howler), performance móvil | ⏳ pendiente |
 
 El flujo entra al **mundo 3D** (Capa 1), que recorre un *path activo* derivado
@@ -46,7 +46,10 @@ del **mismo** grafo `Rail` (Capa 0) según las decisiones en los forks. Al llega
 a una **estación** la cámara **frena y atraca**: se monta su reto (Capa 3); al
 resolverlo se **captura el `reward`** y el viaje se reanuda hacia la siguiente
 parada. El **mapa cenital** de la Fase 1 queda como vista debug, accesible con el
-botón **"Mapa"** dentro del túnel.
+botón **"Mapa"** dentro del túnel. Cómo te va **tiñe el mundo**: cada acierto sube
+la energía del viaje (la corriente brilla y fluye más fuerte) y cada fallo la
+atenúa; el **narrador** comenta el momento y el HUD lleva la racha. Al salir, el
+recap resume datos capturados, aciertos y mejor racha.
 
 ### Controles
 
@@ -119,7 +122,7 @@ tocar el motor.
 | **1 — El Mundo** | Corredor procedural neuronal en react-three-fiber. Lee solo del Rail (vía el *path activo*). | `src/world/*`, `src/screens/Tunnel.tsx` |
 | **2 — Las Estaciones** | Cada nodo es un momento de una lección, con su reto. | `Pod` en `src/types/contract.ts` |
 | **3 — El HUD semántico** | Frases, micro-copy y UI de los retos, en React encima del canvas. | `src/screens/StationChallenge.tsx`, `src/games/*` |
-| **4 — El Motor de estado** | Fase del viaje, selección, riel; luego velocidad/posición/score/capturas. | `src/state/journeyStore.ts` |
+| **4 — El Motor de estado** | Fase del viaje, selección, riel, velocidad/posición, atraque/capturas y —Fase 4— energía (biofeedback), racha y la frase del narrador. | `src/state/journeyStore.ts` |
 
 **Principio:** cambiar una frase (Capa 3) o un shader (Capa 1) no debe requerir
 re-render de contenido. Las capas se mantienen separadas.

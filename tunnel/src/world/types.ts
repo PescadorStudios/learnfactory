@@ -7,4 +7,8 @@ export interface TunnelRuntime {
   u: number;
   /** Distancia recorrida en unidades de mundo. */
   distance: number;
+  /** Biofeedback 0-1 (desempeño). El rig lo suaviza hacia el objetivo del store;
+   *  el mundo (tubo/partículas) lo lee para encenderse al acertar y atenuarse al
+   *  fallar. Agnóstico: es desempeño, no contenido. */
+  energy: number;
 }
