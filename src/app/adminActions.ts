@@ -5,6 +5,7 @@
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { categoryLabel } from "@/lib/types";
+import { upgradeProfileToPremium } from "@/lib/premium";
 
 const AVATAR_BUCKET = "avatars";
 const COVER_BUCKET = "route-covers";
@@ -212,5 +213,132 @@ export async function adminDeleteRoute(token: string, routeId: string): Promise<
   const { error } = await sb.from("routes").delete().eq("id", routeId);
   if (error) return { ok: false, error: "No se pudo eliminar la ruta." };
   console.log(`[AdminDelete] ✓ Ruta ${routeId} ("${route.topic}") eliminada por el admin.`);
+  return { ok: true };
+}
+
+// ──────────────────────────────────────────────────
+//  PAGOS (Bold). El admin ve: la URL del webhook (para pegarla en Bold), si las
+//  llaves están configuradas, las órdenes recientes (con el plan actual del
+//  comprador) y las últimas confirmaciones crudas que llegaron al webhook.
+//  Además puede activar Premium a mano (remediación de pagos que no activaron).
+// ──────────────────────────────────────────────────
+
+export interface BoldOrderRow {
+  orderId: string;
+  userId: string;
+  email: string;
+  amount: number;
+  currency: string;
+  purpose: string;
+  status: string; // pending | paid
+  userPlan: string; // free | premium (plan actual del comprador)
+  createdAt: string;
+}
+
+export interface BoldTxRow {
+  paymentId: string;
+  type: string;
+  amount: number;
+  currency: string;
+  orderReference: string | null;
+  createdAt: string;
+}
+
+export interface BoldOverview {
+  /** BOLD_API_KEY y BOLD_SECRET_KEY presentes en el entorno. */
+  configured: boolean;
+  /** BOLD_WEBHOOK_ENFORCE_SIGNATURE === "true". */
+  signatureEnforced: boolean;
+  /** false → falta crear la tabla (corre scripts/bold-setup.sql). */
+  ordersTableReady: boolean;
+  transactionsTableReady: boolean;
+  orders: BoldOrderRow[];
+  transactions: BoldTxRow[];
+}
+
+export async function adminGetBoldOverview(token: string): Promise<BoldOverview | null> {
+  const admin = await requireAdmin(token);
+  if (!admin) return null;
+  const sb = supabaseAdmin();
+
+  const configured = Boolean(process.env.BOLD_API_KEY && process.env.BOLD_SECRET_KEY);
+  const signatureEnforced = process.env.BOLD_WEBHOOK_ENFORCE_SIGNATURE === "true";
+
+  // Órdenes recientes + plan actual del comprador (para detectar pagos que no activaron).
+  let orders: BoldOrderRow[] = [];
+  let ordersTableReady = true;
+  const { data: orderRows, error: ordErr } = await sb
+    .from("payment_orders")
+    .select("order_id, user_id, amount, currency, purpose, status, created_at")
+    .order("created_at", { ascending: false })
+    .limit(30);
+  if (ordErr) {
+    ordersTableReady = false;
+  } else if (orderRows?.length) {
+    const ids = [...new Set(orderRows.map(o => o.user_id))];
+    const { data: profs } = await sb.from("profiles").select("id, email, plan").in("id", ids);
+    const pmap = new Map((profs || []).map(p => [p.id, p]));
+    orders = orderRows.map(o => ({
+      orderId: o.order_id,
+      userId: o.user_id,
+      email: pmap.get(o.user_id)?.email || "—",
+      amount: Number(o.amount) || 0,
+      currency: o.currency || "COP",
+      purpose: o.purpose || "premium",
+      status: o.status || "pending",
+      userPlan: pmap.get(o.user_id)?.plan || "free",
+      createdAt: o.created_at,
+    }));
+  }
+
+  // Últimas confirmaciones crudas que llegaron al webhook.
+  let transactions: BoldTxRow[] = [];
+  let transactionsTableReady = true;
+  const { data: txRows, error: txErr } = await sb
+    .from("bold_transactions")
+    .select("payment_id, transaction_type, amount_total, amount_currency, order_reference, created_at")
+    .order("created_at", { ascending: false })
+    .limit(30);
+  if (txErr) {
+    transactionsTableReady = false;
+  } else {
+    transactions = (txRows || []).map(t => ({
+      paymentId: t.payment_id,
+      type: t.transaction_type,
+      amount: Number(t.amount_total) || 0,
+      currency: t.amount_currency || "COP",
+      orderReference: t.order_reference ?? null,
+      createdAt: t.created_at,
+    }));
+  }
+
+  return { configured, signatureEnforced, ordersTableReady, transactionsTableReady, orders, transactions };
+}
+
+/**
+ * Activa Premium a mano (remediación). Si se pasa orderId, marca también la orden
+ * como pagada. Idempotente y tolerante al esquema (reutiliza la misma lógica que
+ * el webhook).
+ */
+export async function adminActivatePremium(
+  token: string,
+  userId: string,
+  orderId?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false, error: "No autorizado" };
+  const sb = supabaseAdmin();
+
+  if (orderId) {
+    const { error } = await sb
+      .from("payment_orders")
+      .update({ status: "paid", paid_at: new Date().toISOString() })
+      .eq("order_id", orderId);
+    if (error) await sb.from("payment_orders").update({ status: "paid" }).eq("order_id", orderId);
+  }
+
+  const res = await upgradeProfileToPremium(sb, userId);
+  if (!res.ok) return { ok: false, error: res.error || "No se pudo activar Premium." };
+  console.log(`[Admin] ✓ Premium activado a mano para ${userId}${orderId ? ` (orden ${orderId})` : ""}.`);
   return { ok: true };
 }

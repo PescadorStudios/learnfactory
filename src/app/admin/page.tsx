@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X } from "lucide-react";
+import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X, CreditCard, Copy, Webhook, RefreshCw } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import {
   checkIsAdmin, adminListUsers, adminSetUserQuota, adminSetBatchEnabled, type AdminUserRow,
   adminListRoutes, adminSetRouteVisibility, adminSetRouteBlocked, adminDeleteRoute, type AdminRouteRow,
+  adminGetBoldOverview, adminActivatePremium, type BoldOverview, type BoldOrderRow,
 } from "@/app/adminActions";
 import AppHeader from "@/components/AppHeader";
 
@@ -15,7 +16,7 @@ export default function AdminPage() {
   const router = useRouter();
   const { token, loading, session } = useRequireAuth();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"users" | "routes">("users");
+  const [tab, setTab] = useState<"users" | "routes" | "pagos">("users");
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [search, setSearch] = useState("");
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -31,6 +32,17 @@ export default function AdminPage() {
   const [loadingRoutes, setLoadingRoutes] = useState(false);
   const [routeBusyId, setRouteBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<AdminRouteRow | null>(null);
+
+  // Pagos (Bold)
+  const [bold, setBold] = useState<BoldOverview | null>(null);
+  const [loadingBold, setLoadingBold] = useState(false);
+  const [boldBusyId, setBoldBusyId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") setWebhookUrl(`${window.location.origin}/api/bold/webhook`);
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -117,6 +129,44 @@ export default function AdminPage() {
     }
   };
 
+  // ── Pagos (Bold) ──
+  const loadBold = useCallback(async () => {
+    if (!token) return;
+    setLoadingBold(true);
+    const ov = await adminGetBoldOverview(token);
+    setBold(ov);
+    setLoadingBold(false);
+  }, [token]);
+
+  useEffect(() => {
+    if (isAdmin && tab === "pagos") loadBold();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, tab]);
+
+  const copyWebhook = async () => {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard bloqueado: el usuario puede copiar a mano */
+    }
+  };
+
+  const activatePremium = async (o: BoldOrderRow) => {
+    if (!token) return;
+    setBoldBusyId(o.orderId);
+    const res = await adminActivatePremium(token, o.userId, o.orderId);
+    setBoldBusyId(null);
+    if (res.ok) {
+      setBold(ov =>
+        ov
+          ? { ...ov, orders: ov.orders.map(x => (x.orderId === o.orderId ? { ...x, status: "paid", userPlan: "premium" } : x)) }
+          : ov
+      );
+    }
+  };
+
   if (loading || !session || isAdmin === null) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center"><Loader2 className="w-10 h-10 text-primary animate-spin" /></div>;
   }
@@ -161,6 +211,12 @@ export default function AdminPage() {
             className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${tab === "routes" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
           >
             <BookOpen className="w-4 h-4" /> Cursos
+          </button>
+          <button
+            onClick={() => setTab("pagos")}
+            className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${tab === "pagos" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
+          >
+            <CreditCard className="w-4 h-4" /> Pagos
           </button>
         </div>
 
@@ -338,6 +394,137 @@ export default function AdminPage() {
             ))}
           </div>
         )}
+        </>)}
+
+        {tab === "pagos" && (<>
+        {/* URL del webhook — lo que el admin pega en el dashboard de Bold. */}
+        <div className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-5 mb-5">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Webhook className="w-4 h-4 text-primary" />
+            <h2 className="font-bold">URL del webhook de Bold</h2>
+          </div>
+          <p className="text-sm text-zinc-500 mb-3">
+            Pégala en <span className="text-zinc-300">Bold → Integraciones → Webhooks</span>. Bold llamará a esta URL al aprobarse cada pago y el usuario quedará Premium automáticamente.
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 min-w-0 truncate bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-300">{webhookUrl || "…"}</code>
+            <button
+              onClick={copyWebhook}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-primary text-white font-bold text-sm hover:bg-primary-hover transition-all"
+            >
+              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />} {copied ? "Copiado" : "Copiar"}
+            </button>
+          </div>
+
+          {bold && (
+            <div className="flex flex-wrap items-center gap-2 mt-4">
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${bold.configured ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" : "bg-amber-500/10 text-amber-300 border-amber-500/40"}`}>
+                {bold.configured ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                {bold.configured ? "Llaves de Bold configuradas" : "Faltan BOLD_API_KEY / BOLD_SECRET_KEY"}
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border bg-zinc-800 text-zinc-400 border-zinc-700">
+                Firma: {bold.signatureEnforced ? "obligatoria" : "registrada (no obligatoria)"}
+              </span>
+              {(!bold.ordersTableReady || !bold.transactionsTableReady) && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border bg-amber-500/10 text-amber-300 border-amber-500/40">
+                  <AlertTriangle className="w-3 h-3" /> Faltan tablas — corre scripts/bold-setup.sql en Supabase
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {loadingBold ? (
+          <div className="flex items-center gap-2 text-zinc-500 py-10"><Loader2 className="w-5 h-5 animate-spin" /> Cargando pagos...</div>
+        ) : !bold ? (
+          <p className="text-zinc-500 py-10 text-center">No se pudo cargar la información de pagos.</p>
+        ) : (<>
+          {/* Órdenes recientes (con remediación manual). */}
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-lg">Órdenes recientes</h2>
+            <button onClick={loadBold} className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-white transition-colors">
+              <RefreshCw className="w-3.5 h-3.5" /> Actualizar
+            </button>
+          </div>
+
+          {!bold.ordersTableReady ? (
+            <p className="text-amber-300/90 text-sm bg-amber-500/5 border border-amber-500/30 rounded-2xl p-4 mb-8">
+              La tabla <code>payment_orders</code> no existe todavía. Corre <code>scripts/bold-setup.sql</code> en Supabase para empezar a recibir y activar pagos.
+            </p>
+          ) : bold.orders.length === 0 ? (
+            <p className="text-zinc-500 py-6 text-center mb-8">Aún no hay órdenes de pago.</p>
+          ) : (
+            <div className="space-y-2 mb-8">
+              {bold.orders.map(o => {
+                const paid = o.status === "paid";
+                const isPremium = o.userPlan === "premium";
+                const needsActivation = paid && !isPremium; // pagó pero no se activó
+                return (
+                  <div key={o.orderId} className={`bg-zinc-900/80 border rounded-2xl p-4 flex items-center gap-3 ${needsActivation ? "border-amber-500/50" : "border-zinc-800"}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white truncate">{o.email}</span>
+                        {isPremium && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                        <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded shrink-0 ${paid ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-700/50 text-zinc-300"}`}>
+                          {paid ? "pagada" : "pendiente"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 truncate mt-0.5">
+                        {o.amount.toLocaleString("es-CO")} {o.currency} · {o.purpose} · {new Date(o.createdAt).toLocaleString("es-CO")} · <span className="text-zinc-600">{o.orderId}</span>
+                      </p>
+                    </div>
+                    {!isPremium && (
+                      <button
+                        onClick={() => activatePremium(o)}
+                        disabled={boldBusyId === o.orderId}
+                        title="Subir este usuario a Premium ahora"
+                        className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all disabled:opacity-40 ${
+                          needsActivation
+                            ? "bg-amber-500/15 text-amber-300 border-amber-500/50 hover:bg-amber-500/25"
+                            : "bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-white"
+                        }`}
+                      >
+                        {boldBusyId === o.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Crown className="w-3.5 h-3.5" />}
+                        Activar Premium
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Confirmaciones crudas recibidas en el webhook (prueba de recepción). */}
+          <h2 className="font-bold text-lg mb-3">Confirmaciones recibidas</h2>
+          {!bold.transactionsTableReady ? (
+            <p className="text-amber-300/90 text-sm bg-amber-500/5 border border-amber-500/30 rounded-2xl p-4">
+              La tabla <code>bold_transactions</code> no existe todavía. Corre <code>scripts/bold-setup.sql</code> en Supabase.
+            </p>
+          ) : bold.transactions.length === 0 ? (
+            <p className="text-zinc-500 py-6 text-center">
+              Todavía no llega ninguna confirmación de Bold. Si ya configuraste el webhook y pagaste, espera unos segundos y pulsa Actualizar.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {bold.transactions.map(t => {
+                const ok = t.type.toUpperCase().includes("APPROV") || t.type.toUpperCase().includes("SUCCESS");
+                return (
+                  <div key={t.paymentId} className="bg-zinc-900/60 border border-zinc-800 rounded-2xl p-3.5 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded shrink-0 ${ok ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-700/50 text-zinc-300"}`}>{t.type}</span>
+                        <span className="text-sm text-zinc-300">{t.amount.toLocaleString("es-CO")} {t.currency}</span>
+                      </div>
+                      <p className="text-xs text-zinc-500 truncate mt-0.5">
+                        {new Date(t.createdAt).toLocaleString("es-CO")} · ref {t.orderReference || "—"} · <span className="text-zinc-600">{t.paymentId}</span>
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>)}
         </>)}
       </div>
 
