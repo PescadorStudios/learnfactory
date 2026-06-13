@@ -17,6 +17,7 @@ import type { ChallengeResult } from "../state/journeyStore";
 import { colorForNiche } from "../theme";
 import { ImpostorGame } from "../games/ImpostorGame";
 import { TrapSubtitlesGame } from "../games/TrapSubtitlesGame";
+import { AudioLessonStation } from "./AudioLessonStation";
 import type { RailNode } from "../types/rail";
 import type { Challenge } from "../types/contract";
 
@@ -36,6 +37,20 @@ export function StationChallenge({ node }: { node: RailNode }) {
 
   const color = node.niche ? colorForNiche(node.niche) : "#33e1ed";
   const challenge = pod.challenge;
+
+  // Lección de audio real: pantalla completa con su propia mecánica (espía /
+  // subtítulos / copiloto). Al terminar eleva el resultado → recompensa abajo;
+  // al salir, suelta el atraque sin bloquear (skip = avanza sin recompensa).
+  if (challenge.type === "audio_lesson" && !result) {
+    return (
+      <AudioLessonStation
+        challenge={challenge}
+        nodeTitle={pod.title}
+        onResult={setResult}
+        onExit={() => completeStation(node.id, { success: false, score: 0, total: 0 })}
+      />
+    );
+  }
 
   return (
     <div className="station" role="dialog" aria-modal="true" aria-label={pod.title}>
@@ -97,6 +112,10 @@ function renderChallenge(
       return (
         <TrapSubtitlesGame challenge={challenge} color={color} onResult={onResult} />
       );
+    case "audio_lesson":
+      // Se renderiza a pantalla completa antes de llegar aquí (ver arriba); este
+      // caso solo mantiene exhaustiva la unión para TypeScript.
+      return null;
     default: {
       // Si añades un reto a la unión sin renderer, TypeScript marca aquí.
       const _exhaustive: never = challenge;
@@ -107,7 +126,11 @@ function renderChallenge(
 
 function verdict(type: Challenge["type"], r: ChallengeResult): string {
   if (r.success) {
-    return type === "impostor" ? "¡Impostor desenmascarado!" : "¡Detector implacable!";
+    if (type === "impostor") return "¡Impostor desenmascarado!";
+    if (type === "audio_lesson") return "¡Lección dominada!";
+    return "¡Detector implacable!";
   }
-  return type === "impostor" ? "Se te coló…" : "Se te escaparon algunas…";
+  if (type === "impostor") return "Se te coló…";
+  if (type === "audio_lesson") return "Repásala con calma…";
+  return "Se te escaparon algunas…";
 }

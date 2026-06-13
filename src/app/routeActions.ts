@@ -909,6 +909,67 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
   };
 }
 
+/** Una estación jugable del túnel: la lección de audio lista de un nodo. */
+export interface RouteAudioStation {
+  nodeId: string;
+  title: string;
+  audioUrl: string; // WAV continuo público (mismo que reproduce /lesson)
+  durationSeconds: number; // versiona la caché de audio
+  attention: AttentionData; // spy | subtitles | copilot
+}
+
+/**
+ * Estaciones jugables de una ruta para EL TÚNEL: los nodos cuya lección de audio
+ * ya está lista (un WAV continuo + los cues de una de las 3 mecánicas). Mismo
+ * control de acceso que getLesson (dueño siempre; pública para cualquiera;
+ * bloqueada → nadie). Devuelve `null` si no hay acceso, y `stations: []` si la
+ * ruta es accesible pero aún no tiene audios listos (el túnel cae entonces al
+ * modo sintetizado). El orden sigue el del árbol (flattenNodes) para que el viaje
+ * sea coherente con la ruta original.
+ */
+export async function getRouteAudioStations(
+  token: string,
+  routeId: string
+): Promise<{ topic: string; stations: RouteAudioStation[] } | null> {
+  const user = await getUserFromToken(token);
+  if (!user) return null;
+
+  const sb = supabaseAdmin();
+  const [{ data: route }, { data: lessons }] = await Promise.all([
+    sb.from("routes").select("topic, tree, owner_id, visibility, blocked").eq("id", routeId).single(),
+    sb
+      .from("lessons")
+      .select("node_id, title, audio_path, audio_duration, audio_questions, status")
+      .eq("route_id", routeId)
+      .eq("status", "ready"),
+  ]);
+  if (!route || route.blocked) return null;
+  if (route.owner_id !== user.id && route.visibility !== "public") return null;
+
+  // Index por nodo (solo los que tienen WAV + una mecánica válida {mode:...}).
+  const byNode = new Map<string, RouteAudioStation>();
+  for (const l of lessons || []) {
+    if (!l.audio_path) continue;
+    const att = l.audio_questions;
+    if (!att || Array.isArray(att) || typeof att !== "object" || !("mode" in att)) continue;
+    byNode.set(l.node_id, {
+      nodeId: l.node_id,
+      title: l.title,
+      audioUrl: sb.storage.from(AUDIO_BUCKET).getPublicUrl(l.audio_path).data.publicUrl,
+      durationSeconds: (l.audio_duration as number) ?? 0,
+      attention: att as AttentionData,
+    });
+  }
+
+  // Orden del árbol; los nodos sin audio listo simplemente se omiten.
+  const stations: RouteAudioStation[] = [];
+  for (const node of flattenNodes(route.tree as Tree)) {
+    const st = byNode.get(node.id);
+    if (st) stations.push(st);
+  }
+  return { topic: route.topic, stations };
+}
+
 // ──────────────────────────────────────────────────
 //  INTENTOS Y MAESTRÍA
 // ──────────────────────────────────────────────────

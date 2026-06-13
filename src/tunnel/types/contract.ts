@@ -8,6 +8,8 @@
 // Es lo primero que se construye porque todo lo demás depende de ello.
 // ============================================================================
 
+import type { AttentionData } from "@/lib/types";
+
 /** Agnóstico a propósito: "Historia", "Biología", "Finanzas"… lo que sea. */
 export type Niche = string;
 
@@ -40,7 +42,10 @@ export interface Pod {
 // Unión discriminada por `type`. Añadir un reto nuevo en el futuro = añadir un
 // miembro a esta unión + su renderer en Capa 3. El riel no necesita cambiar.
 
-export type Challenge = TrapSubtitlesChallenge | ImpostorChallenge;
+export type Challenge =
+  | TrapSubtitlesChallenge
+  | ImpostorChallenge
+  | AudioLessonChallenge;
 
 /**
  * Subtítulos Trampa (reto insignia): audio + subtítulos donde algunos
@@ -79,6 +84,26 @@ export interface ImpostorChallenge {
 export interface ImpostorFact {
   text: string;
   isFalse: boolean;
+}
+
+/**
+ * Lección de audio REAL de Learn Factory (el reto insignia del túnel v2): una
+ * narración continua (UN solo WAV pregenerado) que se escucha ENTERA mientras se
+ * juega una de las tres mecánicas de atención (espía / subtítulos / co-piloto).
+ * A diferencia de `trap_subtitles` —que sintetiza voz por segmento y deja huecos—
+ * el audio ya existe y los cues van anclados a `audio.currentTime`: sin cortes ni
+ * desfase.
+ *
+ * `attention` es un tipo ESTRUCTURAL de la app, no contenido temático: el
+ * contenido real sigue entrando por el provider (content/). El motor solo gana
+ * un tipo de reto más; el riel no cambia. Su renderer vive en Capa 3
+ * (screens/AudioLessonStation.tsx), que reutiliza las mecánicas de /lesson.
+ */
+export interface AudioLessonChallenge {
+  type: "audio_lesson";
+  audioUrl: string; // WAV continuo público (Supabase Storage)
+  durationSeconds: number; // duración real → versiona la caché de audio
+  attention: AttentionData; // spy | subtitles | copilot
 }
 
 // --- PROVIDER ----------------------------------------------------------------

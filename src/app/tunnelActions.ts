@@ -11,11 +11,12 @@
 // ============================================================================
 
 import { synthesizeSpeech } from "@/lib/generation";
-import { getMyRoutes, getRoute } from "./routeActions";
+import { getMyRoutes, getRoute, getRouteAudioStations, type RouteAudioStation } from "./routeActions";
 import { getLibrary } from "./socialActions";
 import { categoryLabel } from "@/lib/types";
 import type { Sintesis } from "@/lib/types";
 import type {
+  AudioLessonChallenge,
   ImpostorChallenge,
   ImpostorFact,
   Lesson,
@@ -205,6 +206,22 @@ function fallbackPod(topic: string, description: string | null): Pod {
   };
 }
 
+/**
+ * Pod "Lección de audio": una estación que reproduce la narración continua REAL
+ * del nodo (un solo WAV) con su mecánica de atención. La voz ya no se sintetiza
+ * por segmento — se escucha entera, anclada al reloj del propio audio.
+ * El `id` del pod ES el id del nodo: estable y único dentro de la ruta.
+ */
+function audioLessonPod(st: RouteAudioStation): Pod {
+  const challenge: AudioLessonChallenge = {
+    type: "audio_lesson",
+    audioUrl: st.audioUrl,
+    durationSeconds: st.durationSeconds,
+    attention: st.attention,
+  };
+  return { id: st.nodeId, title: clip(st.title, 64), challenge, reward: clip(st.title, 80) };
+}
+
 /** Ensambla los pods de una ruta alternando Trampa (grupos de 4) e Impostor (3). */
 function buildPods(facts: Fact[], s: Sintesis | null | undefined): Pod[] {
   const pods: Pod[] = [];
@@ -300,6 +317,16 @@ export async function getTunnelLesson(
   const category = sep >= 0 ? rest.slice(0, sep) : "otros";
   const routeId = sep >= 0 ? rest.slice(sep + 1) : rest;
 
+  // Camino preferido: lecciones de audio REALES (voz continua + las 3 mecánicas).
+  // Cada nodo con su WAV pregenerado y sus cues se vuelve una estación jugable.
+  const real = await getRouteAudioStations(token, routeId);
+  if (real && real.stations.length > 0) {
+    const pods = real.stations.slice(0, MAX_PODS).map(audioLessonPod);
+    return { id: lessonId, title: real.topic, niche: categoryLabel(category), pods };
+  }
+
+  // Fallback: ruta sin audios listos (o lección antigua) → retos sintetizados de
+  // forma determinista a partir de los conceptos (sin IA; caché de voz estable).
   const route = await getRoute(token, routeId);
   if (!route) return null;
 
