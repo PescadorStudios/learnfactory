@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Eye, Crosshair, Ear, ListChecks, PartyPopper, Radar } from "lucide-react";
 import type { SpyData } from "@/lib/types";
@@ -8,7 +8,7 @@ import { EqBars, AudioControls, GameHeader, GameBriefing, GameResults } from "./
 
 interface Props {
   nodeTitle: string;
-  audioBlob: Blob;
+  audioSrc: string;
   data: SpyData;
   durationSeconds: number;
   onFinish: (correct: number, total: number) => void;
@@ -22,7 +22,7 @@ type Phase = "briefing" | "playing" | "questions" | "results";
  * Las misiones se revelan ANTES del audio; el agente escucha con objetivos
  * concretos y responde el interrogatorio al final.
  */
-export default function SpyGame({ nodeTitle, audioBlob, data, durationSeconds, onFinish, onExit }: Props) {
+export default function SpyGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [phase, setPhase] = useState<Phase>("briefing");
   const [isPaused, setIsPaused] = useState(false);
@@ -31,9 +31,6 @@ export default function SpyGame({ nodeTitle, audioBlob, data, durationSeconds, o
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Array<boolean | null>>(() => data.misiones.map(() => null));
   const [justPicked, setJustPicked] = useState<number | null>(null);
-
-  const audioUrl = useMemo(() => URL.createObjectURL(audioBlob), [audioBlob]);
-  useEffect(() => () => URL.revokeObjectURL(audioUrl), [audioUrl]);
 
   const total = data.misiones.length;
   // Con 2 misiones hay que acertar ambas; con 3, se permite fallar una.
@@ -95,7 +92,7 @@ export default function SpyGame({ nodeTitle, audioBlob, data, durationSeconds, o
 
   return (
     <main className="min-h-screen bg-zinc-950 flex flex-col overflow-hidden">
-      <audio ref={audioRef} src={audioUrl} onEnded={() => setPhase("questions")} preload="auto" />
+      <audio ref={audioRef} src={audioSrc} onEnded={() => setPhase("questions")} preload="auto" />
       <GameHeader onExit={onExit} dots={phase !== "briefing" ? dots : undefined} />
 
       {phase === "briefing" && (

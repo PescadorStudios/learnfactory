@@ -15,14 +15,14 @@ interface Props {
   routeId: string;
   token: string;
   lesson: LessonData;
-  audioBlob: Blob | null;
+  audioSrc: string | null;
   onComplete: (input: AttemptInput) => void;
   onExit: () => void;
 }
 
-export default function MicroLesson({ token, lesson, audioBlob, onComplete, onExit }: Props) {
+export default function MicroLesson({ token, lesson, audioSrc, onComplete, onExit }: Props) {
   const lessonSteps = lesson.steps || [];
-  const hasAudio = Boolean(lesson.attention && audioBlob && lesson.audioDurationSeconds);
+  const hasAudio = Boolean(lesson.attention && audioSrc && lesson.audioDurationSeconds);
 
   const [phase, setPhase] = useState<"audio" | "steps">(hasAudio ? "audio" : "steps");
   const [currentStep, setCurrentStep] = useState(0);
@@ -54,11 +54,11 @@ export default function MicroLesson({ token, lesson, audioBlob, onComplete, onEx
   }
 
   // Fase 1: podcast de contexto con verificación de atención (mecánica rotativa)
-  if (phase === "audio" && lesson.attention && audioBlob && lesson.audioDurationSeconds) {
+  if (phase === "audio" && lesson.attention && audioSrc && lesson.audioDurationSeconds) {
     return (
       <AttentionGame
         nodeTitle={lesson.title}
-        audioBlob={audioBlob}
+        audioSrc={audioSrc}
         attention={lesson.attention}
         durationSeconds={lesson.audioDurationSeconds}
         onFinish={(correct, total) => {

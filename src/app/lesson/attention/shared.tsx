@@ -115,7 +115,8 @@ export function GameBriefing({
   startLabel?: string;
 }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center max-w-md w-full mx-auto p-6 text-center">
+    <div className="flex-1 min-h-0 w-full overflow-y-auto">
+      <div className="min-h-full flex flex-col items-center justify-center max-w-md w-full mx-auto p-6 text-center">
       <motion.div
         initial={{ scale: 0, rotate: -10 }}
         animate={{ scale: 1, rotate: 0 }}
@@ -148,6 +149,7 @@ export function GameBriefing({
         <Play className="w-9 h-9 ml-1 fill-current" />
         <span className="text-[10px] font-bold mt-0.5">{startLabel}</span>
       </motion.button>
+      </div>
     </div>
   );
 }
@@ -175,7 +177,8 @@ export function GameResults({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center max-w-md w-full mx-auto p-6 text-center overflow-y-auto">
+    <div className="flex-1 min-h-0 w-full overflow-y-auto">
+      <div className="min-h-full flex flex-col items-center justify-center max-w-md w-full mx-auto p-6 text-center">
       {title && <p className="uppercase tracking-widest text-xs font-bold text-zinc-500 mb-4">{title}</p>}
       <motion.div
         initial={{ scale: 0 }}
@@ -210,6 +213,7 @@ export function GameResults({
           <RefreshCw className="w-5 h-5" /> Repetir el podcast
         </button>
       )}
+      </div>
     </div>
   );
 }

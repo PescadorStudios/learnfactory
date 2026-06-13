@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plane, Ear, Timer, MessageCircleQuestion, PartyPopper, Mic } from "lucide-react";
 import type { CopilotData } from "@/lib/types";
@@ -8,7 +8,7 @@ import { EqBars, AudioControls, GameHeader, GameBriefing, GameResults } from "./
 
 interface Props {
   nodeTitle: string;
-  audioBlob: Blob;
+  audioSrc: string;
   data: CopilotData;
   durationSeconds: number;
   onFinish: (correct: number, total: number) => void;
@@ -25,7 +25,7 @@ const CORRECTION_MS = 3800;
  * El narrador duda en 6 momentos y pausa: el oyente decide en 5 segundos.
  * Si acierta, el vuelo sigue fluido; si falla, el narrador corrige y retoma.
  */
-export default function CopilotGame({ nodeTitle, audioBlob, data, durationSeconds, onFinish, onExit }: Props) {
+export default function CopilotGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const rafRef = useRef(0);
 
@@ -39,9 +39,6 @@ export default function CopilotGame({ nodeTitle, audioBlob, data, durationSecond
   const [timeLeft, setTimeLeft] = useState(DECISION_SECONDS);
   const [feedback, setFeedback] = useState<"correct" | null>(null);
   const [correction, setCorrection] = useState<string | null>(null);
-
-  const audioUrl = useMemo(() => URL.createObjectURL(audioBlob), [audioBlob]);
-  useEffect(() => () => URL.revokeObjectURL(audioUrl), [audioUrl]);
 
   const total = data.checkpoints.length;
   const passCount = Math.ceil(total * 0.66); // 6 → 4
@@ -170,7 +167,7 @@ export default function CopilotGame({ nodeTitle, audioBlob, data, durationSecond
 
   return (
     <main className="min-h-screen bg-zinc-950 flex flex-col overflow-hidden">
-      <audio ref={audioRef} src={audioUrl} onEnded={handleEnded} preload="auto" />
+      <audio ref={audioRef} src={audioSrc} onEnded={handleEnded} preload="auto" />
       <GameHeader onExit={onExit} dots={phase !== "briefing" ? dots : undefined} />
 
       {phase === "briefing" && (

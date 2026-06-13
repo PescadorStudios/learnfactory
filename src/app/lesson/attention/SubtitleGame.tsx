@@ -8,7 +8,7 @@ import { AudioControls, GameHeader, GameBriefing, GameResults } from "./shared";
 
 interface Props {
   nodeTitle: string;
-  audioBlob: Blob;
+  audioSrc: string;
   data: SubtitlesData;
   durationSeconds: number;
   onFinish: (correct: number, total: number) => void;
@@ -187,7 +187,7 @@ function computeCueTimeline(buf: AudioBuffer, weights: number[]): number[] | nul
  * Los subtítulos acompañan al audio, pero N de ellos contradicen lo narrado.
  * El detector debe tocar el subtítulo en el momento de la discrepancia.
  */
-export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSeconds, onFinish, onExit }: Props) {
+export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const rafRef = useRef(0);
 
@@ -197,9 +197,6 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
   const [caught, setCaught] = useState<Set<number>>(new Set());
   const [falseTaps, setFalseTaps] = useState(0);
   const [flash, setFlash] = useState<Flash>(null);
-
-  const audioUrl = useMemo(() => URL.createObjectURL(audioBlob), [audioBlob]);
-  useEffect(() => () => URL.revokeObjectURL(audioUrl), [audioUrl]);
 
   // Línea de tiempo DINÁMICA: decodificamos el audio, medimos dónde hay voz
   // real (y dónde pausas) y repartimos los cues sobre el tiempo hablado,
@@ -212,19 +209,25 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
       try {
         const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         if (!AC) return;
+        // El audio ya suena por streaming desde la URL; aquí bajamos el buffer
+        // aparte (en segundo plano) SOLO para la alineación dinámica. No bloquea
+        // la reproducción: mientras llega, rige el respaldo `atSeconds`.
+        const res = await fetch(audioSrc);
+        const arr = await res.arrayBuffer();
+        if (cancelled) return;
         const ctx = new AC();
-        const buf = await ctx.decodeAudioData(await audioBlob.arrayBuffer());
+        const buf = await ctx.decodeAudioData(arr);
         ctx.close();
         if (cancelled) return;
         const weights = data.cues.map(c => cueWeight(spokenText(c)));
         const starts = computeCueTimeline(buf, weights);
         if (starts) setTimeline(starts);
       } catch {
-        /* sin Web Audio: se usa el respaldo */
+        /* sin red / sin Web Audio: se usa el respaldo atSeconds */
       }
     })();
     return () => { cancelled = true; };
-  }, [audioBlob, data.cues]);
+  }, [audioSrc, data.cues]);
 
   // Tiempos de inicio de cada cue (dinámicos si están disponibles) y su retraso.
   const times = useMemo(() => timeline ?? data.cues.map(c => c.atSeconds), [timeline, data.cues]);
@@ -318,7 +321,7 @@ export default function SubtitleGame({ nodeTitle, audioBlob, data, durationSecon
 
   return (
     <main className="min-h-screen bg-zinc-950 flex flex-col overflow-hidden">
-      <audio ref={audioRef} src={audioUrl} onEnded={() => setPhase("results")} preload="auto" />
+      <audio ref={audioRef} src={audioSrc} onEnded={() => setPhase("results")} preload="auto" />
       <GameHeader onExit={onExit} />
 
       {phase === "briefing" && (

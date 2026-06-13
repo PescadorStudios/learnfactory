@@ -7,7 +7,6 @@ import type { AttemptInput, LessonData } from "@/lib/types";
 import { useRequireAuth } from "@/lib/useAuth";
 import { useRouteRealtime } from "@/lib/useRouteRealtime";
 import { getLesson, saveAttempt, retryLesson } from "../routeActions";
-import { getAudio, putAudio } from "@/lib/audioCache";
 import MicroLesson from "./MicroLesson";
 import DebateNode from "./DebateNode";
 import QuizNode from "./QuizNode";
@@ -30,8 +29,7 @@ function LessonDispatcher() {
 
   const { token, loading: authLoading, session } = useRequireAuth();
   const [lesson, setLesson] = useState<LessonData | null>(null);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioSrc, setAudioSrc] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [saving, setSaving] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -75,35 +73,21 @@ function LessonDispatcher() {
     return () => clearInterval(interval);
   }, [lesson, load]);
 
-  // Descargar el audio (IndexedDB primero, luego Storage)
+  // Audio por STREAMING: el navegador descarga progresivamente (por rangos) y
+  // la reproducción arranca sin esperar los ~8 MB completos. Antes se bajaba el
+  // WAV entero a un Blob antes de poder darle play, y ese download largo dañaba
+  // la experiencia; ahora basta con tener la URL lista.
   useEffect(() => {
     if (!lesson || lesson.status !== "ready" || !lesson.attention || !lesson.audioUrl) return;
-    // Versión por duración: al regenerar, el audio cambia (otra duración) y la
-    // URL de Storage es la misma, así que versionamos la clave de caché y la
-    // descarga para no servir el audio viejo contra los subtítulos nuevos.
+    // Versión por duración: al regenerar, el audio cambia (otra duración) pero
+    // la URL de Storage es la misma, así que la versionamos (?v=) para no servir
+    // audio viejo contra subtítulos nuevos.
     const ver = lesson.audioDurationSeconds ?? 0;
     const audioKey = `audio_${routeId}_${nodeId}_${ver}`;
     if (fetchedAudioFor.current === audioKey) return;
     fetchedAudioFor.current = audioKey;
-
-    (async () => {
-      setAudioLoading(true);
-      let blob = await getAudio(audioKey);
-      if (!blob) {
-        try {
-          const bustUrl = `${lesson.audioUrl}${lesson.audioUrl!.includes("?") ? "&" : "?"}v=${ver}`;
-          const res = await fetch(bustUrl, { cache: "no-store" });
-          if (res.ok) {
-            blob = await res.blob();
-            await putAudio(audioKey, blob);
-          }
-        } catch {
-          blob = null;
-        }
-      }
-      setAudioBlob(blob);
-      setAudioLoading(false);
-    })();
+    const base = lesson.audioUrl;
+    setAudioSrc(`${base}${base.includes("?") ? "&" : "?"}v=${ver}`);
   }, [lesson, routeId, nodeId]);
 
   const handleComplete = async (input: AttemptInput) => {
@@ -189,9 +173,10 @@ function LessonDispatcher() {
     );
   }
 
-  // Esperar el audio si la lección lo tiene
-  if (lesson.attention && lesson.audioUrl && audioLoading) {
-    return <LessonLoading text="Descargando el podcast de la lección..." />;
+  // El audio se reproduce por streaming (arranque inmediato); solo esperamos a
+  // tener la URL preparada, no a descargar el archivo completo.
+  if (lesson.attention && lesson.audioUrl && !audioSrc) {
+    return <LessonLoading text="Preparando la lección..." />;
   }
 
   const common = {
@@ -205,7 +190,7 @@ function LessonDispatcher() {
   if (lesson.nodeType === "quiz") return <QuizNode {...common} />;
   if (lesson.nodeType === "debate") return <DebateNode {...common} />;
   if (lesson.nodeType === "boss") return <BossExam {...common} />;
-  return <MicroLesson {...common} audioBlob={audioBlob} />;
+  return <MicroLesson {...common} audioSrc={audioSrc} />;
 }
 
 export default function LessonPage() {
