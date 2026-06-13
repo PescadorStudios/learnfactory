@@ -25,7 +25,7 @@ export interface FlyInput {
   active: boolean;
 }
 
-const DRAG_RANGE = 150; // px de arrastre para acelerador/rumbo máximo
+const DRAG_RANGE = 120; // px de arrastre para empuje máximo (menor = más responsivo)
 const FLY_KEYS = ["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"];
 
 export function useFlyControls(enabled: boolean) {

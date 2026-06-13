@@ -1,19 +1,20 @@
 // ============================================================================
-// RIG DE CÁMARA — VUELO LIBRE por la red neuronal (Fase B).
+// RIG DE CÁMARA — VUELO LIBRE sobre el plano de la red (Fase B, v2).
 // ----------------------------------------------------------------------------
-// La cámara CAMINA el grafo (Capa 0) arista por arista. Pedido del usuario: solo
-// anda cuando el piloto la mueve, y CON INERCIA.
-//   • velocidad: un escalar CON SIGNO. El throttle del piloto fija la velocidad
-//     objetivo; un resorte la sigue (inercia al acelerar) y, al soltar, decae a 0
-//     (momentum) hasta DETENERSE. No hay deriva automática: sin input, se para.
-//   • cruces: al llegar a un nodo con varias salidas, el rumbo (steer) elige la
-//     vena → así se "cambia de ruta" en pleno vuelo. Hacia atrás camina igual por
-//     las aristas de entrada (se puede retroceder).
-//   • orientación: mira hacia donde se mueve (giro amortiguado; en reposo mantiene
-//     el rumbo). reduced-motion: sin balanceo ni giro suave.
-//   • atraque: NO atraca solo. Cuando está cerca de una estación y casi quieta,
-//     reporta `canEnter` al store; el piloto decide entrar (Capa 3).
-// Escribe al store solo valores discretos (progreso / estación cercana).
+// La red es PLANA: las lecciones se reparten en carriles sobre X (un tema por
+// carril) y en capas sobre Z (la profundidad de cada lección). Por eso navegar
+// es volar en 2 ejes sobre ese plano — NO ir por un riel:
+//   • Z (acelerador / arrastrar arriba-abajo): adentrarse o volver en profundidad.
+//   • X (rumbo / arrastrar izq-der): CAMBIAR DE TEMA, deslizándose entre carriles.
+// El movimiento tiene INERCIA y solo ocurre con input: al soltar conserva impulso
+// y se detiene; sin input no hay deriva.
+//
+// La cámara va "en persecución": flota por encima y por detrás del punto de foco y
+// SIEMPRE mira hacia +Z. Así "adelante" es siempre lo que falta por recorrer y el
+// piloto nunca se desorienta (clave del pedido: saber dónde va y qué le falta).
+//
+// Escribe al store solo valores discretos: estación cercana (Entrar) y la posición
+// en el plano (con dead-band) para el minimapa.
 // ============================================================================
 
 import { useEffect, useMemo, useRef } from "react";
@@ -24,16 +25,23 @@ import { useJourney } from "../state/journeyStore";
 import type { Rail } from "../types/rail";
 import type { TunnelRuntime } from "./types";
 import type { FlyInput } from "../hooks/useFlyControls";
-import { buildNavGraph, chooseEdge, nearestStation } from "./graphNav";
+import { buildNavGraph, nearestStation } from "./graphNav";
 
-const MAX_SPEED = 20; // u/seg a fondo
-const ACCEL_TAU = 0.3; // inercia al acelerar (seg)
-const COAST_TAU = 0.7; // inercia al soltar (coast largo = momentum)
-const STOP_EPS = 0.06; // por debajo, sin input, se detiene del todo
+const SPEED = 16; // u/seg a fondo (en el plano)
+const ACCEL_TAU = 0.16; // inercia al acelerar (resorte rápido)
+const COAST_TAU = 0.55; // inercia al soltar (momentum hasta parar)
+const STOP_EPS = 0.05; // por debajo, sin input, se detiene del todo
 const TAU_E = 0.8; // suavizado de energía (biofeedback)
-const TURN_TAU = 0.3; // suavizado de la orientación (giro)
-const ENTER_RADIUS = 4.2; // distancia a estación para ofrecer "Entrar"
-const ENTER_SPEED = 5; // velocidad bajo la cual se puede entrar
+
+// Encuadre de la cámara de persecución (por encima y detrás del foco).
+const HEIGHT = 6; // altura sobre el plano
+const BACK = 8.5; // cuánto se queda por detrás del foco (−Z)
+const LOOK_AHEAD = 7; // hacia dónde mira por delante del foco (+Z)
+const LEAN = 0.14; // ladeo lateral con la velocidad en X (vida, no marea)
+
+const ENTER_RADIUS = 3.6; // distancia en el plano para ofrecer "Entrar"
+const ENTER_SPEED = 4.5; // velocidad por debajo de la cual se puede entrar
+const FOCUS_DEADBAND = 1.25; // mueve el minimapa solo tras avanzar esto (mundo)
 
 export function CameraRig({
   rail,
@@ -46,134 +54,114 @@ export function CameraRig({
 }) {
   const { camera } = useThree();
   const graph = useMemo(() => buildNavGraph(rail), [rail]);
-  const zRange = useMemo(() => {
-    let lo = Infinity;
-    let hi = -Infinity;
+
+  // Límites del plano (caja del grafo + margen lateral para encarar carriles extremos).
+  const bounds = useMemo(() => {
+    let minX = Infinity,
+      maxX = -Infinity,
+      minZ = Infinity,
+      maxZ = -Infinity;
     for (const n of rail.nodes) {
-      if (n.position.z < lo) lo = n.position.z;
-      if (n.position.z > hi) hi = n.position.z;
+      minX = Math.min(minX, n.position.x);
+      maxX = Math.max(maxX, n.position.x);
+      minZ = Math.min(minZ, n.position.z);
+      maxZ = Math.max(maxZ, n.position.z);
     }
-    if (!isFinite(lo)) return { lo: 0, span: 1 };
-    return { lo, span: Math.max(1, hi - lo) };
+    if (!isFinite(minX)) {
+      minX = -5;
+      maxX = 5;
+      minZ = -5;
+      maxZ = 5;
+    }
+    return { minX: minX - 2, maxX: maxX + 2, minZ, maxZ };
   }, [rail]);
 
-  // Posición en el grafo (fuera de React: se actualiza cada frame).
-  const edgeId = useRef<string | null>(null);
-  const tRef = useRef(0);
-  const velRef = useRef(0);
-  const fwd = useRef(new THREE.Vector3(0, 0, 1));
-
-  // Temporales reutilizables (sin asignaciones por frame).
-  const camPos = useRef(new THREE.Vector3());
-  const look = useRef(new THREE.Vector3());
-  const dirV = useRef(new THREE.Vector3());
-  const wantV = useRef(new THREE.Vector3());
-
+  // Estado de vuelo (fuera de React: se integra cada frame).
+  const fx = useRef(0);
+  const fz = useRef(0);
+  const vx = useRef(0);
+  const vz = useRef(0);
+  const focusV = useRef(new THREE.Vector3());
+  const lookV = useRef(new THREE.Vector3());
+  const lastFocus = useRef({ x: Infinity, z: Infinity });
   const prevNear = useRef<{ id: string | null; can: boolean }>({ id: null, can: false });
-  const prevPct = useRef(-1);
 
-  // (Re)arranca en el START mirando hacia adentro al cambiar de grafo.
+  // (Re)arranca centrado en la primera capa de estaciones al cambiar de grafo.
   useEffect(() => {
-    const outs = graph.out.get(graph.startId) ?? [];
-    const e0 =
-      chooseEdge(graph, graph.startId, outs, (e) => e.to, 0) ?? outs[0] ?? rail.edges[0] ?? null;
-    edgeId.current = e0 ? e0.id : null;
-    tRef.current = 0;
-    velRef.current = 0;
-    fwd.current.set(0, 0, 1);
-  }, [graph, rail]);
+    fx.current = 0;
+    fz.current = THREE.MathUtils.clamp(0, bounds.minZ, bounds.maxZ);
+    vx.current = 0;
+    vz.current = 0;
+    lastFocus.current = { x: Infinity, z: Infinity };
+    prevNear.current = { id: null, can: false };
+  }, [bounds, graph]);
 
   useFrame((state, dtRaw) => {
-    const eId = edgeId.current;
-    if (!eId) return;
-    let e = graph.edgeById.get(eId);
-    if (!e) return;
-
     const dt = Math.min(dtRaw, 0.05);
     const st = useJourney.getState();
-    const docked = st.activeStationId != null;
-    const frozen = docked || st.atEnd; // lección abierta o Recap: cámara quieta
+    const frozen = st.activeStationId != null || st.atEnd; // lección o Recap: quieta
 
-    // --- 1) Velocidad inercial. El throttle fija el objetivo; al soltar decae a 0
-    //        (momentum) hasta parar. Nunca avanza sola. ---
-    const thr = frozen ? 0 : input.current.throttle;
-    const target = thr * MAX_SPEED;
-    const driving = Math.abs(thr) > 0.01;
-    const tau = driving ? ACCEL_TAU : COAST_TAU;
-    velRef.current += (target - velRef.current) * (1 - Math.exp(-dt / tau));
-    if (!driving && Math.abs(velRef.current) < STOP_EPS) velRef.current = 0;
+    const thr = frozen ? 0 : input.current.throttle; // ↑/↓ → Z (profundidad)
+    const str = frozen ? 0 : input.current.steer; // ←/→ → X (tema)
 
+    // --- 1) Velocidad objetivo (empuje del piloto), limitada en magnitud. ---
+    let tvx = str * SPEED;
+    let tvz = thr * SPEED;
+    const tmag = Math.hypot(tvx, tvz);
+    if (tmag > SPEED) {
+      const s = SPEED / tmag;
+      tvx *= s;
+      tvz *= s;
+    }
+
+    // --- 2) Inercia: resorte hacia el objetivo; al soltar, momentum → parar. ---
+    const driving = Math.abs(thr) > 0.01 || Math.abs(str) > 0.01;
+    const k = 1 - Math.exp(-dt / (driving ? ACCEL_TAU : COAST_TAU));
+    vx.current += (tvx - vx.current) * k;
+    vz.current += (tvz - vz.current) * k;
+    if (!driving && Math.hypot(vx.current, vz.current) < STOP_EPS) {
+      vx.current = 0;
+      vz.current = 0;
+    }
+
+    // --- 3) Integrar el foco y mantenerlo dentro del plano (sin atascarse). ---
+    fx.current += vx.current * dt;
+    fz.current += vz.current * dt;
+    if (fx.current <= bounds.minX) {
+      fx.current = bounds.minX;
+      if (vx.current < 0) vx.current = 0;
+    } else if (fx.current >= bounds.maxX) {
+      fx.current = bounds.maxX;
+      if (vx.current > 0) vx.current = 0;
+    }
+    if (fz.current <= bounds.minZ) {
+      fz.current = bounds.minZ;
+      if (vz.current < 0) vz.current = 0;
+    } else if (fz.current >= bounds.maxZ) {
+      fz.current = bounds.maxZ;
+      if (vz.current > 0) vz.current = 0;
+    }
+
+    const speed = Math.hypot(vx.current, vz.current);
+    rt.current.speed = speed;
     rt.current.energy += (st.energy - rt.current.energy) * (1 - Math.exp(-dt / TAU_E));
-    rt.current.speed = Math.abs(velRef.current);
 
-    // --- 2) Caminar el grafo según la distancia recorrida este frame. ---
-    let t = tRef.current;
-    let remaining = velRef.current * dt; // distancia con signo (mundo)
-    const steer = frozen ? 0 : input.current.steer;
-    let guard = 0;
-    while (Math.abs(remaining) > 1e-5 && guard++ < 12) {
-      const len = graph.len.get(e.id) ?? 1;
-      const nt = t + remaining / len;
-      if (nt >= 1) {
-        const over = (nt - 1) * len; // sobrante hacia adelante
-        const next = chooseEdge(graph, e.to, graph.out.get(e.to) ?? [], (x) => x.to, steer);
-        if (!next) {
-          t = 1;
-          velRef.current = 0;
-          break;
-        }
-        e = next;
-        t = 0;
-        remaining = over;
-      } else if (nt <= 0) {
-        const over = -nt * len; // sobrante hacia atrás
-        const prev = chooseEdge(graph, e.from, graph.inn.get(e.from) ?? [], (x) => x.from, steer);
-        if (!prev) {
-          t = 0;
-          velRef.current = 0;
-          break;
-        }
-        e = prev;
-        t = 1;
-        remaining = -over;
-      } else {
-        t = nt;
-        remaining = 0;
-      }
+    // --- 4) Cámara de persecución: encima y detrás del foco, mirando a +Z. ---
+    const lean = THREE.MathUtils.clamp(vx.current / SPEED, -1, 1) * LEAN * BACK;
+    let cy = HEIGHT;
+    if (!st.reducedMotion && speed > 0.5) {
+      cy += Math.sin(state.clock.elapsedTime * 1.6) * 0.08; // bob sutil de vuelo
     }
-    edgeId.current = e.id;
-    tRef.current = t;
-
-    // --- 3) Posición y orientación. ---
-    const a = graph.pos.get(e.from);
-    const b = graph.pos.get(e.to);
-    if (!a || !b) return;
-    camPos.current.copy(a).lerp(b, t);
-    dirV.current.copy(b).sub(a).normalize();
-
-    // Mira hacia donde se mueve; en reposo mantiene el rumbo. Giro amortiguado
-    // (instantáneo en reduced-motion para no marear con interpolación).
-    if (Math.abs(velRef.current) > 0.05) {
-      wantV.current.copy(dirV.current).multiplyScalar(velRef.current >= 0 ? 1 : -1);
-      const turn = st.reducedMotion ? 1 : 1 - Math.exp(-dt / TURN_TAU);
-      fwd.current.lerp(wantV.current, turn).normalize();
-    }
-
     camera.up.set(0, 1, 0);
-    camera.position.copy(camPos.current);
-    // Balanceo sutil de vuelo (no en reposo / atracado / reduced-motion).
-    if (!st.reducedMotion && !docked && Math.abs(velRef.current) > 0.4) {
-      const tt = state.clock.elapsedTime;
-      camera.position.x += Math.sin(tt * 0.9) * 0.05;
-      camera.position.y += Math.cos(tt * 1.1) * 0.045;
-    }
-    look.current.copy(camera.position).add(fwd.current);
-    camera.lookAt(look.current);
+    camera.position.set(fx.current + lean, cy, fz.current - BACK);
+    lookV.current.set(fx.current, 0, fz.current + LOOK_AHEAD);
+    camera.lookAt(lookV.current);
 
-    // --- 4) Proximidad → ofrecer "Entrar" (el piloto decide; no atraca solo). ---
-    const near = nearestStation(graph, camPos.current);
+    // --- 5) Proximidad → ofrecer "Entrar" (el piloto decide; no atraca solo). ---
+    focusV.current.set(fx.current, 0, fz.current);
+    const near = nearestStation(graph, focusV.current);
     const can =
-      !frozen && !!near && near.dist < ENTER_RADIUS && Math.abs(velRef.current) < ENTER_SPEED;
+      !frozen && !!near && near.dist < ENTER_RADIUS && speed < ENTER_SPEED;
     const nid = can && near ? near.id : null;
     const pn = prevNear.current;
     if (pn.id !== nid || pn.can !== can) {
@@ -182,13 +170,14 @@ export function CameraRig({
       pn.can = can;
     }
 
-    // --- 5) Progreso = profundidad alcanzada (z) sobre el rango del grafo. ---
-    const pct = Math.round(
-      THREE.MathUtils.clamp((camPos.current.z - zRange.lo) / zRange.span, 0, 1) * 100
-    );
-    if (prevPct.current !== pct) {
-      st.setProgress(pct);
-      prevPct.current = pct;
+    // --- 6) Publicar el foco (con dead-band) para el minimapa. ---
+    if (
+      Math.abs(fx.current - lastFocus.current.x) +
+        Math.abs(fz.current - lastFocus.current.z) >=
+      FOCUS_DEADBAND
+    ) {
+      st.setFocus(fx.current, fz.current);
+      lastFocus.current = { x: fx.current, z: fz.current };
     }
   });
 

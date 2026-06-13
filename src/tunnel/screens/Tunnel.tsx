@@ -20,8 +20,10 @@ import { CameraRig } from "../world/CameraRig";
 import { NeuralWeb } from "../world/NeuralWeb";
 import { DustField } from "../world/DustField";
 import { StationLights } from "../world/StationLights";
+import { StationLabels } from "../world/StationLabels";
 import { StationChallenge } from "./StationChallenge";
 import { Narrator } from "./Narrator";
+import { Minimap } from "./Minimap";
 import { Recap } from "./Recap";
 import { stopVoice } from "../audio/voice";
 import type { TunnelRuntime } from "../world/types";
@@ -29,7 +31,6 @@ import type { TunnelRuntime } from "../world/types";
 export function Tunnel() {
   const rail = useJourney((s) => s.rail);
   const reduced = useJourney((s) => s.reducedMotion);
-  const progressPct = useJourney((s) => s.progressPct);
   const atEnd = useJourney((s) => s.atEnd);
   const completed = useJourney((s) => s.completed);
   const activeStationId = useJourney((s) => s.activeStationId);
@@ -106,6 +107,9 @@ export function Tunnel() {
 
   if (!rail) return null;
 
+  const total = rail.meta.stationCount;
+  const done = Math.min(Object.keys(completed).length, total);
+  const barPct = total > 0 ? Math.round((done / total) * 100) : 0;
   const enterColor = nearestNode?.niche ? colorForNiche(nearestNode.niche) : "#33e1ed";
 
   return (
@@ -122,6 +126,7 @@ export function Tunnel() {
         <CameraRig rail={rail} input={input} rt={rt} />
         <NeuralWeb rail={rail} />
         <StationLights nodes={rail.nodes} />
+        <StationLabels nodes={rail.nodes} />
         <DustField rail={rail} reduced={reduced} lowPower={lowPower} />
       </Canvas>
 
@@ -130,8 +135,8 @@ export function Tunnel() {
         <button type="button" className="ghost" onClick={backToLobby}>
           ← Salir
         </button>
-        <div className="hud__progress" aria-hidden>
-          <span className="hud__bar" style={{ width: `${progressPct}%` }} />
+        <div className="hud__progress" aria-hidden title={`${done}/${total} lecciones`}>
+          <span className="hud__bar" style={{ width: `${barPct}%` }} />
         </div>
         {streak >= 2 && (
           <span className="hud__streak" title="Racha de aciertos">
@@ -196,10 +201,14 @@ export function Tunnel() {
         ) : (
           <div style={hintWrap} aria-hidden>
             <span style={hintText}>
-              Arrastra para volar · ← → cambia de vena · acércate a una neurona y frena para entrar
+              Arrastra para volar — ↑ adentrarte · ↓ volver · ← → cambiar de tema · acércate a una
+              neurona y frena para entrar
             </span>
           </div>
         ))}
+
+      {/* Minimapa: orientación global mientras vuelas. */}
+      {!activeStationId && !atEnd && <Minimap rail={rail} />}
 
       {atEnd && <Recap />}
     </div>

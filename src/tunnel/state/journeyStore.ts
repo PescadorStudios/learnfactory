@@ -87,6 +87,8 @@ interface JourneyState {
   nearestStationId: string | null;
   /** Vuelo libre: ¿la cámara está cerca y lo bastante quieta para entrar? */
   canEnter: boolean;
+  /** Vuelo libre: posición de la cámara en el plano XZ (para el minimapa). */
+  camFocus: { x: number; z: number };
   /** Datos capturados en orden de visita (HUD/recap). */
   captured: Captured[];
 
@@ -133,6 +135,8 @@ interface JourneyState {
   // --- Vuelo libre (Fase B) ---
   /** El rig reporta la estación más cercana y si la cámara puede entrar ya. */
   setNearest: (id: string | null, canEnter: boolean) => void;
+  /** El rig publica su posición en el plano (con dead-band) para el minimapa. */
+  setFocus: (x: number, z: number) => void;
   /** Entra (o RE-entra) a una estación y monta su reto. Re-entrable. */
   enterStation: (stationId: string) => void;
   /** Sale de una estación SIN completarla (no la "quema": se puede volver). */
@@ -158,6 +162,7 @@ const FRESH_TRAVERSAL = {
   activeStationId: null as string | null,
   nearestStationId: null as string | null,
   canEnter: false,
+  camFocus: { x: 0, z: 0 },
   captured: [] as Captured[],
   energy: 0.5,
   streak: 0,
@@ -277,6 +282,10 @@ export const useJourney = create<JourneyState>((set, get) => ({
     if (s.nearestStationId !== id || s.canEnter !== canEnter) {
       set({ nearestStationId: id, canEnter });
     }
+  },
+
+  setFocus(x, z) {
+    set({ camFocus: { x, z } });
   },
 
   enterStation(stationId) {
