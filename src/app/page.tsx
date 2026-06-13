@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers } from "lucide-react";
+import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
 import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
@@ -186,6 +186,54 @@ function HomeContent() {
                   </span>
                 </motion.div>
               </div>
+            </motion.div>
+
+            {/* ── El Túnel: experiencia inmersiva (add-on de edu-entretenimiento) ──
+                Sección destacada justo bajo el hero. Lleva a la ruta nativa /tunel,
+                paralela a las rutas actuales — la app de siempre no cambia. */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+              className="mb-12"
+            >
+              <button
+                type="button"
+                onClick={() => router.push("/tunel")}
+                aria-label="Entrar a El Túnel"
+                className="group relative w-full text-left rounded-[2rem] overflow-hidden border border-violet-500/25 hover:border-cyan-400/40 bg-[#06070d] transition-colors"
+              >
+                {/* Corredor: gradientes radiales cian/violeta (la paleta del túnel) */}
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_50%,rgba(56,189,248,0.16),transparent_55%),radial-gradient(circle_at_92%_50%,rgba(139,92,246,0.30),transparent_50%)] pointer-events-none" />
+                {/* Boca del túnel: anillos concéntricos que respiran al hover */}
+                <div className="absolute right-0 top-0 bottom-0 w-2/3 hidden md:grid place-items-center pointer-events-none" aria-hidden>
+                  <div className="absolute w-72 h-72 rounded-full border border-cyan-400/10 transition-transform duration-700 group-hover:scale-110" />
+                  <div className="absolute w-56 h-56 rounded-full border border-cyan-400/15 transition-transform duration-700 group-hover:scale-110" />
+                  <div className="absolute w-40 h-40 rounded-full border border-violet-400/25 transition-transform duration-700 group-hover:scale-105" />
+                  <div className="absolute w-24 h-24 rounded-full border border-violet-400/40" />
+                  <div className="absolute w-10 h-10 rounded-full bg-gradient-to-br from-cyan-300/50 to-violet-500/50 blur-md transition-all group-hover:from-cyan-300/70 group-hover:to-violet-500/70" />
+                </div>
+
+                <div className="relative z-10 px-8 md:px-14 py-10 md:py-12 max-w-2xl">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-cyan-300/90 mb-3">
+                    <Sparkles className="w-3.5 h-3.5" /> Nuevo · Edu-entretenimiento
+                  </span>
+                  <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-4">
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-cyan-200 to-violet-300">
+                      El Túnel
+                    </span>
+                  </h2>
+                  <p className="text-zinc-400 text-base md:text-lg mb-7 max-w-lg">
+                    Atraviesa un corredor neuronal en 3D donde el conocimiento se
+                    convierte en juego: narrado con la voz de Learn Factory, caza
+                    subtítulos trampa y desenmascara impostores estación tras estación.
+                  </p>
+                  <span className="inline-flex items-center gap-2 bg-white/5 border border-cyan-400/40 text-white rounded-full px-7 py-3.5 font-bold transition-all group-hover:bg-cyan-400/10 group-hover:border-cyan-300 group-hover:shadow-[0_0_35px_rgba(56,189,248,0.35)]">
+                    Entrar al Túnel
+                    <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </div>
+              </button>
             </motion.div>
 
             {/* Mis rutas */}

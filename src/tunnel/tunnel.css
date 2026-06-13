@@ -75,6 +75,30 @@
   padding: clamp(28px, 6vw, 72px) 20px 120px;
 }
 
+/* Enlace de salida del túnel → de vuelta a Learn Factory. */
+.lobby__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 22px;
+  padding: 8px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease,
+    transform 0.16s ease;
+}
+.lobby__back:hover {
+  color: var(--text);
+  border-color: var(--cyan);
+  background: var(--panel-2);
+  transform: translateX(-2px);
+}
+
 .lobby__title {
   margin: 6px 0 0;
   font-size: clamp(40px, 9vw, 72px);

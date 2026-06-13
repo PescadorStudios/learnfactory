@@ -28,6 +28,11 @@ export function Lobby() {
 
   return (
     <section className="lobby">
+      {/* Salida del add-on: vuelve a la app de siempre. Navegación dura (<a>) a
+          propósito — desmonta limpiamente el contexto WebGL/three.js del túnel. */}
+      <a href="/" className="lobby__back" aria-label="Volver a Learn Factory">
+        ← Volver a Learn Factory
+      </a>
       <header className="lobby__head">
         <p className="kicker">Learn Factory</p>
         <h1 className="lobby__title">El Túnel</h1>

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, User, Settings, LogOut, Crown, Plus, Shield, LogIn } from "lucide-react";
+import { Search, User, Settings, LogOut, Crown, Plus, Shield, LogIn, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { getMyProfile, getPlan } from "@/app/socialActions";
@@ -64,6 +64,19 @@ export default function AppHeader({ initialQuery = "" }: { initialQuery?: string
             className="w-full bg-zinc-900 border border-zinc-800 rounded-full py-2 pl-9 pr-4 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary transition-all"
           />
         </form>
+
+        {/* El Túnel — entrada global a la experiencia inmersiva (add-on paralelo).
+            Visible para todos (también visitantes): /tunel no exige sesión.
+            Icono solo en móvil; etiqueta a partir de sm para no apretar el header. */}
+        <button
+          onClick={() => router.push("/tunel")}
+          className="flex items-center gap-1.5 bg-zinc-900/80 border border-violet-500/40 text-violet-300 hover:bg-violet-500/15 hover:border-violet-400 rounded-full px-3 sm:px-4 py-2 text-sm font-bold transition-all shrink-0"
+          aria-label="El Túnel"
+          title="El Túnel — experiencia inmersiva"
+        >
+          <Sparkles className="w-4 h-4" />
+          <span className="hidden sm:inline">El Túnel</span>
+        </button>
 
         {/* Visitante anónimo (link compartido): invitarlo a entrar */}
         {!loading && !session ? (
