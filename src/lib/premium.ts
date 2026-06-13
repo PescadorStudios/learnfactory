@@ -12,20 +12,43 @@ export const PREMIUM_QUOTA = 3;
 
 /**
  * Sube el perfil a Premium de forma idempotente y tolerante al esquema:
- *   1. Esencial: plan='premium' + route_quota (lo que el resto de la app lee).
- *      Si falla (p. ej. faltara route_quota), reintenta solo con el plan.
- *   2. Best-effort: premium_since (columna opcional; NUNCA bloquea la activación).
+ *   1. Esencial: plan='premium' (lo que el resto de la app lee). Si falla,
+ *      reintenta solo con el plan.
+ *   2. Cuota: opcional y ADITIVA. route_quota es un TOPE ACUMULADO (lo "usado"
+ *      = nº de rutas creadas, que nunca se reinicia), así que un paquete nuevo
+ *      SUMA su cuota sobre la que el usuario ya tuviera (regalos del admin
+ *      incluidos). Sin esto, comprar pisaría el tope y dejaría "usado > tope"
+ *      a quien ya hubiera gastado cuota regalada. Solo suma si grantQuota>0.
+ *   3. Best-effort: premium_since (columna opcional; NUNCA bloquea la activación).
  * Devuelve ok=true si al menos quedó plan='premium'.
+ *
+ * IMPORTANTE: como la cuota se SUMA, el llamador debe garantizar que esto se
+ * ejecuta una sola vez por pago (el candado de estado de la orden en
+ * activatePremiumByOrder lo asegura: pending→paid ocurre una única vez).
  */
 export async function upgradeProfileToPremium(
   sb: SupabaseClient,
-  userId: string
+  userId: string,
+  opts: { grantQuota?: number } = {}
 ): Promise<{ ok: boolean; error?: string }> {
-  // 1) Lo esencial: plan + cuota. Un único update que falle NO debe dejar al
-  //    usuario sin activar, así que si peta reintentamos solo con el plan.
+  const grant = Math.max(0, Math.round(opts.grantQuota ?? 0));
+
+  // 1) Lo esencial: plan (+ cuota sumada, si aplica). Un único update que falle
+  //    NO debe dejar al usuario sin activar, así que si peta reintentamos solo
+  //    con el plan. Para sumar la cuota leemos primero el tope actual.
+  const update: Record<string, unknown> = { plan: "premium" };
+  if (grant > 0) {
+    const { data: prof } = await sb
+      .from("profiles")
+      .select("route_quota")
+      .eq("id", userId)
+      .maybeSingle();
+    update.route_quota = (prof?.route_quota ?? 1) + grant;
+  }
+
   const { error: e1 } = await sb
     .from("profiles")
-    .update({ plan: "premium", route_quota: PREMIUM_QUOTA })
+    .update(update)
     .eq("id", userId);
 
   if (e1) {
@@ -102,7 +125,9 @@ export async function activatePremiumByOrder(
   }
 
   if (order.purpose === "premium") {
-    const res = await upgradeProfileToPremium(sb, order.user_id as string);
+    // Idempotente por orden (el candado de status de arriba garantiza que esto
+    // corre una sola vez), así que aquí SÍ sumamos la cuota del paquete.
+    const res = await upgradeProfileToPremium(sb, order.user_id as string, { grantQuota: PREMIUM_QUOTA });
     return {
       activated: res.ok,
       reason: res.ok ? "activated" : "upgrade-failed",

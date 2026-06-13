@@ -5,7 +5,7 @@
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { categoryLabel } from "@/lib/types";
-import { upgradeProfileToPremium } from "@/lib/premium";
+import { upgradeProfileToPremium, activatePremiumByOrder, PREMIUM_QUOTA } from "@/lib/premium";
 
 const AVATAR_BUCKET = "avatars";
 const COVER_BUCKET = "route-covers";
@@ -329,15 +329,17 @@ export async function adminActivatePremium(
   if (!admin) return { ok: false, error: "No autorizado" };
   const sb = supabaseAdmin();
 
+  // Con orden: usa el MISMO camino idempotente que el webhook. Marca la orden
+  // pagada y suma la cuota premium UNA sola vez (si ya estaba 'paid', no vuelve
+  // a sumar aunque el admin pulse el botón otra vez).
   if (orderId) {
-    const { error } = await sb
-      .from("payment_orders")
-      .update({ status: "paid", paid_at: new Date().toISOString() })
-      .eq("order_id", orderId);
-    if (error) await sb.from("payment_orders").update({ status: "paid" }).eq("order_id", orderId);
+    await activatePremiumByOrder(sb, orderId);
   }
 
-  const res = await upgradeProfileToPremium(sb, userId);
+  // Garantiza el plan aunque la orden ya estuviera 'paid' pero el perfil no se
+  // hubiera subido (caso típico de remediación). Sin orden es activación manual
+  // pura → otorga la cuota premium; con orden la cuota ya la sumó el paso anterior.
+  const res = await upgradeProfileToPremium(sb, userId, { grantQuota: orderId ? 0 : PREMIUM_QUOTA });
   if (!res.ok) return { ok: false, error: res.error || "No se pudo activar Premium." };
   console.log(`[Admin] ✓ Premium activado a mano para ${userId}${orderId ? ` (orden ${orderId})` : ""}.`);
   return { ok: true };
