@@ -253,6 +253,27 @@ export function categoryLabel(id: string): string {
   return ROUTE_CATEGORIES.find(c => c.id === id)?.label ?? "Otros";
 }
 
+// Tipos de fuente que el usuario puede pedirle a la IA que busque en la web.
+// Dan granularidad a "IA busca las mejores fuentes": el usuario acota qué clase
+// de material quiere (libros, papers, video...) antes de la búsqueda con grounding.
+export const SOURCE_TYPES = [
+  { id: "libros",        label: "Libros" },
+  { id: "papers",        label: "Papers académicos" },
+  { id: "conferencias",  label: "Conferencias / video" },
+  { id: "articulos",     label: "Artículos divulgativos" },
+  { id: "documentacion", label: "Documentación oficial" },
+] as const;
+
+export type SourceTypeId = (typeof SOURCE_TYPES)[number]["id"];
+
+/** Una fuente real descubierta por la búsqueda web con grounding de la IA. */
+export interface DiscoveredSource {
+  title: string;
+  url: string;
+  type: SourceTypeId;
+  why: string; // 1 línea: por qué es buena fuente (autoridad/calidad)
+}
+
 export interface PlanState {
   plan: Plan;
   routeQuota: number;

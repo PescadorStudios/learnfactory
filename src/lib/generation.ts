@@ -25,7 +25,9 @@ import type {
   SpyMission,
   SubtitleCue,
   CopilotCheckpoint,
+  DiscoveredSource,
 } from "./types";
+import { SOURCE_TYPES } from "./types";
 
 const apiKey = process.env.GEMINI_API_KEY || "";
 const genAI = new GoogleGenerativeAI(apiKey);
@@ -308,6 +310,83 @@ Responde SOLO con el prompt, sin comillas externas ni explicaciones.`;
   } catch (e) {
     console.warn("[CoverPrompt] Agente falló, usando prompt base:", e);
     return fallback;
+  }
+}
+
+// Descripciones que se inyectan en el prompt de búsqueda para cada tipo elegido.
+const SOURCE_TYPE_HINTS: Record<string, string> = {
+  libros: "libros y monografías de referencia (incluye la página del libro en editoriales, Google Books o Archive.org)",
+  papers: "papers académicos y artículos revisados por pares (arXiv, journals, Google Scholar, repositorios universitarios)",
+  conferencias: "conferencias, charlas y clases en video (YouTube, cursos abiertos, TED, ponencias)",
+  articulos: "artículos divulgativos de calidad y ensayos de medios o blogs con autoridad reconocida",
+  documentacion: "documentación oficial, manuales y fuentes primarias de organismos o proyectos autorizados",
+};
+
+/**
+ * Búsqueda web REAL de fuentes con grounding de Google Search: a partir del tema
+ * y los tipos de fuente que el usuario eligió, devuelve 6-10 fuentes reales
+ * (título, URL canónica, tipo y por qué es buena) para que el usuario apruebe
+ * cuáles entran a la ruta. Da granularidad y elección a "IA busca las mejores
+ * fuentes". Sin API key (o ante cualquier fallo) devuelve [].
+ */
+export async function findSourcesOnline(
+  topic: string,
+  sourceTypes: string[]
+): Promise<DiscoveredSource[]> {
+  if (!apiKey) return [];
+
+  const validIds = SOURCE_TYPES.map(t => t.id) as readonly string[];
+  const chosen = sourceTypes.filter(t => validIds.includes(t));
+  const effective = chosen.length > 0 ? chosen : validIds.slice();
+  const typeList = effective.map(id => `- ${id}: ${SOURCE_TYPE_HINTS[id]}`).join("\n");
+
+  try {
+    // Grounding: modelo con Google Search. No se fuerza responseMimeType json
+    // (combinarlo con tools falla en el SDK); se pide JSON en el prompt y se parsea.
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      tools: [{ googleSearch: {} }] as unknown as Parameters<typeof genAI.getGenerativeModel>[0]["tools"],
+    });
+
+    const prompt = `Eres el bibliotecario experto de "LearnFactory". El usuario quiere dominar el tema: "${topic}".
+
+Busca en la web las MEJORES fuentes para aprenderlo, restringiéndote EXCLUSIVAMENTE a estos tipos de fuente:
+${typeList}
+
+Para cada candidata evalúa autoridad del autor/editor, calidad y rigor, y posibles sesgos; descarta lo de baja calidad, contenido de pago cerrado o enlaces rotos. Devuelve entre 6 y 10 fuentes excelentes y reales.
+
+REGLAS:
+- "url" DEBE ser la URL canónica REAL y pública de la fuente (no acortadores, no enlaces de redirección, no resultados de búsqueda). Debe empezar por http.
+- "type" DEBE ser uno de estos ids exactos: ${effective.join(", ")}.
+- "why" en español, máximo 140 caracteres, explicando por qué es una fuente autorizada y de calidad.
+
+Responde SOLO con un array JSON, sin markdown ni texto adicional:
+[
+  { "title": "Título de la fuente", "url": "https://...", "type": "${effective[0]}", "why": "Por qué es buena." }
+]`;
+
+    const result = await withTimeout(
+      model.generateContent(prompt),
+      TEXT_TIMEOUT_MS,
+      "Búsqueda de fuentes con grounding"
+    );
+    const parsed = parseJsonResponse(result.response.text());
+    if (!Array.isArray(parsed)) return [];
+
+    const seen = new Set<string>();
+    const sources: DiscoveredSource[] = [];
+    for (const item of parsed) {
+      const url = typeof item?.url === "string" ? item.url.trim() : "";
+      const title = typeof item?.title === "string" ? item.title.trim() : "";
+      if (!url.startsWith("http") || !title || seen.has(url)) continue;
+      seen.add(url);
+      const type = (validIds.includes(item?.type) ? item.type : effective[0]) as DiscoveredSource["type"];
+      sources.push({ title, url, type, why: typeof item?.why === "string" ? item.why.trim() : "" });
+    }
+    return sources;
+  } catch (e) {
+    console.warn("[FindSources] La búsqueda con grounding falló:", e);
+    return [];
   }
 }
 

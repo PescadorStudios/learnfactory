@@ -3,12 +3,12 @@
 import { Suspense, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileUp, Link as LinkIcon, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Tag, ImagePlus, Wand2, UserRound } from "lucide-react";
+import { FileUp, Link as LinkIcon, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Tag, ImagePlus, Wand2, UserRound, Search, ExternalLink } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
-import { createRoute, suggestCoverPrompt } from "../routeActions";
+import { createRoute, suggestCoverPrompt, discoverSources } from "../routeActions";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
 import { extractUrls } from "@/lib/urlUtils";
-import { ROUTE_CATEGORIES } from "@/lib/types";
+import { ROUTE_CATEGORIES, SOURCE_TYPES, type DiscoveredSource } from "@/lib/types";
 import PremiumCheckout from "@/components/PremiumCheckout";
 import { LogoMark } from "@/components/Logo";
 
@@ -37,6 +37,55 @@ function Sources() {
   const [coverReference, setCoverReference] = useState<string | null>(null);
   const [craftingPrompt, setCraftingPrompt] = useState(false);
   const coverRefInputRef = useRef<HTMLInputElement>(null);
+
+  // Búsqueda de fuentes con IA: configurar (tipos) → buscar → elegir.
+  const [aiExpanded, setAiExpanded] = useState(false);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(SOURCE_TYPES.map(t => t.id));
+  const [discovering, setDiscovering] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredSource[]>([]);
+  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [discoverError, setDiscoverError] = useState("");
+
+  const toggleType = (id: string) => {
+    setSelectedTypes(prev => (prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]));
+  };
+
+  const handleDiscover = async () => {
+    if (!token || discovering) return;
+    setDiscovering(true);
+    setDiscoverError("");
+    setDiscovered([]);
+    setChosen(new Set());
+    try {
+      const res = await discoverSources(token, topic, selectedTypes);
+      if (res.ok && res.sources && res.sources.length > 0) {
+        setDiscovered(res.sources);
+        setChosen(new Set(res.sources.map(s => s.url)));
+      } else {
+        setDiscoverError(res.error || "La IA no encontró fuentes esta vez. Ajusta los tipos e intenta de nuevo.");
+      }
+    } catch {
+      setDiscoverError("Error de conexión al buscar fuentes.");
+    }
+    setDiscovering(false);
+  };
+
+  const toggleChosen = (url: string) => {
+    setChosen(prev => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  };
+
+  const handleAddChosen = () => {
+    addUrls(discovered.filter(s => chosen.has(s.url)).map(s => s.url));
+    setAiExpanded(false);
+    setDiscovered([]);
+    setChosen(new Set());
+    setDiscoverError("");
+  };
 
   const handleCraftPrompt = async () => {
     if (!token || craftingPrompt) return;
@@ -269,18 +318,144 @@ function Sources() {
             transition={{ delay: 0.3 }}
             className="md:col-span-2 relative overflow-hidden p-1 rounded-3xl bg-gradient-to-r from-primary/20 via-secondary/20 to-accent/20"
           >
-            <button
-              onClick={() => addSource("ai", "Búsqueda Autónoma de IA")}
-              className="w-full flex flex-col items-center justify-center p-8 bg-zinc-900/90 backdrop-blur-sm rounded-[22px] hover:bg-zinc-900/70 transition-all group"
-            >
-              <div className="w-16 h-16 bg-zinc-800 rounded-2xl flex items-center justify-center mb-4 group-hover:rotate-12 transition-transform">
-                <LogoMark className="w-9 h-9" />
-              </div>
-              <h3 className="text-xl font-semibold mb-2">IA busca las mejores fuentes</h3>
-              <p className="text-zinc-400 text-sm text-center max-w-md">
-                Encuentra automáticamente libros, conferencias y artículos evaluando autoridad, calidad y sesgos.
-              </p>
-            </button>
+            <div className="bg-zinc-900/90 backdrop-blur-sm rounded-[22px]">
+              <AnimatePresence mode="wait">
+                {!aiExpanded ? (
+                  <motion.button
+                    key="ai-idle"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={() => setAiExpanded(true)}
+                    className="w-full flex flex-col items-center justify-center p-8 hover:bg-zinc-900/40 rounded-[22px] transition-all group"
+                  >
+                    <div className="w-16 h-16 bg-zinc-800 rounded-2xl flex items-center justify-center mb-4 group-hover:rotate-12 transition-transform">
+                      <LogoMark className="w-9 h-9" />
+                    </div>
+                    <h3 className="text-xl font-semibold mb-2">IA busca las mejores fuentes</h3>
+                    <p className="text-zinc-400 text-sm text-center max-w-md">
+                      Elige qué tipo de material quieres y la IA busca en la web fuentes reales, evaluando autoridad, calidad y sesgos. Tú apruebas cuáles entran.
+                    </p>
+                  </motion.button>
+                ) : (
+                  <motion.div
+                    key="ai-panel"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    className="p-6 md:p-7"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold flex items-center gap-2">
+                        <LogoMark className="w-5 h-5" /> Búsqueda de fuentes con IA
+                      </h3>
+                      <button
+                        onClick={() => setAiExpanded(false)}
+                        className="text-zinc-500 hover:text-white transition-colors"
+                        aria-label="Cerrar"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Granularidad: tipos de fuente */}
+                    <p className="text-xs uppercase tracking-wider text-zinc-500 font-bold mb-2">¿Qué tipo de fuentes quieres?</p>
+                    <div className="flex flex-wrap gap-2 mb-5">
+                      {SOURCE_TYPES.map(t => {
+                        const active = selectedTypes.includes(t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => toggleType(t.id)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-all ${
+                              active
+                                ? "bg-primary/15 border-primary/50 text-primary"
+                                : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700"
+                            }`}
+                          >
+                            {active && <Check className="w-3.5 h-3.5" />}
+                            {t.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleDiscover}
+                      disabled={discovering || selectedTypes.length === 0}
+                      className="w-full inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary-hover text-white font-bold rounded-xl px-5 py-3 transition-all disabled:opacity-50"
+                    >
+                      {discovering ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5" />}
+                      {discovering ? "Buscando en la web..." : discovered.length > 0 ? "Buscar de nuevo" : "Buscar fuentes"}
+                    </button>
+
+                    {discoverError && <p className="text-amber-400/90 text-sm mt-3 text-center">{discoverError}</p>}
+
+                    {/* Elección: fuentes descubiertas */}
+                    {discovered.length > 0 && (
+                      <div className="mt-5">
+                        <p className="text-xs uppercase tracking-wider text-zinc-500 font-bold mb-2">
+                          Fuentes encontradas — elige las que entran ({chosen.size}/{discovered.length})
+                        </p>
+                        <ul className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                          {discovered.map(s => {
+                            const isChosen = chosen.has(s.url);
+                            const typeLabel = SOURCE_TYPES.find(t => t.id === s.type)?.label ?? s.type;
+                            return (
+                              <li
+                                key={s.url}
+                                className={`flex items-start gap-3 p-3 rounded-xl border transition-all ${
+                                  isChosen ? "bg-primary/5 border-primary/40" : "bg-zinc-900 border-zinc-800"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => toggleChosen(s.url)}
+                                  className={`mt-0.5 w-5 h-5 shrink-0 rounded-md border flex items-center justify-center transition-all ${
+                                    isChosen ? "bg-primary border-primary" : "border-zinc-600 hover:border-zinc-400"
+                                  }`}
+                                  aria-label={isChosen ? "Quitar" : "Añadir"}
+                                >
+                                  {isChosen && <Check className="w-3.5 h-3.5 text-white" />}
+                                </button>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-sm font-medium text-white">{s.title}</span>
+                                    <span className="text-[10px] uppercase tracking-wide bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded">{typeLabel}</span>
+                                  </div>
+                                  {s.why && <p className="text-xs text-zinc-500 mt-0.5">{s.why}</p>}
+                                  <a
+                                    href={s.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    className="text-xs text-secondary/80 hover:text-secondary inline-flex items-center gap-1 mt-1 break-all"
+                                  >
+                                    <ExternalLink className="w-3 h-3 shrink-0" />
+                                    {s.url.replace(/^https?:\/\//, "")}
+                                  </a>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        <button
+                          type="button"
+                          onClick={handleAddChosen}
+                          disabled={chosen.size === 0}
+                          className="w-full mt-4 inline-flex items-center justify-center gap-2 bg-white text-zinc-950 font-bold rounded-xl px-5 py-3 hover:bg-zinc-200 transition-all disabled:opacity-50"
+                        >
+                          Añadir {chosen.size > 0 ? `${chosen.size} ` : ""}fuente{chosen.size === 1 ? "" : "s"}
+                          <ArrowRight className="w-5 h-5" />
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </motion.div>
         </div>
 

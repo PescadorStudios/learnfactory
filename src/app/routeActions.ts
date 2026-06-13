@@ -14,6 +14,7 @@ import {
   generateCoverImage,
   buildCoverPrompt,
   craftCoverPrompt,
+  findSourcesOnline,
 } from "@/lib/generation";
 import type {
   Tree,
@@ -30,8 +31,9 @@ import type {
   AttentionMode,
   AttentionData,
   RouteCategory,
+  DiscoveredSource,
 } from "@/lib/types";
-import { ROUTE_CATEGORIES } from "@/lib/types";
+import { ROUTE_CATEGORIES, SOURCE_TYPES } from "@/lib/types";
 import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
 
 const AUDIO_BUCKET = "lesson-audio";
@@ -267,6 +269,29 @@ export async function suggestCoverPrompt(
   if (!t) return { ok: false, error: "Primero escribe el tema de la ruta." };
   const prompt = await craftCoverPrompt(t, idea.trim().slice(0, 300), hasReference);
   return { ok: true, prompt };
+}
+
+/**
+ * Búsqueda web real de fuentes para "IA busca las mejores fuentes": acota por los
+ * tipos de fuente que el usuario eligió y devuelve fuentes reales (con grounding)
+ * para que apruebe cuáles entran a la ruta.
+ */
+export async function discoverSources(
+  token: string,
+  topic: string,
+  sourceTypes: string[]
+): Promise<{ ok: boolean; sources?: DiscoveredSource[]; error?: string }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+
+  const t = topic.trim().slice(0, 140);
+  if (!t) return { ok: false, error: "Primero escribe el tema de la ruta." };
+
+  const validIds = SOURCE_TYPES.map(s => s.id) as readonly string[];
+  const types = (Array.isArray(sourceTypes) ? sourceTypes : []).filter(s => validIds.includes(s));
+
+  const sources = await findSourcesOnline(t, types);
+  return { ok: true, sources };
 }
 
 /** Decodifica base64 (con o sin prefijo data URL) a referencia para Gemini. */
