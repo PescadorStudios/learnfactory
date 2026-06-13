@@ -37,23 +37,30 @@ Este MVP se construye **por fases** (ver el prompt original). Estado actual:
 |---|---|---|
 | **1 — Esqueleto + datos** | Proyecto Vite/React/TS, contrato de datos, mock provider (3 nichos), lobby de selección, ensamblaje del grafo del riel en runtime + visualización debug | ✅ **Lista** |
 | **2 — El mundo neuronal** | Túnel procedural (tubo sobre `CatmullRomCurve3`), shader GLSL de corriente neuronal, partículas sinápticas, scroll→avance con inercia (lenis + resorte), avance automático (trance), forks con swipe / ← → y la vena no elegida alejándose, `prefers-reduced-motion` | ✅ **Lista** |
-| 3 — Estaciones + retos | Atraque a la estación, los dos minijuegos completos, captura de `reward` | ⏳ pendiente |
+| **3 — Estaciones + retos** | Atraque con frenado a cada estación, los dos minijuegos jugables (**El Impostor** y **Subtítulos Trampa**), captura del `reward` y datos acumulados en el HUD | ✅ **Lista** |
 | 4 — HUD + estado + biofeedback | Narrador, scoring, el mundo reacciona al desempeño | ⏳ pendiente |
-| 5 — Salida + pulido | Recap compartible, `prefers-reduced-motion`, performance móvil | ⏳ pendiente |
+| 5 — Salida + pulido | Recap compartible, audio real (TTS/Howler), performance móvil | ⏳ pendiente |
 
 El flujo entra al **mundo 3D** (Capa 1), que recorre un *path activo* derivado
-del **mismo** grafo `Rail` (Capa 0) según las decisiones en los forks. El **mapa
-cenital** de la Fase 1 queda como vista debug, accesible con el botón **"Mapa"**
-dentro del túnel.
+del **mismo** grafo `Rail` (Capa 0) según las decisiones en los forks. Al llegar
+a una **estación** la cámara **frena y atraca**: se monta su reto (Capa 3); al
+resolverlo se **captura el `reward`** y el viaje se reanuda hacia la siguiente
+parada. El **mapa cenital** de la Fase 1 queda como vista debug, accesible con el
+botón **"Mapa"** dentro del túnel.
 
-### Controles (Fase 2)
+### Controles
 
 - **Scroll / rueda / arrastre táctil:** acelera el avance. Sin tocar nada, el
   túnel deriva solo (estado de trance).
 - **En una bifurcación:** swipe izquierda/derecha, o teclas **← ↑ →**, o clic en
   una tarjeta. La vena elegida se recorre; la no elegida queda atrás, brillando.
-- **`prefers-reduced-motion`:** mismo recorrido y mismas decisiones, pero sin
-  balanceo ni roll de cámara y con menos partículas (anti-mareo).
+- **En una estación (reto):**
+  - **El Impostor** — toca el dato falso (o teclas **1-9**) antes de que se acabe
+    el tiempo.
+  - **Subtítulos Trampa** — los subtítulos pasan solos; toca el subtítulo (o
+    **Espacio**) cuando uno **mienta**. Escaneos limitados.
+- **`prefers-reduced-motion`:** mismo recorrido, decisiones y retos, pero sin
+  balanceo/roll de cámara, menos partículas y sin animaciones de overlay.
 
 ---
 
@@ -111,7 +118,7 @@ tocar el motor.
 | **0 — El Riel** | El viaje como **grafo** (`nodes`, `edges`, `forks`, `branches`), ensamblado en runtime desde la selección. El viaje es configuración, no un asset. | `src/types/rail.ts`, `src/rail/assembleRail.ts` |
 | **1 — El Mundo** | Corredor procedural neuronal en react-three-fiber. Lee solo del Rail (vía el *path activo*). | `src/world/*`, `src/screens/Tunnel.tsx` |
 | **2 — Las Estaciones** | Cada nodo es un momento de una lección, con su reto. | `Pod` en `src/types/contract.ts` |
-| **3 — El HUD semántico** | Frases, narrador, micro-copy y UI de los retos, en React encima del canvas. | `src/screens/*` |
+| **3 — El HUD semántico** | Frases, micro-copy y UI de los retos, en React encima del canvas. | `src/screens/StationChallenge.tsx`, `src/games/*` |
 | **4 — El Motor de estado** | Fase del viaje, selección, riel; luego velocidad/posición/score/capturas. | `src/state/journeyStore.ts` |
 
 **Principio:** cambiar una frase (Capa 3) o un shader (Capa 1) no debe requerir
@@ -131,8 +138,9 @@ Al confirmar la selección (`startJourney`):
 
 ### Puntos de extensión (comentados en el código)
 
-- **Reto nuevo:** añade un miembro a la unión `Challenge` (`contract.ts`) y su
-  renderer en Capa 3. El riel no cambia.
+- **Reto nuevo:** añade un miembro a la unión `Challenge` (`contract.ts`) y un
+  `case` en `StationChallenge.tsx` con su componente. El `switch` es exhaustivo
+  (TypeScript marca si falta un renderer). El riel y el motor no cambian.
 - **Color por nicho:** `src/theme.ts` deriva el color con un hash del nombre del
   nicho (sin nombres hardcodeados).
 - **Densidad de forks:** constante `CROSS_EVERY` en `assembleRail.ts`.
@@ -143,4 +151,7 @@ Al confirmar la selección (`startJourney`):
 
 Vite · React · TypeScript · zustand (estado) · three / @react-three/fiber /
 @react-three/drei (mundo 3D, Fase 2) · lenis + @react-spring/web (scroll→`t`,
-Fase 2) · howler (audio de los retos, Fase 3).
+Fase 2) · howler (reservado para el audio real de los retos; el mock no trae
+audio, así que **Subtítulos Trampa** corre sobre un reloj virtual cronometrado
+con los `start`/`end` de cada segmento — listo para anclarse a `currentTime`
+cuando llegue un `audioUrl`).

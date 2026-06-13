@@ -1,10 +1,15 @@
 // ============================================================================
-// EL TÚNEL — pantalla del mundo neuronal (Fase 2).
+// EL TÚNEL — pantalla del mundo neuronal (Fases 2-3).
 // ----------------------------------------------------------------------------
 // Monta el <Canvas> (Capa 1) que lee el path activo derivado del grafo (Capa 0)
 // y el HUD en DOM (Capa 3) por encima: barra de progreso, prompt de bifurcación
-// (swipe / ← →) y la salida. Nada temático vive aquí: el color y los títulos
-// salen del grafo. El scroll (lenis) alimenta el avance vía useScrollDrive.
+// (swipe / ← →), el reto de la estación atracada y la salida. Nada temático vive
+// aquí: el color, los títulos y los retos salen del grafo. El scroll (lenis)
+// alimenta el avance vía useScrollDrive.
+//
+// Fase 3: calcula la distancia de cada estación sobre la curva y el "gate" =
+// próxima estación sin resolver (o fin/fork). El rig frena y atraca ahí; al
+// resolver el reto, el gate avanza y la cámara reanuda.
 // ============================================================================
 
 import { useEffect, useMemo, useRef } from "react";
@@ -19,6 +24,7 @@ import { TunnelTube } from "../world/TunnelTube";
 import { SynapticParticles } from "../world/SynapticParticles";
 import { StationLights } from "../world/StationLights";
 import { ForkVeins } from "../world/ForkVeins";
+import { StationChallenge } from "./StationChallenge";
 import type { TunnelRuntime } from "../world/types";
 import type { ForkDirection, RailFork } from "../types/rail";
 
@@ -29,6 +35,9 @@ export function Tunnel() {
   const showForkPrompt = useJourney((s) => s.showForkPrompt);
   const progressPct = useJourney((s) => s.progressPct);
   const atEnd = useJourney((s) => s.atEnd);
+  const completed = useJourney((s) => s.completed);
+  const activeStationId = useJourney((s) => s.activeStationId);
+  const captured = useJourney((s) => s.captured);
   const toggleDebug = useJourney((s) => s.toggleDebug);
   const backToLobby = useJourney((s) => s.backToLobby);
   const setReducedMotion = useJourney((s) => s.setReducedMotion);
@@ -53,6 +62,44 @@ export function Tunnel() {
   );
   const curve = useMemo(() => (path ? buildCurve(path.nodes) : null), [path]);
   const length = useMemo(() => (curve ? curve.getLength() : 0), [curve]);
+
+  // Distancia (longitud de arco) de cada nodo del path sobre la curva. El nodo i
+  // de n cae en t=i/(n-1); con divisiones múltiplo de (n-1) leemos su arco exacto.
+  const nodeDistances = useMemo(() => {
+    if (!curve || !path || path.nodes.length < 2) return [] as number[];
+    const n = path.nodes.length;
+    const SUB = 40;
+    const lengths = curve.getLengths(SUB * (n - 1)); // tamaño SUB*(n-1)+1
+    const out: number[] = [];
+    for (let i = 0; i < n; i++) {
+      out.push(lengths[Math.min(lengths.length - 1, i * SUB)]);
+    }
+    return out;
+  }, [curve, path]);
+
+  // Compuerta = primera estación del path aún sin resolver (ahí se atraca). Si ya
+  // no quedan, el gate es el final de la curva (fin del trayecto o nodo de fork).
+  const { gateDistance, dockTargetId } = useMemo(() => {
+    if (path && nodeDistances.length > 0) {
+      for (let i = 0; i < path.nodes.length; i++) {
+        const node = path.nodes[i];
+        if (node.kind === "station" && !completed[node.id]) {
+          return { gateDistance: nodeDistances[i] ?? length, dockTargetId: node.id };
+        }
+      }
+    }
+    return { gateDistance: length, dockTargetId: null as string | null };
+  }, [path, nodeDistances, completed, length]);
+
+  // Nodo atracado (si lo hay) para montar su reto en la Capa 3.
+  const activeNode = useMemo(() => {
+    if (!activeStationId) return null;
+    return (
+      path?.nodes.find((n) => n.id === activeStationId) ??
+      rail?.nodes.find((n) => n.id === activeStationId) ??
+      null
+    );
+  }, [activeStationId, path, rail]);
 
   const startPos = useMemo(() => {
     const s = rail?.nodes.find((n) => n.kind === "start");
@@ -130,6 +177,8 @@ export function Tunnel() {
           curve={curve}
           length={length}
           pendingFork={pendingFork}
+          gateDistance={gateDistance}
+          dockTargetId={dockTargetId}
           startPos={startPos}
           rt={rt}
         />
@@ -152,10 +201,16 @@ export function Tunnel() {
         <div className="hud__progress" aria-hidden>
           <span className="hud__bar" style={{ width: `${progressPct}%` }} />
         </div>
+        <span className="hud__caps" title="Datos capturados">
+          ✦ {captured.length}
+        </span>
         <button type="button" className="ghost" onClick={toggleDebug}>
           Mapa
         </button>
       </header>
+
+      {/* Reto de la estación atracada (Capa 3). key = remonta por estación. */}
+      {activeNode && <StationChallenge key={activeNode.id} node={activeNode} />}
 
       {showForkPrompt && pendingFork && (
         <div className="fork-prompt">
@@ -197,7 +252,20 @@ export function Tunnel() {
           <p className="kicker">Fin del trayecto</p>
           <h2>Saliste del túnel</h2>
           <p className="muted small">
-            El recap compartible y el scoring llegan en fases siguientes.
+            Capturaste <strong>{captured.length}</strong>{" "}
+            {captured.length === 1 ? "dato" : "datos"} sin sentir que estudiabas.
+          </p>
+          {captured.length > 0 && (
+            <ul className="end-card__caps">
+              {captured.slice(-4).map((c) => (
+                <li key={c.id}>
+                  <span aria-hidden>{c.success ? "✓" : "·"}</span> {c.reward}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="muted small">
+            El recap compartible y el scoring completos llegan en fases siguientes.
           </p>
           <div className="end-card__btns">
             <button type="button" className="cta" onClick={backToLobby}>
