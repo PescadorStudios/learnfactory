@@ -1,0 +1,367 @@
+/* ============================================================================
+   El Túnel — estilos base. Piel neuronal / bioluminiscente sobre fondo casi
+   negro. Capa 3 (HUD/DOM) en su totalidad; nada de esto vive dentro del 3D.
+   ========================================================================== */
+
+:root {
+  --bg: #06070d;
+  --panel: rgba(255, 255, 255, 0.04);
+  --panel-2: rgba(255, 255, 255, 0.06);
+  --line: rgba(255, 255, 255, 0.1);
+  --text: #e8ecf5;
+  --muted: #8a93a7;
+  --cyan: #33e1ed;
+  --violet: #b06bff;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Outfit", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.app {
+  position: relative;
+  min-height: 100%;
+  isolation: isolate;
+}
+
+/* Resplandor sináptico de fondo. */
+.bg-glow {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(60% 50% at 50% -10%, rgba(176, 107, 255, 0.18), transparent 70%),
+    radial-gradient(45% 45% at 85% 110%, rgba(51, 225, 237, 0.14), transparent 70%),
+    radial-gradient(40% 40% at 10% 80%, rgba(255, 95, 162, 0.1), transparent 70%);
+}
+
+.kicker {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+}
+.muted.small {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.error {
+  color: #ff8095;
+}
+
+/* ----------------------------------------------------------------- Lobby --- */
+
+.lobby {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: clamp(28px, 6vw, 72px) 20px 120px;
+}
+
+.lobby__title {
+  margin: 6px 0 0;
+  font-size: clamp(40px, 9vw, 72px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  background: linear-gradient(120deg, #fff, var(--cyan) 55%, var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lobby__sub {
+  margin: 16px 0 0;
+  max-width: 46ch;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.cards {
+  list-style: none;
+  margin: 40px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  background: var(--panel-2);
+}
+.card--on {
+  background: var(--panel-2);
+}
+
+.card__niche {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.card__title {
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.card__blurb {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+  flex: 1;
+}
+.card__foot {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card__pods {
+  font-size: 13px;
+  color: var(--muted);
+}
+.card__check {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.lobby__foot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px clamp(20px, 5vw, 48px);
+  background: linear-gradient(to top, rgba(6, 7, 13, 0.96), rgba(6, 7, 13, 0.6) 70%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.cta {
+  padding: 13px 26px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #06070d;
+  background: linear-gradient(120deg, var(--cyan), var(--violet));
+  box-shadow: 0 8px 30px -10px var(--violet);
+  transition: transform 0.16s ease, opacity 0.16s ease;
+}
+.cta:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.cta:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* ------------------------------------------------------------ Rail debug --- */
+
+.debug {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: clamp(24px, 5vw, 48px) 20px 60px;
+}
+
+.debug__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.debug__title {
+  margin: 6px 0 0;
+  font-size: clamp(24px, 4vw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ghost {
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.16s ease;
+}
+.ghost:hover {
+  background: var(--panel);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 22px 0 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+  color: var(--text);
+}
+.chip--niche {
+  color: var(--muted);
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.debug__body {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .debug__body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.map {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 8px;
+  overflow: auto;
+  max-height: 74vh;
+}
+
+.svg-label {
+  fill: #cdd5e6;
+  font-size: 12px;
+  font-weight: 500;
+}
+.svg-tag {
+  fill: #7b8499;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+.svg-glyph {
+  fill: #04150f;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Panel de bifurcaciones */
+.forks {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 18px;
+  position: sticky;
+  top: 20px;
+}
+.forks h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.fork-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 56vh;
+  overflow: auto;
+}
+.fork-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.fork-list li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.fork__src {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.fork__opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+.opt__arrow {
+  font-weight: 700;
+  color: var(--cyan);
+}
