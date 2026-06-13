@@ -9,6 +9,9 @@ import { useJourney } from "../state/journeyStore";
 import { NODE_END_COLOR, NODE_START_COLOR } from "../theme";
 import type { ForkDirection, RailNode } from "../types/rail";
 
+// Vista debug del grafo (Capa 0). Es la prueba de que el riel se ensambla bien;
+// se abre con "Mapa" desde el túnel (toggleDebug) o queda visible si no hay 3D.
+
 const PAD = 70;
 const COL_W = 172;
 const ROW_H = 108;
@@ -17,6 +20,7 @@ const R = 11;
 export function RailDebug() {
   const rail = useJourney((s) => s.rail);
   const back = useJourney((s) => s.backToLobby);
+  const toggleDebug = useJourney((s) => s.toggleDebug);
   if (!rail) return null;
 
   const laneCount = Math.max(1, rail.branches.length);
@@ -51,9 +55,14 @@ export function RailDebug() {
           <p className="kicker">Capa 0 · El Riel</p>
           <h2 className="debug__title">Grafo ensamblado en runtime</h2>
         </div>
-        <button type="button" className="ghost" onClick={back}>
-          ← Volver al lobby
-        </button>
+        <div className="debug__actions">
+          <button type="button" className="ghost" onClick={toggleDebug}>
+            ◐ Ver mundo 3D
+          </button>
+          <button type="button" className="ghost" onClick={back}>
+            ← Volver al lobby
+          </button>
+        </div>
       </header>
 
       <div className="chips">

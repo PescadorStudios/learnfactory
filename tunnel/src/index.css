@@ -365,3 +365,151 @@ body {
   font-weight: 700;
   color: var(--cyan);
 }
+
+.debug__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------- Túnel 3D (Fase 2) --- */
+
+.tunnel {
+  position: relative;
+}
+
+/* Sala de scroll: da recorrido a lenis. El canvas y el HUD son fixed encima. */
+.tunnel__scroll {
+  height: 300vh;
+  pointer-events: none;
+}
+
+/* HUD — DOM puro sobre el canvas (Capa 3). El contenedor no captura punteros;
+   solo sus controles, para no robarle el scroll/swipe al mundo. */
+.hud {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+.hud > * {
+  pointer-events: auto;
+}
+
+.hud__top {
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px clamp(14px, 4vw, 32px);
+  background: linear-gradient(to bottom, rgba(6, 7, 13, 0.7), transparent);
+}
+
+.hud__progress {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.hud__bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--violet));
+  transition: width 0.2s linear;
+}
+
+.fork-prompt {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: clamp(28px, 8vh, 70px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  pointer-events: none;
+}
+.fork-prompt__hint {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+.fork-prompt__opts {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+  pointer-events: auto;
+}
+.fork-card {
+  min-width: 150px;
+  max-width: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(8, 10, 18, 0.72);
+  backdrop-filter: blur(10px);
+  transition: transform 0.14s ease;
+}
+.fork-card:hover {
+  transform: translateY(-3px);
+}
+.fork-card__arrow {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+.fork-card__niche {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.fork-card__title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.end-card {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 24px;
+  background: radial-gradient(
+    60% 60% at 50% 50%,
+    rgba(6, 7, 13, 0.55),
+    rgba(6, 7, 13, 0.92)
+  );
+  backdrop-filter: blur(6px);
+}
+.end-card h2 {
+  margin: 4px 0;
+  font-size: clamp(28px, 6vw, 44px);
+  letter-spacing: -0.01em;
+}
+.end-card .muted.small {
+  max-width: 38ch;
+}
+.end-card__btns {
+  margin-top: 16px;
+}

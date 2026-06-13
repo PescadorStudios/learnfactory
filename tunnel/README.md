@@ -36,14 +36,24 @@ Este MVP se construye **por fases** (ver el prompt original). Estado actual:
 | Fase | Qué incluye | Estado |
 |---|---|---|
 | **1 — Esqueleto + datos** | Proyecto Vite/React/TS, contrato de datos, mock provider (3 nichos), lobby de selección, ensamblaje del grafo del riel en runtime + visualización debug | ✅ **Lista** |
-| 2 — El mundo neuronal | Túnel procedural sobre curva, shader de corriente neuronal, scroll→`t` con inercia, forks con swipe | ⏳ pendiente |
+| **2 — El mundo neuronal** | Túnel procedural (tubo sobre `CatmullRomCurve3`), shader GLSL de corriente neuronal, partículas sinápticas, scroll→avance con inercia (lenis + resorte), avance automático (trance), forks con swipe / ← → y la vena no elegida alejándose, `prefers-reduced-motion` | ✅ **Lista** |
 | 3 — Estaciones + retos | Atraque a la estación, los dos minijuegos completos, captura de `reward` | ⏳ pendiente |
 | 4 — HUD + estado + biofeedback | Narrador, scoring, el mundo reacciona al desempeño | ⏳ pendiente |
 | 5 — Salida + pulido | Recap compartible, `prefers-reduced-motion`, performance móvil | ⏳ pendiente |
 
-En la Fase 1 el flujo llega hasta el **mapa cenital** del riel ensamblado (vista
-debug). En la Fase 2 esa vista se reemplaza por el mundo 3D, que lee del **mismo**
-grafo `Rail`.
+El flujo entra al **mundo 3D** (Capa 1), que recorre un *path activo* derivado
+del **mismo** grafo `Rail` (Capa 0) según las decisiones en los forks. El **mapa
+cenital** de la Fase 1 queda como vista debug, accesible con el botón **"Mapa"**
+dentro del túnel.
+
+### Controles (Fase 2)
+
+- **Scroll / rueda / arrastre táctil:** acelera el avance. Sin tocar nada, el
+  túnel deriva solo (estado de trance).
+- **En una bifurcación:** swipe izquierda/derecha, o teclas **← ↑ →**, o clic en
+  una tarjeta. La vena elegida se recorre; la no elegida queda atrás, brillando.
+- **`prefers-reduced-motion`:** mismo recorrido y mismas decisiones, pero sin
+  balanceo ni roll de cámara y con menos partículas (anti-mareo).
 
 ---
 
@@ -99,7 +109,7 @@ tocar el motor.
 | Capa | Qué es | Dónde |
 |---|---|---|
 | **0 — El Riel** | El viaje como **grafo** (`nodes`, `edges`, `forks`, `branches`), ensamblado en runtime desde la selección. El viaje es configuración, no un asset. | `src/types/rail.ts`, `src/rail/assembleRail.ts` |
-| **1 — El Mundo** | Corredor procedural neuronal en react-three-fiber. Lee solo del Rail. | _(Fase 2)_ |
+| **1 — El Mundo** | Corredor procedural neuronal en react-three-fiber. Lee solo del Rail (vía el *path activo*). | `src/world/*`, `src/screens/Tunnel.tsx` |
 | **2 — Las Estaciones** | Cada nodo es un momento de una lección, con su reto. | `Pod` en `src/types/contract.ts` |
 | **3 — El HUD semántico** | Frases, narrador, micro-copy y UI de los retos, en React encima del canvas. | `src/screens/*` |
 | **4 — El Motor de estado** | Fase del viaje, selección, riel; luego velocidad/posición/score/capturas. | `src/state/journeyStore.ts` |
