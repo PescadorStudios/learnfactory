@@ -1,45 +1,42 @@
 // ============================================================================
-// EL TÚNEL — pantalla del mundo neuronal (Fases 2-3).
+// EL TÚNEL — mundo neuronal en VUELO LIBRE (Fase B).
 // ----------------------------------------------------------------------------
-// Monta el <Canvas> (Capa 1) que lee el path activo derivado del grafo (Capa 0)
-// y el HUD en DOM (Capa 3) por encima: barra de progreso, prompt de bifurcación
-// (swipe / ← →), el reto de la estación atracada y la salida. Nada temático vive
-// aquí: el color, los títulos y los retos salen del grafo. El scroll (lenis)
-// alimenta el avance vía useScrollDrive.
+// Monta el <Canvas> (Capa 1) que dibuja TODA la red (filamentos + orbes) y el HUD
+// en DOM (Capa 3) por encima. La cámara la pilota el usuario con useFlyControls
+// (arrastrar para volar / WASD-flechas) CON INERCIA: solo anda cuando la mueve.
+// Nada temático vive aquí: color, títulos y retos salen del grafo (Capa 0).
 //
-// Fase 3: calcula la distancia de cada estación sobre la curva y el "gate" =
-// próxima estación sin resolver (o fin/fork). El rig frena y atraca ahí; al
-// resolver el reto, el gate avanza y la cámara reanuda.
+// Navegación: avanzar / retroceder / cambiar de vena en los cruces (rumbo). Al
+// acercarse a una estación y frenar aparece "Entrar" (el piloto decide; nada lo
+// arrastra). Las estaciones son re-entrables. "Finalizar" abre el Recap.
 // ============================================================================
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useJourney } from "../state/journeyStore";
-import { useScrollDrive } from "../hooks/useScrollDrive";
-import { buildCurve, resolvePath } from "../world/journeyPath";
+import { useFlyControls } from "../hooks/useFlyControls";
 import { colorForNiche } from "../theme";
 import { CameraRig } from "../world/CameraRig";
-import { TunnelTube } from "../world/TunnelTube";
-import { SynapticParticles } from "../world/SynapticParticles";
+import { NeuralWeb } from "../world/NeuralWeb";
+import { DustField } from "../world/DustField";
 import { StationLights } from "../world/StationLights";
-import { ForkVeins } from "../world/ForkVeins";
 import { StationChallenge } from "./StationChallenge";
 import { Narrator } from "./Narrator";
 import { Recap } from "./Recap";
 import { stopVoice } from "../audio/voice";
 import type { TunnelRuntime } from "../world/types";
-import type { ForkDirection, RailFork } from "../types/rail";
 
 export function Tunnel() {
   const rail = useJourney((s) => s.rail);
-  const choices = useJourney((s) => s.choices);
   const reduced = useJourney((s) => s.reducedMotion);
-  const showForkPrompt = useJourney((s) => s.showForkPrompt);
   const progressPct = useJourney((s) => s.progressPct);
   const atEnd = useJourney((s) => s.atEnd);
   const completed = useJourney((s) => s.completed);
   const activeStationId = useJourney((s) => s.activeStationId);
+  const nearestStationId = useJourney((s) => s.nearestStationId);
+  const canEnter = useJourney((s) => s.canEnter);
+  const enterStation = useJourney((s) => s.enterStation);
+  const finishJourney = useJourney((s) => s.finishJourney);
   const captured = useJourney((s) => s.captured);
   const streak = useJourney((s) => s.streak);
   const muted = useJourney((s) => s.muted);
@@ -47,9 +44,9 @@ export function Tunnel() {
   const toggleDebug = useJourney((s) => s.toggleDebug);
   const backToLobby = useJourney((s) => s.backToLobby);
   const setReducedMotion = useJourney((s) => s.setReducedMotion);
+  const narrate = useJourney((s) => s.narrate);
 
-  // Móvil / pantalla táctil: baja DPR y densidad de partículas para sostener
-  // el framerate. Es PERFORMANCE, no contenido — no toca el motor ni el tema.
+  // Móvil / táctil: baja DPR y densidad de motas. PERFORMANCE, no contenido.
   const [lowPower, setLowPower] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(pointer: coarse), (max-width: 640px)");
@@ -59,7 +56,7 @@ export function Tunnel() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  // Accesibilidad: detecta prefers-reduced-motion y reacciona a cambios.
+  // Accesibilidad: prefers-reduced-motion (el rig suaviza/quita el giro y el balanceo).
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     setReducedMotion(mq.matches);
@@ -68,147 +65,64 @@ export function Tunnel() {
     return () => mq.removeEventListener("change", onChange);
   }, [setReducedMotion]);
 
-  // scroll → avance (inercia). lenis vive mientras el túnel está montado.
-  useScrollDrive(true);
+  // Input de vuelo (arrastrar / teclado). Vive mientras el túnel está montado.
+  const input = useFlyControls(true);
 
   const rt = useRef<TunnelRuntime>({ speed: 0, u: 0, distance: 0, energy: 0.5 });
 
-  const path = useMemo(
-    () => (rail ? resolvePath(rail, choices) : null),
-    [rail, choices]
+  const activeNode = useMemo(
+    () => (activeStationId ? rail?.nodes.find((n) => n.id === activeStationId) ?? null : null),
+    [activeStationId, rail]
   );
-  const curve = useMemo(() => (path ? buildCurve(path.nodes) : null), [path]);
-  const length = useMemo(() => (curve ? curve.getLength() : 0), [curve]);
+  const nearestNode = useMemo(
+    () => (nearestStationId ? rail?.nodes.find((n) => n.id === nearestStationId) ?? null : null),
+    [nearestStationId, rail]
+  );
 
-  // Distancia (longitud de arco) de cada nodo del path sobre la curva. El nodo i
-  // de n cae en t=i/(n-1); con divisiones múltiplo de (n-1) leemos su arco exacto.
-  const nodeDistances = useMemo(() => {
-    if (!curve || !path || path.nodes.length < 2) return [] as number[];
-    const n = path.nodes.length;
-    const SUB = 40;
-    const lengths = curve.getLengths(SUB * (n - 1)); // tamaño SUB*(n-1)+1
-    const out: number[] = [];
-    for (let i = 0; i < n; i++) {
-      out.push(lengths[Math.min(lengths.length - 1, i * SUB)]);
-    }
-    return out;
-  }, [curve, path]);
-
-  // Compuerta = primera estación del path aún sin resolver (ahí se atraca). Si ya
-  // no quedan, el gate es el final de la curva (fin del trayecto o nodo de fork).
-  const { gateDistance, dockTargetId } = useMemo(() => {
-    if (path && nodeDistances.length > 0) {
-      for (let i = 0; i < path.nodes.length; i++) {
-        const node = path.nodes[i];
-        if (node.kind === "station" && !completed[node.id]) {
-          return { gateDistance: nodeDistances[i] ?? length, dockTargetId: node.id };
-        }
-      }
-    }
-    return { gateDistance: length, dockTargetId: null as string | null };
-  }, [path, nodeDistances, completed, length]);
-
-  // Nodo atracado (si lo hay) para montar su reto en la Capa 3.
-  const activeNode = useMemo(() => {
-    if (!activeStationId) return null;
-    return (
-      path?.nodes.find((n) => n.id === activeStationId) ??
-      rail?.nodes.find((n) => n.id === activeStationId) ??
-      null
-    );
-  }, [activeStationId, path, rail]);
-
-  const startPos = useMemo(() => {
-    const s = rail?.nodes.find((n) => n.kind === "start");
-    return new THREE.Vector3(
-      s?.position.x ?? 0,
-      s?.position.y ?? 0,
-      s?.position.z ?? 0
-    );
-  }, [rail]);
-
-  // Color de la vena activa = el nicho de la última estación recorrida.
-  const activeColor = useMemo(() => {
-    if (path) {
-      for (let i = path.nodes.length - 1; i >= 0; i--) {
-        const niche = path.nodes[i].niche;
-        if (niche) return colorForNiche(niche);
-      }
-    }
-    return "#33e1ed";
-  }, [path]);
-
-  // pendingFork accesible desde los handlers de input (sin re-suscribir).
-  const pendingRef = useRef<RailFork | null>(null);
-  pendingRef.current = path?.pendingFork ?? null;
-
-  const downX = useRef<number | null>(null);
-
-  // Teclas ← ↑ → (la ↑/Enter elige la opción central).
+  // Enter = entrar a la estación cercana (además del botón del prompt).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!useJourney.getState().showForkPrompt) return;
-      const f = pendingRef.current;
-      if (!f) return;
-      if (e.key === "ArrowLeft") commit(f, "left");
-      else if (e.key === "ArrowRight") commit(f, "right");
-      else if (e.key === "ArrowUp" || e.key === "Enter") commit(f, "straight");
+      if (e.key !== "Enter") return;
+      const s = useJourney.getState();
+      if (s.canEnter && s.nearestStationId && !s.activeStationId && !s.atEnd) {
+        e.preventDefault();
+        s.enterStation(s.nearestStationId);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  if (!rail || !path) return null;
-  const pendingFork = path.pendingFork;
+  // Al recorrer toda la red, el narrador lo celebra una vez (no fuerza el fin).
+  const allDoneRef = useRef(false);
+  useEffect(() => {
+    if (!rail) return;
+    const done = Object.keys(completed).length;
+    if (done >= rail.meta.stationCount && rail.meta.stationCount > 0 && !allDoneRef.current) {
+      allDoneRef.current = true;
+      narrate("Recorriste toda la red. Finaliza el viaje cuando quieras.", "streak");
+    }
+  }, [completed, rail, narrate]);
+
+  if (!rail) return null;
+
+  const enterColor = nearestNode?.niche ? colorForNiche(nearestNode.niche) : "#33e1ed";
 
   return (
-    <div
-      className="tunnel"
-      onPointerDown={(e) => {
-        downX.current = e.clientX;
-      }}
-      onPointerUp={(e) => {
-        const x0 = downX.current;
-        downX.current = null;
-        if (x0 == null) return;
-        const f = pendingRef.current;
-        if (!f || !useJourney.getState().showForkPrompt) return;
-        const dx = e.clientX - x0;
-        if (dx <= -45) commit(f, "left");
-        else if (dx >= 45) commit(f, "right");
-      }}
-    >
-      {/* Sala de scroll para lenis (el canvas es fixed por encima). */}
-      <div className="tunnel__scroll" aria-hidden />
-
+    <div className="tunnel" style={rootStyle}>
       <Canvas
         style={{ position: "fixed", inset: 0 }}
         dpr={lowPower ? [1, 1.5] : [1, 2]}
-        camera={{ fov: 74, near: 0.1, far: 300, position: [0, 0, -8] }}
+        camera={{ fov: 72, near: 0.1, far: 320, position: [0, 0, -8] }}
         gl={{ antialias: !lowPower, powerPreference: "high-performance" }}
       >
-        <color attach="background" args={["#06070d"]} />
-        <fog attach="fog" args={["#06070d", 16, 95]} />
-        <ambientLight intensity={0.25} />
-        <CameraRig
-          curve={curve}
-          length={length}
-          pendingFork={pendingFork}
-          gateDistance={gateDistance}
-          dockTargetId={dockTargetId}
-          startPos={startPos}
-          rt={rt}
-        />
-        <TunnelTube curve={curve} colorHex={activeColor} rt={rt} />
-        <SynapticParticles
-          curve={curve}
-          colorHex={activeColor}
-          rt={rt}
-          reduced={reduced}
-          lowPower={lowPower}
-        />
-        <StationLights nodes={path.nodes} />
-        <ForkVeins rail={rail} choices={choices} pendingFork={pendingFork} />
+        <color attach="background" args={["#05060c"]} />
+        <fog attach="fog" args={["#05060c", 14, 90]} />
+        <ambientLight intensity={0.3} />
+        <CameraRig rail={rail} input={input} rt={rt} />
+        <NeuralWeb rail={rail} />
+        <StationLights nodes={rail.nodes} />
+        <DustField rail={rail} reduced={reduced} lowPower={lowPower} />
       </Canvas>
 
       {/* ---------------------------------------------------- HUD (Capa 3) --- */}
@@ -231,78 +145,129 @@ export function Tunnel() {
           type="button"
           className="ghost hud__mute"
           onClick={() => {
-            if (!muted) stopVoice(); // silenciar = cortar la voz ya
+            if (!muted) stopVoice();
             toggleMuted();
           }}
           title={muted ? "Activar voz" : "Silenciar voz"}
-          aria-label={muted ? "Activar voz de los subtítulos" : "Silenciar voz"}
+          aria-label={muted ? "Activar voz" : "Silenciar voz"}
         >
           {muted ? "🔇" : "🔊"}
         </button>
         <button type="button" className="ghost" onClick={toggleDebug}>
           Mapa
         </button>
+        <button
+          type="button"
+          className="ghost"
+          onClick={finishJourney}
+          title="Terminar el viaje y ver el resumen"
+        >
+          Finalizar
+        </button>
       </header>
 
-      {/* Narrador reactivo (Capa 3): se desvanece solo. */}
+      {/* Narrador reactivo (se desvanece solo). */}
       <Narrator />
 
-      {/* Reto de la estación atracada (Capa 3). key = remonta por estación. */}
+      {/* Estación atracada (pantalla completa). key = remonta por estación. */}
       {activeNode && <StationChallenge key={activeNode.id} node={activeNode} />}
 
-      {showForkPrompt && pendingFork && (
-        <div className="fork-prompt">
-          <p className="fork-prompt__hint">Elige tu camino · desliza o usa ← →</p>
-          <div className="fork-prompt__opts">
-            {pendingFork.options.map((o) => {
-              const color = o.niche ? colorForNiche(o.niche) : "#94a3b8";
-              return (
-                <button
-                  key={o.edgeId}
-                  type="button"
-                  className="fork-card"
-                  style={{
-                    borderColor: color,
-                    boxShadow: `0 0 26px -8px ${color}`,
-                  }}
-                  onClick={() =>
-                    useJourney.getState().commitFork(pendingFork.atNodeId, o.edgeId)
-                  }
-                >
-                  <span className="fork-card__arrow" style={{ color }}>
-                    {arrow(o.direction)}
-                  </span>
-                  {o.niche && (
-                    <span className="fork-card__niche" style={{ color }}>
-                      {o.niche}
-                    </span>
-                  )}
-                  <span className="fork-card__title">{o.title}</span>
-                </button>
-              );
-            })}
+      {/* Prompt de entrada por proximidad o, si no, la pista de controles. */}
+      {!activeStationId &&
+        !atEnd &&
+        (canEnter && nearestNode ? (
+          <div data-no-drag style={enterWrap}>
+            <button
+              type="button"
+              onClick={() => enterStation(nearestNode.id)}
+              style={{
+                ...enterBtn,
+                borderColor: enterColor,
+                boxShadow: `0 0 30px -10px ${enterColor}`,
+              }}
+            >
+              {nearestNode.niche && (
+                <span style={{ ...enterNiche, color: enterColor }}>{nearestNode.niche}</span>
+              )}
+              <span style={enterTitle}>{nearestNode.title}</span>
+              <span style={{ ...enterCta, color: enterColor }}>Entrar ⏎</span>
+            </button>
           </div>
-        </div>
-      )}
+        ) : (
+          <div style={hintWrap} aria-hidden>
+            <span style={hintText}>
+              Arrastra para volar · ← → cambia de vena · acércate a una neurona y frena para entrar
+            </span>
+          </div>
+        ))}
 
       {atEnd && <Recap />}
     </div>
   );
 }
 
-function commit(f: RailFork, dir: ForkDirection) {
-  const opt = optionForDir(f, dir);
-  if (opt) useJourney.getState().commitFork(f.atNodeId, opt.edgeId);
-}
-
-function optionForDir(f: RailFork, dir: ForkDirection) {
-  const o = f.options;
-  if (o.length === 0) return undefined;
-  if (dir === "left") return o[0];
-  if (dir === "right") return o[o.length - 1];
-  return o[Math.floor(o.length / 2)];
-}
-
-function arrow(d: ForkDirection): string {
-  return d === "left" ? "←" : d === "right" ? "→" : "↑";
-}
+// --- Estilos inline del HUD nuevo (no dependen del CSS del túnel). -----------
+const rootStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  overflow: "hidden",
+  touchAction: "none",
+};
+const enterWrap: CSSProperties = {
+  position: "fixed",
+  left: "50%",
+  bottom: "8%",
+  transform: "translateX(-50%)",
+  zIndex: 40,
+};
+const enterBtn: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 4,
+  padding: "14px 28px",
+  borderRadius: 22,
+  border: "2px solid",
+  background: "rgba(8,10,18,0.82)",
+  color: "#fff",
+  cursor: "pointer",
+  backdropFilter: "blur(6px)",
+  minWidth: 200,
+};
+const enterNiche: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 800,
+  letterSpacing: "0.14em",
+  textTransform: "uppercase",
+};
+const enterTitle: CSSProperties = {
+  fontSize: 17,
+  fontWeight: 700,
+  lineHeight: 1.2,
+  textAlign: "center",
+};
+const enterCta: CSSProperties = {
+  fontSize: 13,
+  fontWeight: 800,
+  letterSpacing: "0.08em",
+  marginTop: 2,
+};
+const hintWrap: CSSProperties = {
+  position: "fixed",
+  left: "50%",
+  bottom: "5%",
+  transform: "translateX(-50%)",
+  zIndex: 30,
+  pointerEvents: "none",
+  maxWidth: "92vw",
+};
+const hintText: CSSProperties = {
+  fontSize: 12.5,
+  color: "rgba(220,230,255,0.66)",
+  background: "rgba(6,8,15,0.5)",
+  padding: "7px 16px",
+  borderRadius: 999,
+  border: "1px solid rgba(120,150,220,0.18)",
+  textAlign: "center",
+  display: "inline-block",
+};

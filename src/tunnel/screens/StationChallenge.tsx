@@ -23,6 +23,7 @@ import type { Challenge } from "../types/contract";
 
 export function StationChallenge({ node }: { node: RailNode }) {
   const completeStation = useJourney((s) => s.completeStation);
+  const exitStation = useJourney((s) => s.exitStation);
   const [result, setResult] = useState<ChallengeResult | null>(null);
 
   const pod = node.pod;
@@ -40,14 +41,14 @@ export function StationChallenge({ node }: { node: RailNode }) {
 
   // Lección de audio real: pantalla completa con su propia mecánica (espía /
   // subtítulos / copiloto). Al terminar eleva el resultado → recompensa abajo;
-  // al salir, suelta el atraque sin bloquear (skip = avanza sin recompensa).
+  // al salir, suelta el atraque SIN completar (re-entrable: se puede volver luego).
   if (challenge.type === "audio_lesson" && !result) {
     return (
       <AudioLessonStation
         challenge={challenge}
         nodeTitle={pod.title}
         onResult={setResult}
-        onExit={() => completeStation(node.id, { success: false, score: 0, total: 0 })}
+        onExit={exitStation}
       />
     );
   }

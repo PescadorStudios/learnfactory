@@ -21,6 +21,7 @@ export function Recap() {
   const captured = useJourney((s) => s.captured);
   const bestStreak = useJourney((s) => s.bestStreak);
   const backToLobby = useJourney((s) => s.backToLobby);
+  const resumeJourney = useJourney((s) => s.resumeJourney);
   const [shareState, setShareState] = useState<ShareState>("idle");
 
   // Al llegar al recap, corta cualquier voz que siguiera sonando.
@@ -119,6 +120,9 @@ export function Recap() {
             : shareState === "error"
             ? "No se pudo compartir"
             : "Compartir mi viaje"}
+        </button>
+        <button type="button" className="ghost" onClick={resumeJourney}>
+          Seguir explorando
         </button>
         <button type="button" className="ghost" onClick={backToLobby}>
           Volver al lobby

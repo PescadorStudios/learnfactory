@@ -83,6 +83,10 @@ interface JourneyState {
   completed: Record<string, boolean>;
   /** Estación en la que la cámara está atracada (reto en curso); null = viajando. */
   activeStationId: string | null;
+  /** Vuelo libre: estación más cercana a la cámara (candidata a "Entrar"). */
+  nearestStationId: string | null;
+  /** Vuelo libre: ¿la cámara está cerca y lo bastante quieta para entrar? */
+  canEnter: boolean;
   /** Datos capturados en orden de visita (HUD/recap). */
   captured: Captured[];
 
@@ -126,6 +130,18 @@ interface JourneyState {
   /** El reto terminó: marca la estación, captura su reward y suelta el atraque. */
   completeStation: (stationId: string, result: ChallengeResult) => void;
 
+  // --- Vuelo libre (Fase B) ---
+  /** El rig reporta la estación más cercana y si la cámara puede entrar ya. */
+  setNearest: (id: string | null, canEnter: boolean) => void;
+  /** Entra (o RE-entra) a una estación y monta su reto. Re-entrable. */
+  enterStation: (stationId: string) => void;
+  /** Sale de una estación SIN completarla (no la "quema": se puede volver). */
+  exitStation: () => void;
+  /** Finaliza el viaje a voluntad: dispara el Recap. */
+  finishJourney: () => void;
+  /** Cierra el Recap y sigue explorando la red. */
+  resumeJourney: () => void;
+
   // --- Narrador (Fase 4) ---
   /** Emite una frase del narrador; la Capa 3 la muestra un instante. */
   narrate: (text: string, tone: NarrationTone) => void;
@@ -140,6 +156,8 @@ const FRESH_TRAVERSAL = {
   atEnd: false,
   completed: {} as Record<string, boolean>,
   activeStationId: null as string | null,
+  nearestStationId: null as string | null,
+  canEnter: false,
   captured: [] as Captured[],
   energy: 0.5,
   streak: 0,
@@ -252,6 +270,30 @@ export const useJourney = create<JourneyState>((set, get) => ({
     const s = get();
     if (s.activeStationId || s.completed[stationId]) return;
     set({ activeStationId: stationId });
+  },
+
+  setNearest(id, canEnter) {
+    const s = get();
+    if (s.nearestStationId !== id || s.canEnter !== canEnter) {
+      set({ nearestStationId: id, canEnter });
+    }
+  },
+
+  enterStation(stationId) {
+    if (get().activeStationId) return;
+    set({ activeStationId: stationId, canEnter: false });
+  },
+
+  exitStation() {
+    if (get().activeStationId) set({ activeStationId: null });
+  },
+
+  finishJourney() {
+    if (!get().atEnd) set({ atEnd: true });
+  },
+
+  resumeJourney() {
+    if (get().atEnd) set({ atEnd: false });
   },
 
   completeStation(stationId, result) {
