@@ -12,7 +12,7 @@
 // resolver el reto, el gate avanza y la cámara reanuda.
 // ============================================================================
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import { useJourney } from "../state/journeyStore";
@@ -26,6 +26,8 @@ import { StationLights } from "../world/StationLights";
 import { ForkVeins } from "../world/ForkVeins";
 import { StationChallenge } from "./StationChallenge";
 import { Narrator } from "./Narrator";
+import { Recap } from "./Recap";
+import { stopVoice } from "../audio/voice";
 import type { TunnelRuntime } from "../world/types";
 import type { ForkDirection, RailFork } from "../types/rail";
 
@@ -40,10 +42,22 @@ export function Tunnel() {
   const activeStationId = useJourney((s) => s.activeStationId);
   const captured = useJourney((s) => s.captured);
   const streak = useJourney((s) => s.streak);
-  const bestStreak = useJourney((s) => s.bestStreak);
+  const muted = useJourney((s) => s.muted);
+  const toggleMuted = useJourney((s) => s.toggleMuted);
   const toggleDebug = useJourney((s) => s.toggleDebug);
   const backToLobby = useJourney((s) => s.backToLobby);
   const setReducedMotion = useJourney((s) => s.setReducedMotion);
+
+  // Móvil / pantalla táctil: baja DPR y densidad de partículas para sostener
+  // el framerate. Es PERFORMANCE, no contenido — no toca el motor ni el tema.
+  const [lowPower, setLowPower] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse), (max-width: 640px)");
+    setLowPower(mq.matches);
+    const onChange = () => setLowPower(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   // Accesibilidad: detecta prefers-reduced-motion y reacciona a cambios.
   useEffect(() => {
@@ -169,9 +183,9 @@ export function Tunnel() {
 
       <Canvas
         style={{ position: "fixed", inset: 0 }}
-        dpr={[1, 2]}
+        dpr={lowPower ? [1, 1.5] : [1, 2]}
         camera={{ fov: 74, near: 0.1, far: 300, position: [0, 0, -8] }}
-        gl={{ antialias: true, powerPreference: "high-performance" }}
+        gl={{ antialias: !lowPower, powerPreference: "high-performance" }}
       >
         <color attach="background" args={["#06070d"]} />
         <fog attach="fog" args={["#06070d", 16, 95]} />
@@ -191,6 +205,7 @@ export function Tunnel() {
           colorHex={activeColor}
           rt={rt}
           reduced={reduced}
+          lowPower={lowPower}
         />
         <StationLights nodes={path.nodes} />
         <ForkVeins rail={rail} choices={choices} pendingFork={pendingFork} />
@@ -212,6 +227,18 @@ export function Tunnel() {
         <span className="hud__caps" title="Datos capturados">
           ✦ {captured.length}
         </span>
+        <button
+          type="button"
+          className="ghost hud__mute"
+          onClick={() => {
+            if (!muted) stopVoice(); // silenciar = cortar la voz ya
+            toggleMuted();
+          }}
+          title={muted ? "Activar voz" : "Silenciar voz"}
+          aria-label={muted ? "Activar voz de los subtítulos" : "Silenciar voz"}
+        >
+          {muted ? "🔇" : "🔊"}
+        </button>
         <button type="button" className="ghost" onClick={toggleDebug}>
           Mapa
         </button>
@@ -258,42 +285,7 @@ export function Tunnel() {
         </div>
       )}
 
-      {atEnd && (
-        <div className="end-card">
-          <p className="kicker">Fin del trayecto</p>
-          <h2>Saliste del túnel</h2>
-          <p className="muted small">
-            Capturaste <strong>{captured.length}</strong>{" "}
-            {captured.length === 1 ? "dato" : "datos"} sin sentir que estudiabas.
-          </p>
-          {captured.length > 0 && (
-            <div className="end-card__stats">
-              <span>
-                <strong>{captured.filter((c) => c.success).length}</strong>/
-                {captured.length} aciertos
-              </span>
-              {bestStreak >= 2 && (
-                <span className="end-card__streak">mejor racha ⚡×{bestStreak}</span>
-              )}
-            </div>
-          )}
-          {captured.length > 0 && (
-            <ul className="end-card__caps">
-              {captured.slice(-4).map((c) => (
-                <li key={c.id}>
-                  <span aria-hidden>{c.success ? "✓" : "·"}</span> {c.reward}
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="muted small">El recap compartible llega en la fase final.</p>
-          <div className="end-card__btns">
-            <button type="button" className="cta" onClick={backToLobby}>
-              Volver al lobby
-            </button>
-          </div>
-        </div>
-      )}
+      {atEnd && <Recap />}
     </div>
   );
 }

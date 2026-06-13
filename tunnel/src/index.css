@@ -980,3 +980,118 @@ body {
   color: #ffc861;
   font-weight: 600;
 }
+
+/* ------------------------------------------------ Recap + pulido (Fase 5) --- */
+
+/* El recap reusa la base .end-card; aquí solo lo enriquece. */
+.recap__title {
+  margin: 4px 0;
+  font-size: clamp(28px, 6vw, 44px);
+  letter-spacing: -0.01em;
+  background: linear-gradient(120deg, #fff, var(--cyan) 55%, var(--violet));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.recap__grade {
+  max-width: 40ch;
+}
+.recap__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 12px;
+  margin: 12px 0 2px;
+}
+.recap__stat {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.recap__stat strong {
+  color: var(--cyan);
+}
+.recap__stat--streak {
+  color: #ffc861;
+  border-color: rgba(255, 190, 80, 0.4);
+  background: rgba(40, 28, 8, 0.5);
+}
+.recap__niches {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+}
+.recap__niche {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.recap__caps {
+  margin-top: 10px;
+}
+.recap__btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+/* Botón de silencio de la voz (TTS) en la barra superior. */
+.hud__mute {
+  flex: none;
+  padding: 9px 13px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* Carga del chunk diferido del túnel (lazy + Suspense). */
+.tunnel-loading {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: var(--muted);
+}
+.tunnel-loading p {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.tunnel-loading__pulse {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 50%, var(--cyan), transparent 70%);
+  animation: tunnelPulse 1.1s ease-in-out infinite;
+}
+@keyframes tunnelPulse {
+  0%,
+  100% {
+    transform: scale(0.7);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tunnel-loading__pulse {
+    animation: none;
+  }
+}

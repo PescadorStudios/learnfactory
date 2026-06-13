@@ -7,16 +7,20 @@
 // un escaneo; dejar pasar una trampa, se escapa. Escaneos limitados (no spamear)
 // y un pequeño margen de reacción para la trampa recién salida de pantalla.
 //
-// Reloj: el mock no trae audio (audioUrl=""), así que corre sobre un reloj
-// virtual (rAF) usando los tiempos start/end de cada segmento. Si en el futuro
-// llega un audioUrl real, este es el punto donde anclar el reloj al audio
-// (Howler/AudioElement.currentTime) sin tocar nada más del motor.
+// Reloj: el mock no trae audioUrl, así que el reto corre sobre un reloj virtual
+// (rAF) con los tiempos start/end de cada segmento, y la VOZ real la pone un TTS
+// (audio/voice.ts) que lee cada subtítulo al aparecer — silenciable desde el HUD
+// y con degradación elegante si el navegador no soporta TTS. Si llegara un
+// `audioUrl` real, audio/voice.ts es el punto para reproducirlo con Howler y
+// anclar el reloj a su currentTime, sin tocar nada más del motor.
 // Agnóstico: solo lee `TrapSubtitlesChallenge`; nada temático aquí.
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TrapSubtitlesChallenge } from "../types/contract";
+import { useJourney } from "../state/journeyStore";
 import type { ChallengeResult } from "../state/journeyStore";
+import { speak, stopVoice } from "../audio/voice";
 
 const GRACE = 1.4; // s para cazar una trampa recién salida de pantalla
 const END_PAD = 1.2; // s de cola tras el último subtítulo
@@ -52,6 +56,9 @@ export function TrapSubtitlesGame({
   const flashTimer = useRef(0);
   const cbRef = useRef(onResult);
   cbRef.current = onResult;
+
+  const muted = useJourney((s) => s.muted);
+  const spokenIdxRef = useRef(-1); // último índice ya leído por la voz
 
   // Reloj virtual. (Si llegara audioUrl real, anclar aquí a currentTime.)
   useEffect(() => {
@@ -135,6 +142,21 @@ export function TrapSubtitlesGame({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Voz (TTS): lee cada subtítulo al aparecer. Silenciable; sin TTS, silencio.
+  useEffect(() => {
+    if (muted || doneRef.current) return;
+    if (currentIdx < 0 || currentIdx >= segs.length) return;
+    if (spokenIdxRef.current === currentIdx) return;
+    spokenIdxRef.current = currentIdx;
+    speak(segs[currentIdx].text, { lang: "es-ES", rate: 1.05 });
+  }, [currentIdx, muted, segs]);
+
+  // Corta la voz al silenciar y al desmontar (fin del reto / salida del túnel).
+  useEffect(() => {
+    if (muted) stopVoice();
+  }, [muted]);
+  useEffect(() => () => stopVoice(), []);
 
   const seg = currentIdx >= 0 ? segs[currentIdx] : null;
   const caughtNow = currentIdx >= 0 && caughtRef.current.has(currentIdx);

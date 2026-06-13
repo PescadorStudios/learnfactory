@@ -18,13 +18,16 @@ export function SynapticParticles({
   colorHex,
   rt,
   reduced,
+  lowPower,
 }: {
   curve: THREE.CatmullRomCurve3 | null;
   colorHex: string;
   rt: MutableRefObject<TunnelRuntime>;
   reduced: boolean;
+  /** Móvil / pantalla táctil: menos partículas para sostener el framerate. */
+  lowPower: boolean;
 }) {
-  const count = reduced ? 110 : 360;
+  const count = reduced ? 110 : lowPower ? 200 : 360;
 
   // Muestreo denso de la curva + marcos de Frenet (una vez por curva).
   const sampled = useMemo(() => {

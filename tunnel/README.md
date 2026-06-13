@@ -39,7 +39,7 @@ Este MVP se construye **por fases** (ver el prompt original). Estado actual:
 | **2 — El mundo neuronal** | Túnel procedural (tubo sobre `CatmullRomCurve3`), shader GLSL de corriente neuronal, partículas sinápticas, scroll→avance con inercia (lenis + resorte), avance automático (trance), forks con swipe / ← → y la vena no elegida alejándose, `prefers-reduced-motion` | ✅ **Lista** |
 | **3 — Estaciones + retos** | Atraque con frenado a cada estación, los dos minijuegos jugables (**El Impostor** y **Subtítulos Trampa**), captura del `reward` y datos acumulados en el HUD | ✅ **Lista** |
 | **4 — HUD + estado + biofeedback** | Narrador reactivo (Capa 3), scoring (racha de aciertos + recap), y **biofeedback**: una energía del viaje que sube al acertar y baja al fallar — el mundo neuronal **se enciende o se atenúa** según tu desempeño | ✅ **Lista** |
-| 5 — Salida + pulido | Recap compartible, audio real (TTS/Howler), performance móvil | ⏳ pendiente |
+| **5 — Salida + pulido** | **Recap compartible** (Web Share API con fallback a portapapeles; grado según tu desempeño), **voz real** de los subtítulos vía **Web Speech API** (TTS, silenciable desde el HUD) y **performance móvil**: el mundo 3D se carga en diferido (`lazy` + `Suspense`) y en pantallas táctiles bajan el DPR y la densidad de partículas | ✅ **Lista** |
 
 El flujo entra al **mundo 3D** (Capa 1), que recorre un *path activo* derivado
 del **mismo** grafo `Rail` (Capa 0) según las decisiones en los forks. Al llegar
@@ -48,8 +48,11 @@ resolverlo se **captura el `reward`** y el viaje se reanuda hacia la siguiente
 parada. El **mapa cenital** de la Fase 1 queda como vista debug, accesible con el
 botón **"Mapa"** dentro del túnel. Cómo te va **tiñe el mundo**: cada acierto sube
 la energía del viaje (la corriente brilla y fluye más fuerte) y cada fallo la
-atenúa; el **narrador** comenta el momento y el HUD lleva la racha. Al salir, el
-recap resume datos capturados, aciertos y mejor racha.
+atenúa; el **narrador** comenta el momento y el HUD lleva la racha. Durante los
+**Subtítulos Trampa** una **voz real** (TTS, Web Speech API) lee cada línea —
+silenciable con el botón **🔊/🔇**. Al salir, el **recap** resume datos
+capturados, aciertos, mejor racha y nichos visitados, te pone un **grado** según
+tu desempeño y deja **compartir** el viaje (Web Share API o portapapeles).
 
 ### Controles
 
@@ -61,7 +64,11 @@ recap resume datos capturados, aciertos y mejor racha.
   - **El Impostor** — toca el dato falso (o teclas **1-9**) antes de que se acabe
     el tiempo.
   - **Subtítulos Trampa** — los subtítulos pasan solos; toca el subtítulo (o
-    **Espacio**) cuando uno **mienta**. Escaneos limitados.
+    **Espacio**) cuando uno **mienta**. Escaneos limitados. Una **voz** (TTS) los
+    lee en alto.
+- **Voz (🔊 / 🔇):** botón en la barra superior para silenciar/activar la voz de
+  los subtítulos. Si tu navegador no soporta TTS, todo sigue funcionando en
+  silencio.
 - **`prefers-reduced-motion`:** mismo recorrido, decisiones y retos, pero sin
   balanceo/roll de cámara, menos partículas y sin animaciones de overlay.
 
@@ -154,7 +161,9 @@ Al confirmar la selección (`startJourney`):
 
 Vite · React · TypeScript · zustand (estado) · three / @react-three/fiber /
 @react-three/drei (mundo 3D, Fase 2) · lenis + @react-spring/web (scroll→`t`,
-Fase 2) · howler (reservado para el audio real de los retos; el mock no trae
-audio, así que **Subtítulos Trampa** corre sobre un reloj virtual cronometrado
-con los `start`/`end` de cada segmento — listo para anclarse a `currentTime`
-cuando llegue un `audioUrl`).
+Fase 2) · **Web Speech API** (voz real de los subtítulos por TTS, sin assets;
+`src/audio/voice.ts`) · howler (reservado para cuando un reto traiga un `audioUrl`
+real: el mock no trae audio, así que **Subtítulos Trampa** corre sobre un reloj
+virtual cronometrado con los `start`/`end` de cada segmento y la voz la pone el
+TTS — `voice.ts` es el único punto a cambiar para reproducir un audio real con
+Howler, sin tocar el motor).

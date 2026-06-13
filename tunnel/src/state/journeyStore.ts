@@ -100,6 +100,8 @@ interface JourneyState {
   reducedMotion: boolean;
   /** Alterna el mapa de debug (Capa 0) sobre el mundo 3D. */
   debugView: boolean;
+  /** Voz (TTS) de los subtítulos silenciada. Preferencia global del viaje. */
+  muted: boolean;
 
   // --- Acciones de catálogo / selección ---
   loadCatalog: () => Promise<void>;
@@ -116,6 +118,7 @@ interface JourneyState {
   setForkPrompt: (show: boolean, pendingForkId: string | null) => void;
   setAtEnd: (b: boolean) => void;
   toggleDebug: () => void;
+  toggleMuted: () => void;
 
   // --- Acciones de estaciones (Fase 3) ---
   /** El rig atraca la cámara en una estación al alcanzarla (lanza su reto). */
@@ -156,6 +159,7 @@ export const useJourney = create<JourneyState>((set, get) => ({
   ...FRESH_TRAVERSAL,
   reducedMotion: false,
   debugView: false,
+  muted: false,
 
   async loadCatalog() {
     if (get().catalogStatus === "loading") return;
@@ -239,6 +243,9 @@ export const useJourney = create<JourneyState>((set, get) => ({
   },
   toggleDebug() {
     set((s) => ({ debugView: !s.debugView }));
+  },
+  toggleMuted() {
+    set((s) => ({ muted: !s.muted }));
   },
 
   dockStation(stationId) {
