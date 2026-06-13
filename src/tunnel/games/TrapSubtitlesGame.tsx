@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { TrapSubtitlesChallenge } from "../types/contract";
 import { useJourney } from "../state/journeyStore";
 import type { ChallengeResult } from "../state/journeyStore";
-import { speak, stopVoice } from "../audio/voice";
+import { speak, stopVoice, primeVoice } from "../audio/voice";
 
 const GRACE = 1.4; // s para cazar una trampa recién salida de pantalla
 const END_PAD = 1.2; // s de cola tras el último subtítulo
@@ -143,13 +143,24 @@ export function TrapSubtitlesGame({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Voz (TTS): lee cada subtítulo al aparecer. Silenciable; sin TTS, silencio.
+  // Precalienta la voz de Learn Factory (Charon) al montar: sintetiza/cachea en
+  // segundo plano cada línea (su versión `spoken`, apta para TTS) para que el
+  // primer subtítulo ya suene en Charon. Lo que no llegue a tiempo cae a Web
+  // Speech sin cortar el reto.
+  useEffect(() => {
+    primeVoice(segs.map((s) => s.spoken ?? s.text));
+  }, [segs]);
+
+  // Voz: narra cada subtítulo al aparecer con la voz Charon (Web Speech si
+  // falla; silencio si no hay ninguna). Silenciable desde el HUD. Narra la
+  // versión `spoken` (apta para TTS) si existe; si no, el propio `text`.
   useEffect(() => {
     if (muted || doneRef.current) return;
     if (currentIdx < 0 || currentIdx >= segs.length) return;
     if (spokenIdxRef.current === currentIdx) return;
     spokenIdxRef.current = currentIdx;
-    speak(segs[currentIdx].text, { lang: "es-ES", rate: 1.05 });
+    const cur = segs[currentIdx];
+    speak(cur.spoken ?? cur.text, { lang: "es-ES", rate: 1.05 });
   }, [currentIdx, muted, segs]);
 
   // Corta la voz al silenciar y al desmontar (fin del reto / salida del túnel).

@@ -31,17 +31,23 @@ const SEG_SECS = 3.6;
 
 /**
  * Construye los segmentos de un reto de subtítulos a una cadencia fija.
- * Cada línea es [texto, esTrampa?]. La trampa = un subtítulo que MIENTE.
+ * Cada línea es [texto, esTrampa?, narrado?]:
+ *  - texto:    lo que se MUESTRA en pantalla (la trampa = un subtítulo que MIENTE).
+ *  - narrado?: versión apta para TTS de ESE MISMO texto (p. ej. "753 a.C." →
+ *              "setecientos cincuenta y tres antes de Cristo"). Si falta, se
+ *              narra `texto`. No cambia el juego: solo cómo suena la voz Charon.
  */
-function trap(lines: Array<[string, boolean?]>): TrapSubtitlesChallenge {
-  const segments: TrapSegment[] = lines.map(([text, isTrap], i) => ({
+function trap(lines: Array<[string, boolean?, string?]>): TrapSubtitlesChallenge {
+  const segments: TrapSegment[] = lines.map(([text, isTrap, spoken], i) => ({
     start: +(i * SEG_SECS).toFixed(2),
     end: +((i + 1) * SEG_SECS).toFixed(2),
     text,
     isTrap: Boolean(isTrap),
+    ...(spoken ? { spoken } : {}),
   }));
-  // audioUrl vacío = placeholder. En Fase 3 el reto corre sobre un temporizador
-  // (silencio cronometrado) o un TTS; el motor no depende del audio real.
+  // audioUrl vacío a propósito: el reto corre sobre su reloj virtual y la voz
+  // (Charon) narra cada subtítulo por separado (ver audio/voice.ts). El motor
+  // nunca depende de un audio continuo real.
   return { type: "trap_subtitles", audioUrl: "", segments };
 }
 
@@ -70,7 +76,7 @@ const LESSONS: Lesson[] = [
         title: "Los orígenes de Roma",
         reward: "Roma fue fundada, según la tradición, en el 753 a.C.",
         challenge: trap([
-          ["Según la leyenda, Roma fue fundada en el 753 a.C."],
+          ["Según la leyenda, Roma fue fundada en el 753 a.C.", false, "Según la leyenda, Roma fue fundada en el setecientos cincuenta y tres antes de Cristo."],
           ["Sus fundadores fueron los hermanos Rómulo y Remo."],
           ["Una loba los crió a orillas del río Tíber."],
           ["Rómulo nombró la ciudad en honor a su hermano Remo.", true],
@@ -94,11 +100,11 @@ const LESSONS: Lesson[] = [
         reward: "Al cruzar el Rubicón, César dijo «la suerte está echada».",
         challenge: trap([
           ["Julio César fue un general y político romano."],
-          ["Conquistó la Galia entre el 58 y el 50 a.C."],
-          ["Cruzó el río Rubicón con sus legiones en el 49 a.C."],
+          ["Conquistó la Galia entre el 58 y el 50 a.C.", false, "Conquistó la Galia entre el cincuenta y ocho y el cincuenta antes de Cristo."],
+          ["Cruzó el río Rubicón con sus legiones en el 49 a.C.", false, "Cruzó el río Rubicón con sus legiones en el cuarenta y nueve antes de Cristo."],
           ["Al cruzarlo pronunció la frase «veni, vidi, vici».", true],
-          ["Fue nombrado dictador perpetuo en el 44 a.C."],
-          ["Murió apuñalado en los idus de marzo del 44 a.C."],
+          ["Fue nombrado dictador perpetuo en el 44 a.C.", false, "Fue nombrado dictador perpetuo en el cuarenta y cuatro antes de Cristo."],
+          ["Murió apuñalado en los idus de marzo del 44 a.C.", false, "Murió apuñalado en los idus de marzo del cuarenta y cuatro antes de Cristo."],
         ]),
       },
       {

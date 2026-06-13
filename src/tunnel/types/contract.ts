@@ -56,8 +56,14 @@ export interface TrapSubtitlesChallenge {
 export interface TrapSegment {
   start: number; // segundos
   end: number; // segundos
-  text: string;
+  text: string; // lo que se MUESTRA (puede mentir si isTrap)
   isTrap: boolean; // true = subtítulo falso → hay que cazarlo
+  /**
+   * Versión apta para TTS de `text` (mismo significado, pronunciación natural:
+   * símbolos, abreviaturas y cifras escritos en palabras). La voz narra esto;
+   * si falta, narra `text`. NO revela la trampa: el juego no cambia.
+   */
+  spoken?: string;
 }
 
 /**
