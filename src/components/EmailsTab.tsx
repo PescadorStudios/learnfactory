@@ -11,6 +11,32 @@ import {
   type EmailConfig, type EmailRow, type EmailDetail,
 } from "@/app/emailActions";
 
+// Firma corporativa por defecto que se adjunta a cada correo saliente. Es HTML
+// para que se vea bien en el cliente del destinatario (fondo claro). Editable
+// desde el redactor (se guarda en el navegador con la clave de abajo).
+const SIGNATURE_KEY = "lf_email_signature";
+const DEFAULT_SIGNATURE = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:32px;">
+  <tr><td style="border-top:1px solid #e5e7eb; padding-top:20px;">
+    <table role="presentation" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="vertical-align:middle; padding-right:18px;">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background-color:#0f0f12; border-radius:14px; padding:12px 14px;">
+            <img src="https://res.cloudinary.com/deirdgemo/image/upload/v1781192596/IMG_9266_nixp8t.png" alt="Learn Factory" width="130" style="display:block; border:0; width:130px; height:auto;">
+          </td></tr></table>
+        </td>
+        <td style="vertical-align:middle; border-left:3px solid #8b5cf6; padding-left:18px; font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+          <div style="font-size:17px; font-weight:700; color:#111827; letter-spacing:-0.2px;">Mauricio Duque</div>
+          <div style="font-size:13px; color:#6b7280; margin-top:2px;">Fundador &middot; Learn Factory</div>
+          <div style="margin-top:10px;">
+            <a href="https://wa.me/57312282098" style="font-size:13px; color:#8b5cf6; text-decoration:none; font-weight:600;">WhatsApp &middot; +57 312 282 098</a>
+          </div>
+          <div style="font-size:12px; color:#9ca3af; margin-top:8px;">Aprende cualquier tema con IA y gamificaci&oacute;n</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>`;
+
 export default function EmailsTab({ token }: { token: string | null }) {
   const [config, setConfig] = useState<EmailConfig | null>(null);
   const [folder, setFolder] = useState<"inbox" | "sent">("inbox");
@@ -32,9 +58,19 @@ export default function EmailsTab({ token }: { token: string | null }) {
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState("");
 
+  // Firma editable (persistida en el navegador).
+  const [signature, setSignature] = useState(DEFAULT_SIGNATURE);
+  const [showSig, setShowSig] = useState(false);
+
   useEffect(() => {
     if (typeof window !== "undefined") setInboundUrl(`${window.location.origin}/api/emails/inbound`);
+    try { const s = localStorage.getItem(SIGNATURE_KEY); if (s) setSignature(s); } catch { /* sin storage */ }
   }, []);
+
+  const updateSignature = (v: string) => {
+    setSignature(v);
+    try { localStorage.setItem(SIGNATURE_KEY, v); } catch { /* sin storage */ }
+  };
 
   useEffect(() => {
     if (token) adminGetEmailConfig(token).then(setConfig);
@@ -84,7 +120,7 @@ export default function EmailsTab({ token }: { token: string | null }) {
     if (!token) return;
     setSendErr("");
     setSending(true);
-    const res = await adminSendEmail(token, { to, subject, body, inReplyTo });
+    const res = await adminSendEmail(token, { to, subject, body, signature, inReplyTo });
     setSending(false);
     if (!res.ok) { setSendErr(res.error || "No se pudo enviar."); return; }
     setComposing(false);
@@ -304,6 +340,38 @@ export default function EmailsTab({ token }: { token: string | null }) {
                   value={body} onChange={e => setBody(e.target.value)} placeholder="Escribe tu mensaje..." rows={10}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl py-3 px-4 text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary resize-y"
                 />
+
+                {/* Firma (se adjunta al final de cada correo, editable y persistente) */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowSig(v => !v)}
+                    className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-primary transition-colors"
+                  >
+                    <PenSquare className="w-3.5 h-3.5" /> Firma {showSig ? "▲" : "▼"}
+                  </button>
+                  {showSig && (
+                    <div className="mt-2">
+                      <p className="text-xs text-zinc-500 mb-1.5">
+                        Se añade al final de cada correo. Es HTML — edita el texto (nombre, WhatsApp, etc.) y se guarda solo.
+                      </p>
+                      <textarea
+                        value={signature}
+                        onChange={e => updateSignature(e.target.value)}
+                        rows={8}
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl py-3 px-4 text-zinc-300 text-xs font-mono focus:outline-none focus:border-primary resize-y"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => updateSignature(DEFAULT_SIGNATURE)}
+                        className="mt-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                      >
+                        Restaurar firma por defecto
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {sendErr && <p className="text-rose-400 text-sm">{sendErr}</p>}
                 <div className="flex justify-end gap-3 pt-1">
                   <button onClick={() => setComposing(false)} disabled={sending} className="px-5 py-3 rounded-2xl bg-zinc-800 text-zinc-300 font-bold hover:bg-zinc-700 transition-all disabled:opacity-60">Cancelar</button>

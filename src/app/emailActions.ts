@@ -160,7 +160,7 @@ export async function adminGetEmail(token: string, id: string): Promise<EmailDet
 
 export async function adminSendEmail(
   token: string,
-  input: { to: string; subject: string; body: string; inReplyTo?: string }
+  input: { to: string; subject: string; body: string; signature?: string; inReplyTo?: string }
 ): Promise<{ ok: boolean; error?: string }> {
   const admin = await requireAdmin(token);
   if (!admin) return { ok: false, error: "No autorizado" };
@@ -172,8 +172,12 @@ export async function adminSendEmail(
   if (!subject) return { ok: false, error: "El asunto no puede estar vacío." };
   if (!body.trim()) return { ok: false, error: "El mensaje no puede estar vacío." };
 
-  const html = htmlFromText(body);
-  const result = await sendEmail({ to, subject, text: body, html });
+  // Firma: se adjunta al final. El HTML lo envía el cliente (editable desde el
+  // redactor); para la versión de texto plano la limpiamos de etiquetas.
+  const sig = (input.signature || "").trim();
+  const html = htmlFromText(body) + (sig ? sig : "");
+  const fullText = sig ? `${body}\n\n${stripHtml(sig)}` : body;
+  const result = await sendEmail({ to, subject, text: fullText, html });
 
   // Guardamos el saliente pase lo que pase (sent o failed) para tener historial.
   const sb = supabaseAdmin();
@@ -182,7 +186,7 @@ export async function adminSendEmail(
     from_addr: process.env.EMAIL_FROM || "no-reply",
     to_addr: to,
     subject,
-    body_text: body,
+    body_text: fullText,
     body_html: html,
     status: result.ok ? "sent" : "failed",
     provider_id: result.id ?? null,
