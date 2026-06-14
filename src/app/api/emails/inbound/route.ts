@@ -43,6 +43,20 @@ export async function POST(request: Request) {
     });
   }
 
+  // DIAGNÓSTICO TEMPORAL: registra CADA intento en la tabla (aunque falle la
+  // auth) para ver si el worker siquiera llega aquí y con qué secreto. Quitar
+  // después de depurar.
+  try {
+    await supabaseAdmin().from("emails").insert({
+      direction: "inbound",
+      from_addr: "DEBUG",
+      to_addr: "DEBUG",
+      subject: `attempt providedLen=${provided.length} envLen=${secret.length} match=${provided === secret}`,
+      status: "debug",
+      raw: { ts: new Date().toISOString(), ua: request.headers.get("user-agent") },
+    });
+  } catch {}
+
   // Sin secreto configurado, o secreto que no coincide → rechazamos.
   if (!secret || !safeEqual(provided, secret)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
