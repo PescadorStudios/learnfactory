@@ -5,6 +5,7 @@
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { sendEmail, htmlFromText } from "@/lib/email/resend";
+import { DEFAULT_SIGNATURE } from "@/lib/email/signature";
 
 async function requireAdmin(token: string): Promise<{ id: string } | null> {
   const user = await getUserFromToken(token);
@@ -214,4 +215,29 @@ export async function adminDeleteEmail(token: string, id: string): Promise<{ ok:
   const sb = supabaseAdmin();
   const { error } = await sb.from("emails").delete().eq("id", id);
   return { ok: !error };
+}
+
+// ── Firma (persistida en la base, igual en todos los dispositivos) ────────────
+
+const SIG_KEY = "email_signature";
+
+/** Devuelve la firma guardada, o la de por defecto si aún no hay ninguna. */
+export async function adminGetSignature(token: string): Promise<string> {
+  const admin = await requireAdmin(token);
+  if (!admin) return DEFAULT_SIGNATURE;
+  const sb = supabaseAdmin();
+  const { data } = await sb.from("app_settings").select("value").eq("key", SIG_KEY).maybeSingle();
+  return (data?.value ?? "").trim() || DEFAULT_SIGNATURE;
+}
+
+/** Guarda (upsert) la firma de correo. */
+export async function adminSetSignature(token: string, html: string): Promise<{ ok: boolean; error?: string }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false, error: "No autorizado" };
+  const sb = supabaseAdmin();
+  const { error } = await sb
+    .from("app_settings")
+    .upsert({ key: SIG_KEY, value: html, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (error) return { ok: false, error: "No se pudo guardar la firma." };
+  return { ok: true };
 }

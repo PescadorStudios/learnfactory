@@ -33,3 +33,15 @@ create index if not exists idx_emails_unread    on public.emails (is_read) where
 -- RLS: esta tabla se toca SOLO desde el servidor (service role, que salta RLS).
 -- No publicamos políticas anónimas → nadie con la anon key puede leer/escribir.
 alter table public.emails enable row level security;
+
+-- ----------------------------------------------------------------------------
+-- Ajustes de la app (clave-valor). Aquí se guarda, por ejemplo, la firma de
+-- correo editable desde /admin → Correos, para que sea la misma en todos los
+-- dispositivos. Solo el servidor (service role) la lee/escribe.
+-- ----------------------------------------------------------------------------
+create table if not exists public.app_settings (
+  key        text primary key,
+  value      text,
+  updated_at timestamptz not null default now()
+);
+alter table public.app_settings enable row level security;

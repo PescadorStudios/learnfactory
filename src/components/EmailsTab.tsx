@@ -8,34 +8,10 @@ import {
 } from "lucide-react";
 import {
   adminGetEmailConfig, adminListEmails, adminGetEmail, adminSendEmail, adminDeleteEmail,
+  adminGetSignature, adminSetSignature,
   type EmailConfig, type EmailRow, type EmailDetail,
 } from "@/app/emailActions";
-
-// Firma corporativa por defecto que se adjunta a cada correo saliente. Es HTML
-// para que se vea bien en el cliente del destinatario (fondo claro). Editable
-// desde el redactor (se guarda en el navegador con la clave de abajo).
-const SIGNATURE_KEY = "lf_email_signature";
-const DEFAULT_SIGNATURE = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:32px;">
-  <tr><td style="border-top:1px solid #e5e7eb; padding-top:20px;">
-    <table role="presentation" cellpadding="0" cellspacing="0">
-      <tr>
-        <td style="vertical-align:middle; padding-right:18px;">
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background-color:#0f0f12; border-radius:14px; padding:12px 14px;">
-            <img src="https://res.cloudinary.com/deirdgemo/image/upload/v1781192596/IMG_9266_nixp8t.png" alt="Learn Factory" width="130" style="display:block; border:0; width:130px; height:auto;">
-          </td></tr></table>
-        </td>
-        <td style="vertical-align:middle; border-left:3px solid #8b5cf6; padding-left:18px; font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
-          <div style="font-size:17px; font-weight:700; color:#111827; letter-spacing:-0.2px;">Mauricio Duque</div>
-          <div style="font-size:13px; color:#6b7280; margin-top:2px;">Fundador &middot; Learn Factory</div>
-          <div style="margin-top:10px;">
-            <a href="https://wa.me/57312282098" style="font-size:13px; color:#8b5cf6; text-decoration:none; font-weight:600;">WhatsApp &middot; +57 312 282 098</a>
-          </div>
-          <div style="font-size:12px; color:#9ca3af; margin-top:8px;">Aprende cualquier tema con IA y gamificaci&oacute;n</div>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-</table>`;
+import { DEFAULT_SIGNATURE } from "@/lib/email/signature";
 
 export default function EmailsTab({ token }: { token: string | null }) {
   const [config, setConfig] = useState<EmailConfig | null>(null);
@@ -58,22 +34,27 @@ export default function EmailsTab({ token }: { token: string | null }) {
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState("");
 
-  // Firma editable (persistida en el navegador).
+  // Firma editable (persistida en la base, igual en todos los dispositivos).
   const [signature, setSignature] = useState(DEFAULT_SIGNATURE);
   const [showSig, setShowSig] = useState(false);
+  const [sigStatus, setSigStatus] = useState<"idle" | "saving" | "saved">("idle");
 
   useEffect(() => {
     if (typeof window !== "undefined") setInboundUrl(`${window.location.origin}/api/emails/inbound`);
-    try { const s = localStorage.getItem(SIGNATURE_KEY); if (s) setSignature(s); } catch { /* sin storage */ }
   }, []);
 
-  const updateSignature = (v: string) => {
-    setSignature(v);
-    try { localStorage.setItem(SIGNATURE_KEY, v); } catch { /* sin storage */ }
+  const saveSignature = async (val: string) => {
+    if (!token) return;
+    setSigStatus("saving");
+    const res = await adminSetSignature(token, val);
+    setSigStatus(res.ok ? "saved" : "idle");
+    if (res.ok) setTimeout(() => setSigStatus(s => (s === "saved" ? "idle" : s)), 1500);
   };
 
   useEffect(() => {
-    if (token) adminGetEmailConfig(token).then(setConfig);
+    if (!token) return;
+    adminGetEmailConfig(token).then(setConfig);
+    adminGetSignature(token).then(setSignature);
   }, [token]);
 
   const load = useCallback(async () => {
@@ -343,27 +324,32 @@ export default function EmailsTab({ token }: { token: string | null }) {
 
                 {/* Firma (se adjunta al final de cada correo, editable y persistente) */}
                 <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowSig(v => !v)}
-                    className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-primary transition-colors"
-                  >
-                    <PenSquare className="w-3.5 h-3.5" /> Firma {showSig ? "▲" : "▼"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowSig(v => !v)}
+                      className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-primary transition-colors"
+                    >
+                      <PenSquare className="w-3.5 h-3.5" /> Firma {showSig ? "▲" : "▼"}
+                    </button>
+                    {sigStatus === "saving" && <span className="text-xs text-zinc-500 inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> guardando…</span>}
+                    {sigStatus === "saved" && <span className="text-xs text-emerald-400 inline-flex items-center gap-1"><Check className="w-3 h-3" /> guardada</span>}
+                  </div>
                   {showSig && (
                     <div className="mt-2">
                       <p className="text-xs text-zinc-500 mb-1.5">
-                        Se añade al final de cada correo. Es HTML — edita el texto (nombre, WhatsApp, etc.) y se guarda solo.
+                        Se añade al final de cada correo y se guarda en la base (igual en todos tus dispositivos). Es HTML — edita el texto (nombre, WhatsApp, etc.).
                       </p>
                       <textarea
                         value={signature}
-                        onChange={e => updateSignature(e.target.value)}
+                        onChange={e => setSignature(e.target.value)}
+                        onBlur={() => saveSignature(signature)}
                         rows={8}
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl py-3 px-4 text-zinc-300 text-xs font-mono focus:outline-none focus:border-primary resize-y"
                       />
                       <button
                         type="button"
-                        onClick={() => updateSignature(DEFAULT_SIGNATURE)}
+                        onClick={() => { setSignature(DEFAULT_SIGNATURE); saveSignature(DEFAULT_SIGNATURE); }}
                         className="mt-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
                       >
                         Restaurar firma por defecto
