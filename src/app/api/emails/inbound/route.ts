@@ -24,8 +24,25 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export async function POST(request: Request) {
-  const secret = process.env.EMAIL_INBOUND_SECRET;
-  const provided = request.headers.get("x-inbound-secret") || "";
+  // Recortamos espacios/saltos a ambos lados: un secreto pegado con un "\n"
+  // invisible (típico en paneles) no debe romper la autenticación.
+  const secret = (process.env.EMAIL_INBOUND_SECRET || "").trim();
+  const provided = (request.headers.get("x-inbound-secret") || "").trim();
+
+  // DIAGNÓSTICO TEMPORAL: con la cabecera 'x-debug-inbound: 1' devuelve por qué
+  // falla la auth SIN revelar el secreto (solo longitudes y banderas). Quitar
+  // después de depurar.
+  if (request.headers.get("x-debug-inbound") === "1") {
+    return NextResponse.json({
+      envSecretSet: Boolean(process.env.EMAIL_INBOUND_SECRET),
+      envLenRaw: (process.env.EMAIL_INBOUND_SECRET || "").length,
+      envLenTrimmed: secret.length,
+      providedLenRaw: (request.headers.get("x-inbound-secret") || "").length,
+      providedLenTrimmed: provided.length,
+      matchTrimmed: secret.length > 0 && secret === provided,
+    });
+  }
+
   // Sin secreto configurado, o secreto que no coincide → rechazamos.
   if (!secret || !safeEqual(provided, secret)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
