@@ -1,0 +1,15 @@
+/**
+ * Worker de correo entrante (Cloudflare Email Routing → /api/emails/inbound).
+ * Configuración mínima: sin Durable Objects, sin assets — solo el Email Worker.
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "learnfactory-email",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-14",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	}
+}

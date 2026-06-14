@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X, CreditCard, Copy, Webhook, RefreshCw } from "lucide-react";
+import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X, CreditCard, Copy, Webhook, RefreshCw, Mail } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import {
   checkIsAdmin, adminListUsers, adminSetUserQuota, adminSetBatchEnabled, type AdminUserRow,
@@ -11,12 +11,13 @@ import {
   adminGetBoldOverview, adminActivatePremium, type BoldOverview, type BoldOrderRow,
 } from "@/app/adminActions";
 import AppHeader from "@/components/AppHeader";
+import EmailsTab from "@/components/EmailsTab";
 
 export default function AdminPage() {
   const router = useRouter();
   const { token, loading, session } = useRequireAuth();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"users" | "routes" | "pagos">("users");
+  const [tab, setTab] = useState<"users" | "routes" | "pagos" | "correos">("users");
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [search, setSearch] = useState("");
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -217,6 +218,12 @@ export default function AdminPage() {
             className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${tab === "pagos" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
           >
             <CreditCard className="w-4 h-4" /> Pagos
+          </button>
+          <button
+            onClick={() => setTab("correos")}
+            className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${tab === "correos" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
+          >
+            <Mail className="w-4 h-4" /> Correos
           </button>
         </div>
 
@@ -526,6 +533,8 @@ export default function AdminPage() {
           )}
         </>)}
         </>)}
+
+        {tab === "correos" && <EmailsTab token={token} />}
       </div>
 
       {/* Confirmar borrado de curso */}
