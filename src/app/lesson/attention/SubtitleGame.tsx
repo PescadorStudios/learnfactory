@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { ScanLine, Ear, AlertTriangle, Fingerprint, PartyPopper, ShieldCheck } from "lucide-react";
 import type { SubtitlesData } from "@/lib/types";
 import { AudioControls, GameHeader, GameBriefing, GameResults } from "./shared";
@@ -16,10 +16,7 @@ interface Props {
 }
 
 type Phase = "briefing" | "playing" | "results";
-type Flash = { kind: "hit" | "miss"; id: number } | null;
-
-// Margen para reaccionar a una trampa que acaba de salir de pantalla
-const GRACE_SECONDS = 1.5;
+type Flash = { kind: "hit" | "miss"; idx: number; id: number } | null;
 
 // Retraso de respaldo si no se logra decodificar el audio: el tiempo de cada
 // cue viene estimado linealmente por caracteres y se adelanta a la voz.
@@ -280,30 +277,22 @@ export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSecond
     else { a.pause(); setIsPaused(true); }
   };
 
-  const handleScan = useCallback(() => {
+  // Escanea la casilla concreta que el detector tocó. Como ahora se ven dos
+  // subtítulos (el actual abajo y el anterior arriba), puede cazar la trampa en
+  // cualquiera de los dos mientras siga en pantalla; ya no hace falta el margen
+  // de reacción que se usaba con una sola casilla.
+  const handleScanIndex = useCallback((idx: number) => {
     if (phase !== "playing" || scansLeft <= 0 || isPaused) return;
+    if (idx < 0 || idx >= data.cues.length) return;
+    if (caught.has(idx)) return; // ya cazada: no penaliza re-tocarla
 
-    // Evaluar el cue visible; si no, el anterior dentro del margen de reacción
-    const tryCatch = (idx: number): boolean => {
-      if (idx < 0) return false;
-      const cue = data.cues[idx];
-      if (cue.alterado && !caught.has(idx)) {
-        setCaught(prev => new Set(prev).add(idx));
-        return true;
-      }
-      return false;
-    };
+    const hit = data.cues[idx].alterado;
+    if (hit) setCaught(prev => new Set(prev).add(idx));
+    else setFalseTaps(f => f + 1);
 
-    let hit = tryCatch(currentIndex);
-    if (!hit && currentIndex > 0) {
-      // El cue previo dejó la pantalla cuando empezó el actual (times[currentIndex]).
-      if ((currentTime - lag) - times[currentIndex] < GRACE_SECONDS) hit = tryCatch(currentIndex - 1);
-    }
-    if (!hit) setFalseTaps(f => f + 1);
-
-    setFlash({ kind: hit ? "hit" : "miss", id: Date.now() });
+    setFlash({ kind: hit ? "hit" : "miss", idx, id: Date.now() });
     setTimeout(() => setFlash(null), 700);
-  }, [phase, scansLeft, isPaused, currentIndex, currentTime, lag, times, data.cues, caught]);
+  }, [phase, scansLeft, isPaused, data.cues, caught]);
 
   const handleRetry = () => {
     setCaught(new Set());
@@ -318,6 +307,10 @@ export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSecond
     .filter(c => c.alterado && !caught.has(c.i));
 
   const currentCue = currentIndex >= 0 ? data.cues[currentIndex] : null;
+  // Casilla anterior: la que se acaba de narrar. Queda arriba (atenuada) cuando
+  // entra la nueva por abajo.
+  const prevIndex = currentIndex - 1;
+  const prevCue = prevIndex >= 0 ? data.cues[prevIndex] : null;
 
   return (
     <main className="h-[100dvh] bg-zinc-950 flex flex-col overflow-hidden">
@@ -355,52 +348,76 @@ export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSecond
             </span>
           </div>
 
-          {/* Subtítulo gigante (tocable) */}
-          <div className="flex-1 flex items-center justify-center relative">
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              onClick={handleScan}
-              disabled={scansLeft <= 0}
-              className={`relative w-full min-h-[180px] rounded-3xl border-2 p-8 flex items-center justify-center transition-colors ${
-                flash?.kind === "hit" ? "border-emerald-500 bg-emerald-500/10" :
-                flash?.kind === "miss" ? "border-rose-500 bg-rose-500/10" :
-                "border-zinc-700 bg-zinc-900 hover:border-amber-500/60"
-              }`}
-            >
-              <AnimatePresence mode="wait">
-                <motion.p
-                  key={currentIndex}
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.18 }}
-                  className="text-2xl md:text-3xl font-semibold leading-snug text-zinc-100"
-                >
-                  {currentCue ? currentCue.texto : "..."}
-                </motion.p>
-              </AnimatePresence>
-
-              {/* Feedback del escaneo */}
-              <AnimatePresence>
-                {flash && (
+          {/* Dos casillas en rollo: la nueva entra por abajo, la vieja sube. */}
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            {/* Casilla anterior (arriba, atenuada) — solo cuando ya hubo una antes */}
+            {prevCue && (
+              <motion.button
+                key={`prev-${prevIndex}`}
+                onClick={() => handleScanIndex(prevIndex)}
+                disabled={scansLeft <= 0}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 0.55, y: 0 }}
+                transition={{ duration: 0.28 }}
+                className={`relative w-full min-h-[84px] rounded-2xl border-2 border-dashed p-5 flex items-center justify-center transition-colors ${
+                  flash?.idx === prevIndex && flash.kind === "hit" ? "border-emerald-500 bg-emerald-500/10" :
+                  flash?.idx === prevIndex && flash.kind === "miss" ? "border-rose-500 bg-rose-500/10" :
+                  caught.has(prevIndex) ? "border-emerald-500/40 bg-zinc-900" :
+                  "border-zinc-700 bg-zinc-900/60"
+                }`}
+              >
+                <p className="text-lg md:text-xl font-medium leading-snug text-zinc-300">{prevCue.texto}</p>
+                {caught.has(prevIndex) && (
+                  <span className="absolute -top-2.5 right-3 w-6 h-6 rounded-full bg-emerald-500 text-emerald-950 text-xs font-bold flex items-center justify-center">✓</span>
+                )}
+                {flash?.idx === prevIndex && (
                   <motion.span
                     key={flash.id}
                     initial={{ opacity: 0, scale: 0.6, y: 10 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    className={`absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-sm font-bold ${
-                      flash.kind === "hit" ? "bg-emerald-500 text-emerald-950" : "bg-rose-500 text-white"
-                    }`}
+                    className={`absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-sm font-bold ${flash.kind === "hit" ? "bg-emerald-500 text-emerald-950" : "bg-rose-500 text-white"}`}
                   >
                     {flash.kind === "hit" ? "¡Trampa detectada!" : "Escaneo fallido"}
                   </motion.span>
                 )}
-              </AnimatePresence>
+              </motion.button>
+            )}
+
+            {/* Casilla actual (abajo, resaltada) */}
+            <motion.button
+              key={`cur-${currentIndex}`}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => handleScanIndex(currentIndex)}
+              disabled={scansLeft <= 0 || currentIndex < 0}
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28 }}
+              className={`relative w-full min-h-[150px] rounded-3xl border-2 p-8 flex items-center justify-center transition-colors ${
+                flash?.idx === currentIndex && flash.kind === "hit" ? "border-emerald-500 bg-emerald-500/10" :
+                flash?.idx === currentIndex && flash.kind === "miss" ? "border-rose-500 bg-rose-500/10" :
+                currentIndex >= 0 && caught.has(currentIndex) ? "border-emerald-500/50 bg-zinc-900" :
+                "border-zinc-700 bg-zinc-900 hover:border-amber-500/60"
+              }`}
+            >
+              <p className="text-2xl md:text-3xl font-semibold leading-snug text-zinc-100">{currentCue ? currentCue.texto : "..."}</p>
+              {currentIndex >= 0 && caught.has(currentIndex) && (
+                <span className="absolute -top-2.5 right-3 w-6 h-6 rounded-full bg-emerald-500 text-emerald-950 text-xs font-bold flex items-center justify-center">✓</span>
+              )}
+              {flash?.idx === currentIndex && (
+                <motion.span
+                  key={flash.id}
+                  initial={{ opacity: 0, scale: 0.6, y: 10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  className={`absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-sm font-bold ${flash.kind === "hit" ? "bg-emerald-500 text-emerald-950" : "bg-rose-500 text-white"}`}
+                >
+                  {flash.kind === "hit" ? "¡Trampa detectada!" : "Escaneo fallido"}
+                </motion.span>
+              )}
             </motion.button>
           </div>
 
           <p className="text-center text-xs text-zinc-600 mt-3">
-            Toca el subtítulo cuando NO coincida con lo que oyes
+            Toca la casilla que NO coincida con lo que oyes
           </p>
 
           <AudioControls
