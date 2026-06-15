@@ -17,15 +17,15 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TrapSubtitlesChallenge } from "../types/contract";
+import { AnimatePresence, motion } from "framer-motion";
+import type { TrapSubtitlesChallenge, TrapSegment } from "../types/contract";
 import { useJourney } from "../state/journeyStore";
 import type { ChallengeResult } from "../state/journeyStore";
 import { speak, stopVoice, primeVoice } from "../audio/voice";
 
-const GRACE = 1.4; // s para cazar una trampa recién salida de pantalla
 const END_PAD = 1.2; // s de cola tras el último subtítulo
 
-type Flash = "hit" | "miss" | null;
+type Flash = { idx: number; kind: "hit" | "miss" } | null;
 
 export function TrapSubtitlesGame({
   challenge,
@@ -100,43 +100,41 @@ export function TrapSubtitlesGame({
   const scansUsed = caughtN + falseTaps;
   const scansLeft = Math.max(0, maxScans - scansUsed);
 
-  function showFlash(kind: Exclude<Flash, null>) {
-    setFlash(kind);
+  function showFlash(idx: number, kind: "hit" | "miss") {
+    setFlash({ idx, kind });
     window.clearTimeout(flashTimer.current);
     flashTimer.current = window.setTimeout(() => setFlash(null), 650);
   }
 
-  function scan() {
+  // Escanea una casilla concreta (la que el viajero tocó). Como ahora se ven dos
+  // subtítulos —el actual y el anterior—, puede cazar la trampa en cualquiera de
+  // los dos mientras siga en pantalla; no hace falta el margen de reacción viejo.
+  function scanIndex(i: number) {
     if (doneRef.current || scansLeft <= 0) return;
-    const tryCatch = (i: number): boolean => {
-      if (i < 0 || i >= segs.length) return false;
-      if (segs[i].isTrap && !caughtRef.current.has(i)) {
-        caughtRef.current.add(i);
-        setCaughtN(caughtRef.current.size);
-        return true;
-      }
-      return false;
-    };
-    let hit = tryCatch(currentIdx);
-    // Margen de reacción: la trampa anterior salió de pantalla hace poco.
-    if (!hit && currentIdx > 0 && t - segs[currentIdx].start < GRACE) {
-      hit = tryCatch(currentIdx - 1);
-    }
-    if (!hit) {
+    if (i < 0 || i >= segs.length) return;
+    if (caughtRef.current.has(i)) return; // ya cazada: no penaliza re-tocarla
+    let hit = false;
+    if (segs[i].isTrap) {
+      caughtRef.current.add(i);
+      setCaughtN(caughtRef.current.size);
+      hit = true;
+    } else {
       falseRef.current += 1;
       setFalseTaps(falseRef.current);
     }
-    showFlash(hit ? "hit" : "miss");
+    showFlash(i, hit ? "hit" : "miss");
   }
-  const scanRef = useRef(scan);
-  scanRef.current = scan;
+  const scanRef = useRef(scanIndex);
+  scanRef.current = scanIndex;
+  const currentIdxRef = useRef(currentIdx);
+  currentIdxRef.current = currentIdx;
 
-  // Tecla Espacio = escanear (atajo de escritorio).
+  // Tecla Espacio = escanear el subtítulo actual (atajo de escritorio).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         e.preventDefault();
-        scanRef.current();
+        scanRef.current(currentIdxRef.current);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -169,16 +167,21 @@ export function TrapSubtitlesGame({
   }, [muted]);
   useEffect(() => () => stopVoice(), []);
 
-  const seg = currentIdx >= 0 ? segs[currentIdx] : null;
-  const caughtNow = currentIdx >= 0 && caughtRef.current.has(currentIdx);
   const pct = Math.min(1, t / duration);
   const noScans = scansLeft <= 0 && !doneRef.current;
+
+  // Las dos casillas visibles: el subtítulo anterior (arriba) y el actual
+  // (abajo). El nuevo entra por abajo y el viejo sube. La primera vez solo hay
+  // una casilla (no existe anterior).
+  const visible: { idx: number; seg: TrapSegment }[] = [];
+  if (currentIdx >= 1) visible.push({ idx: currentIdx - 1, seg: segs[currentIdx - 1] });
+  if (currentIdx >= 0) visible.push({ idx: currentIdx, seg: segs[currentIdx] });
 
   return (
     <div className="game game--trap">
       <p className="game__prompt">Caza las mentiras</p>
       <p className="game__hint muted small">
-        Los subtítulos pasan solos. Toca (o pulsa Espacio) cuando uno MIENTA.
+        Los subtítulos pasan solos. Toca el que MIENTA (o pulsa Espacio para el de abajo).
       </p>
 
       <div className="trap__hud">
@@ -197,23 +200,46 @@ export function TrapSubtitlesGame({
         />
       </div>
 
-      <button
-        type="button"
-        className={`subtitle ${
-          flash ? `subtitle--${flash}` : caughtNow ? "subtitle--caught" : ""
-        }`}
-        onClick={() => scanRef.current()}
-        disabled={noScans}
-      >
-        <span className="subtitle__text">{seg ? seg.text : "…"}</span>
-        {flash === "hit" && (
-          <span className="subtitle__fb subtitle__fb--hit">¡Trampa cazada!</span>
+      <div className="trap__stage">
+        {visible.length === 0 ? (
+          <div className="subtitle subtitle--cur" aria-hidden>
+            <span className="subtitle__text">…</span>
+          </div>
+        ) : (
+          <AnimatePresence initial={false}>
+            {visible.map(({ idx, seg: s }) => {
+              const isCur = idx === currentIdx;
+              const isFlash = flash != null && flash.idx === idx;
+              const caught = caughtRef.current.has(idx);
+              return (
+                <motion.button
+                  key={idx}
+                  type="button"
+                  layout
+                  initial={{ opacity: 0, y: 28 }}
+                  animate={{ opacity: isCur ? 1 : 0.45, y: 0 }}
+                  exit={{ opacity: 0, y: -28 }}
+                  transition={{ duration: 0.32, ease: "easeOut" }}
+                  className={`subtitle ${isCur ? "subtitle--cur" : "subtitle--prev"} ${
+                    isFlash ? `subtitle--${flash.kind}` : caught ? "subtitle--caught" : ""
+                  }`}
+                  onClick={() => scanRef.current(idx)}
+                  disabled={noScans}
+                >
+                  <span className="subtitle__text">{s.text}</span>
+                  {isFlash && flash.kind === "hit" && (
+                    <span className="subtitle__fb subtitle__fb--hit">¡Trampa cazada!</span>
+                  )}
+                  {isFlash && flash.kind === "miss" && (
+                    <span className="subtitle__fb subtitle__fb--miss">Eso era verdad…</span>
+                  )}
+                  {caught && !isFlash && <span className="subtitle__badge">✓ cazada</span>}
+                </motion.button>
+              );
+            })}
+          </AnimatePresence>
         )}
-        {flash === "miss" && (
-          <span className="subtitle__fb subtitle__fb--miss">Eso era verdad…</span>
-        )}
-        {caughtNow && !flash && <span className="subtitle__badge">✓ cazada</span>}
-      </button>
+      </div>
 
       <p className="muted small trap__foot">
         {noScans

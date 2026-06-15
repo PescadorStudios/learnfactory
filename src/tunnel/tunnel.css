@@ -1029,6 +1029,23 @@
   background: rgba(255, 107, 139, 0.1);
 }
 
+/* Escenario de dos casillas en rollo: la nueva entra por abajo, la vieja sube. */
+.trap__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.trap__stage .subtitle {
+  min-height: 96px;
+}
+/* La casilla anterior (arriba): se diferencia de la actual con borde punteado. */
+.subtitle--prev {
+  border-style: dashed;
+}
+.subtitle--prev .subtitle__text {
+  font-size: clamp(15px, 2.8vw, 19px);
+}
+
 .subtitle {
   position: relative;
   width: 100%;
