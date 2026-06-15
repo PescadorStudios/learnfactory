@@ -3,11 +3,12 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle, Crown, Plus, Lock, EyeOff, Hammer, X, GraduationCap } from "lucide-react";
+import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle, Crown, Plus, Lock, EyeOff, Hammer, X, GraduationCap, Headphones, Orbit } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getProfileByUsername, getPlan } from "@/app/socialActions";
 import type { PublicProfile, PlanState } from "@/lib/types";
 import { explorerRank, creatorRank, explorerProgress, creatorProgress } from "@/lib/reputation";
+import { levelFor, PODCAST_LEVELS, TUNNEL_LEVELS, formatListened, type LevelProgress } from "@/lib/listeningLevels";
 import AppHeader from "@/components/AppHeader";
 import RouteCard from "@/components/RouteCard";
 import FollowButton from "@/components/FollowButton";
@@ -209,6 +210,24 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
           <Stat icon={<Users className="w-4 h-4 text-zinc-400" />} label="Seguidores" value={s.followers} />
         </div>
 
+        {/* Niveles de escucha (Podcast) y recorrido (Túnel) — evolución del usuario */}
+        <div className="grid md:grid-cols-2 gap-4 mb-10">
+          <LevelCard
+            icon={<Headphones className="w-4 h-4 text-primary" />}
+            label="Podcast"
+            prog={levelFor(s.podcastSeconds, PODCAST_LEVELS)}
+            valueLabel={`${formatListened(s.podcastSeconds)} escuchados`}
+            barClass="bg-gradient-to-r from-primary to-accent"
+          />
+          <LevelCard
+            icon={<Orbit className="w-4 h-4 text-secondary" />}
+            label="Túnel"
+            prog={levelFor(s.tunnelLessons, TUNNEL_LEVELS)}
+            valueLabel={`${s.tunnelLessons} ${s.tunnelLessons === 1 ? "lección recorrida" : "lecciones recorridas"}`}
+            barClass="bg-gradient-to-r from-secondary to-primary"
+          />
+        </div>
+
         {/* Rutas */}
         <h2 className="text-xl font-bold mb-4">Rutas de {profile.displayName || `@${profile.username}`}</h2>
         {profile.routes.length === 0 ? (
@@ -266,6 +285,31 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-4">
       <div className="flex items-center gap-1.5 text-zinc-500 text-xs mb-1">{icon} {label}</div>
       <div className="text-2xl font-bold text-white">{value}</div>
+    </motion.div>
+  );
+}
+
+function LevelCard({ icon, label, prog, valueLabel, barClass }: {
+  icon: React.ReactNode;
+  label: string;
+  prog: LevelProgress;
+  valueLabel: string;
+  barClass: string;
+}) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-5">
+      <div className="flex items-center justify-between mb-2">
+        <span className="flex items-center gap-2 text-sm font-bold text-zinc-200">{icon} {label}</span>
+        <span className="text-xs text-zinc-500 tabular-nums">{valueLabel}</span>
+      </div>
+      <div className="flex items-baseline gap-2 mb-3">
+        <span className="text-2xl font-bold text-white">Nivel {prog.current.level}</span>
+        <span className="text-sm text-zinc-400">· {prog.current.name}</span>
+      </div>
+      <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${barClass}`} style={{ width: `${prog.progressPct}%` }} />
+      </div>
+      {prog.next && <p className="text-xs text-zinc-500 mt-1.5">Siguiente: Nivel {prog.next.level} · {prog.next.name}</p>}
     </motion.div>
   );
 }

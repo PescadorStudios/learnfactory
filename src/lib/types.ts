@@ -337,6 +337,11 @@ export interface ProfileStats {
   avgStars: number;
   /** Estudiantes distintos graduados (≥80%) en sus rutas (vía creador). */
   graduates: number;
+  // Gamificación de escucha/recorrido (global por usuario; nivel derivado)
+  /** Tiempo total escuchado en modo Podcast (segundos). */
+  podcastSeconds: number;
+  /** Lecciones/estaciones del Túnel completadas en total. */
+  tunnelLessons: number;
 }
 
 export interface PublicProfile {
