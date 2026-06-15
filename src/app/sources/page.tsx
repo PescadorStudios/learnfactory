@@ -723,9 +723,9 @@ function Sources() {
                   <span className="text-white font-semibold">3 créditos</span> para crear rutas más largas con IA.
                   Estudiar la biblioteca siempre es gratis.
                 </p>
-                <div className="mt-4 text-3xl font-bold text-white">
-                  $23.900 <span className="text-base font-normal text-zinc-500">COP · pago único</span>
-                </div>
+                <p className="mt-4 text-sm font-medium text-zinc-400">
+                  Pago único — elige tu país abajo
+                </p>
               </div>
               <PremiumCheckout token={token} email={email} />
             </motion.div>
