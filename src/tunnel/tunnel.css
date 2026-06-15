@@ -1038,8 +1038,23 @@
 .trap__stage .subtitle {
   min-height: 96px;
 }
-/* La casilla anterior (arriba): se diferencia de la actual con borde punteado. */
+/* La casilla actual (abajo): entra deslizándose desde abajo al montarse. */
+.subtitle--cur {
+  animation: subEnter 0.32s ease both;
+}
+@keyframes subEnter {
+  from {
+    opacity: 0;
+    transform: translateY(26px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* La casilla anterior (arriba): atenuada y con borde punteado. */
 .subtitle--prev {
+  opacity: 0.5;
   border-style: dashed;
 }
 .subtitle--prev .subtitle__text {

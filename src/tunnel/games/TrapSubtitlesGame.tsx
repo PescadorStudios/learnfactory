@@ -17,7 +17,6 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import type { TrapSubtitlesChallenge, TrapSegment } from "../types/contract";
 import { useJourney } from "../state/journeyStore";
 import type { ChallengeResult } from "../state/journeyStore";
@@ -206,38 +205,34 @@ export function TrapSubtitlesGame({
             <span className="subtitle__text">…</span>
           </div>
         ) : (
-          <AnimatePresence initial={false}>
-            {visible.map(({ idx, seg: s }) => {
-              const isCur = idx === currentIdx;
-              const isFlash = flash != null && flash.idx === idx;
-              const caught = caughtRef.current.has(idx);
-              return (
-                <motion.button
-                  key={idx}
-                  type="button"
-                  layout
-                  initial={{ opacity: 0, y: 28 }}
-                  animate={{ opacity: isCur ? 1 : 0.45, y: 0 }}
-                  exit={{ opacity: 0, y: -28 }}
-                  transition={{ duration: 0.32, ease: "easeOut" }}
-                  className={`subtitle ${isCur ? "subtitle--cur" : "subtitle--prev"} ${
-                    isFlash ? `subtitle--${flash.kind}` : caught ? "subtitle--caught" : ""
-                  }`}
-                  onClick={() => scanRef.current(idx)}
-                  disabled={noScans}
-                >
-                  <span className="subtitle__text">{s.text}</span>
-                  {isFlash && flash.kind === "hit" && (
-                    <span className="subtitle__fb subtitle__fb--hit">¡Trampa cazada!</span>
-                  )}
-                  {isFlash && flash.kind === "miss" && (
-                    <span className="subtitle__fb subtitle__fb--miss">Eso era verdad…</span>
-                  )}
-                  {caught && !isFlash && <span className="subtitle__badge">✓ cazada</span>}
-                </motion.button>
-              );
-            })}
-          </AnimatePresence>
+          visible.map(({ idx, seg: s }) => {
+            const isCur = idx === currentIdx;
+            const isFlash = flash != null && flash.idx === idx;
+            const caught = caughtRef.current.has(idx);
+            return (
+              <button
+                // key = índice del segmento: al avanzar, la casilla actual pasa
+                // a "prev" (mismo elemento, no se remonta) y entra una NUEVA
+                // casilla abajo (se monta → dispara la animación de entrada).
+                key={idx}
+                type="button"
+                className={`subtitle ${isCur ? "subtitle--cur" : "subtitle--prev"} ${
+                  isFlash ? `subtitle--${flash.kind}` : caught ? "subtitle--caught" : ""
+                }`}
+                onClick={() => scanRef.current(idx)}
+                disabled={noScans}
+              >
+                <span className="subtitle__text">{s.text}</span>
+                {isFlash && flash.kind === "hit" && (
+                  <span className="subtitle__fb subtitle__fb--hit">¡Trampa cazada!</span>
+                )}
+                {isFlash && flash.kind === "miss" && (
+                  <span className="subtitle__fb subtitle__fb--miss">Eso era verdad…</span>
+                )}
+                {caught && !isFlash && <span className="subtitle__badge">✓ cazada</span>}
+              </button>
+            );
+          })
         )}
       </div>
 
