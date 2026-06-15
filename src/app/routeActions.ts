@@ -996,6 +996,116 @@ export async function getRouteAudioStations(
 }
 
 // ──────────────────────────────────────────────────
+//  MODO PODCAST — catálogo de lecciones de audio para escucha continua
+// ──────────────────────────────────────────────────
+
+/** Una lección de audio lista para sonar en el reproductor de podcast. */
+export interface PodcastLesson {
+  routeId: string;
+  nodeId: string;
+  title: string;
+  audioUrl: string; // WAV público (mismo que reproduce /lesson)
+  durationSeconds: number;
+  mode: AttentionData["mode"]; // spy | subtitles | copilot (solo informativo)
+}
+
+/** Rutas agrupadas con sus lecciones de audio, para el lobby del podcast. */
+export interface PodcastRouteGroup {
+  routeId: string;
+  topic: string;
+  coverUrl: string | null;
+  category: RouteCategory;
+  lessons: PodcastLesson[];
+}
+
+const PODCAST_PUBLIC_LIMIT = 150;
+
+/**
+ * Catálogo del modo podcast: TODA la biblioteca pública (rutas con visibilidad
+ * pública y no bloqueadas, las más recientes hasta un tope) MÁS las rutas propias
+ * del usuario, agrupadas por ruta y solo con las lecciones cuyo audio ya está
+ * listo. El reproductor encola estos `audioUrl` y los suena uno tras otro; como
+ * NO corre los juegos de atención, el Co-Piloto se reproduce sin pausas.
+ */
+export async function getPodcastCatalog(token: string): Promise<PodcastRouteGroup[]> {
+  const user = await getUserFromToken(token);
+  if (!user) return [];
+  const sb = supabaseAdmin();
+
+  // 1) Rutas candidatas: públicas recientes (con tope) + propias del usuario.
+  const ROUTE_COLS = "id, topic, cover_path, category, created_at";
+  const [{ data: pub }, { data: mine }] = await Promise.all([
+    sb.from("routes").select(ROUTE_COLS)
+      .eq("visibility", "public").eq("blocked", false)
+      .order("created_at", { ascending: false }).limit(PODCAST_PUBLIC_LIMIT),
+    sb.from("routes").select(ROUTE_COLS)
+      .eq("owner_id", user.id).eq("blocked", false),
+  ]);
+
+  const routeMeta = new Map<string, { topic: string; cover_path: string | null; category?: string }>();
+  for (const r of [...(pub || []), ...(mine || [])]) {
+    if (!routeMeta.has(r.id)) routeMeta.set(r.id, { topic: r.topic, cover_path: r.cover_path, category: r.category });
+  }
+  const routeIds = [...routeMeta.keys()];
+  if (routeIds.length === 0) return [];
+
+  // 2) Lecciones de audio listas de esas rutas (una sola consulta).
+  const { data: lessons } = await sb
+    .from("lessons")
+    .select("route_id, node_id, title, audio_path, audio_duration, audio_questions, status")
+    .in("route_id", routeIds)
+    .eq("status", "ready");
+
+  const byRoute = new Map<string, PodcastLesson[]>();
+  for (const l of lessons || []) {
+    if (!l.audio_path) continue;
+    const att = l.audio_questions;
+    if (!att || Array.isArray(att) || typeof att !== "object" || !("mode" in att)) continue;
+    const arr = byRoute.get(l.route_id) ?? [];
+    arr.push({
+      routeId: l.route_id,
+      nodeId: l.node_id,
+      title: l.title,
+      audioUrl: sb.storage.from(AUDIO_BUCKET).getPublicUrl(l.audio_path).data.publicUrl,
+      durationSeconds: (l.audio_duration as number) ?? 0,
+      mode: (att as AttentionData).mode,
+    });
+    byRoute.set(l.route_id, arr);
+  }
+
+  // 3) Ordenar las lecciones de cada ruta según el árbol (solo para las rutas que
+  //    sí tienen audio, para no traer árboles de más).
+  const routesWithAudio = [...byRoute.keys()];
+  if (routesWithAudio.length) {
+    const { data: trees } = await sb.from("routes").select("id, tree").in("id", routesWithAudio);
+    for (const t of trees || []) {
+      const lessonsOfRoute = byRoute.get(t.id);
+      if (!lessonsOfRoute) continue;
+      const order = new Map(flattenNodes(t.tree as Tree).map((n, i) => [n.id, i]));
+      lessonsOfRoute.sort((a, b) => (order.get(a.nodeId) ?? 999) - (order.get(b.nodeId) ?? 999));
+    }
+  }
+
+  // 4) Construir grupos (solo rutas con al menos una lección de audio), ordenados
+  //    por tema para una navegación estable.
+  const groups: PodcastRouteGroup[] = [];
+  for (const routeId of routeIds) {
+    const lessonsOfRoute = byRoute.get(routeId);
+    if (!lessonsOfRoute || lessonsOfRoute.length === 0) continue;
+    const meta = routeMeta.get(routeId)!;
+    groups.push({
+      routeId,
+      topic: meta.topic,
+      coverUrl: coverUrlFor(meta.cover_path),
+      category: cleanCategory(meta.category),
+      lessons: lessonsOfRoute,
+    });
+  }
+  groups.sort((a, b) => a.topic.localeCompare(b.topic));
+  return groups;
+}
+
+// ──────────────────────────────────────────────────
 //  INTENTOS Y MAESTRÍA
 // ──────────────────────────────────────────────────
 

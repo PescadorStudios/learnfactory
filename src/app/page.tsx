@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles } from "lucide-react";
+import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
 import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
@@ -230,6 +230,46 @@ function HomeContent() {
                   </p>
                   <span className="inline-flex items-center gap-2 bg-white/5 border border-cyan-400/40 text-white rounded-full px-7 py-3.5 font-bold transition-all group-hover:bg-cyan-400/10 group-hover:border-cyan-300 group-hover:shadow-[0_0_35px_rgba(56,189,248,0.35)]">
                     Entrar al Túnel
+                    <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </div>
+              </button>
+            </motion.div>
+
+            {/* ── Modo Podcast: escucha continua (dormir / manejar / caminar) ── */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+              className="mb-12"
+            >
+              <button
+                type="button"
+                onClick={() => router.push("/podcast")}
+                aria-label="Entrar al Modo Podcast"
+                className="group relative w-full text-left rounded-[2rem] overflow-hidden border border-primary/25 hover:border-primary/50 bg-[#0a0712] transition-colors"
+              >
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_15%_50%,rgba(139,92,246,0.22),transparent_55%),radial-gradient(circle_at_88%_50%,rgba(59,130,246,0.18),transparent_50%)] pointer-events-none" />
+                <div className="absolute right-6 md:right-16 top-1/2 -translate-y-1/2 hidden sm:flex items-center justify-center pointer-events-none" aria-hidden>
+                  <div className="w-28 h-28 md:w-36 md:h-36 rounded-full bg-gradient-to-br from-primary/25 to-secondary/20 border border-primary/30 flex items-center justify-center">
+                    <Headphones className="w-12 h-12 md:w-16 md:h-16 text-primary/80" />
+                  </div>
+                </div>
+                <div className="relative z-10 px-8 md:px-14 py-9 md:py-11 max-w-2xl">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-primary/90 mb-3">
+                    <Headphones className="w-3.5 h-3.5" /> Nuevo · Escucha continua
+                  </span>
+                  <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-violet-200 to-secondary">
+                      Modo Podcast
+                    </span>
+                  </h2>
+                  <p className="text-zinc-400 text-base md:text-lg mb-6 max-w-lg">
+                    Elige lecciones o rutas enteras y déjalas sonar una tras otra,
+                    sin parar. Perfecto para dormir, manejar o salir a caminar.
+                  </p>
+                  <span className="inline-flex items-center gap-2 bg-white/5 border border-primary/40 text-white rounded-full px-7 py-3.5 font-bold transition-all group-hover:bg-primary/10 group-hover:border-primary group-hover:shadow-[0_0_35px_rgba(139,92,246,0.35)]">
+                    Empezar a escuchar
                     <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-0.5" />
                   </span>
                 </div>
