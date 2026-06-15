@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, Play, Pause, SkipBack, SkipForward, Headphones, ListMusic } from "lucide-react";
+import { usePlaybackRate } from "@/app/lesson/attention/usePlaybackRate";
 import type { PodcastTrack } from "./types";
 
 function fmtTime(s: number): string {
@@ -25,6 +26,8 @@ export default function PodcastPlayer({
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  // Velocidad 1× / 1.5× / 2× (reaplica al cambiar de pista, mantiene tono natural).
+  const { rate, cycle } = usePlaybackRate(audioRef);
 
   const current = queue[index];
   const hasNext = index < queue.length - 1;
@@ -124,7 +127,7 @@ export default function PodcastPlayer({
         </div>
 
         {/* Botones */}
-        <div className="flex items-center justify-center gap-8">
+        <div className="relative flex items-center justify-center gap-8">
           <button onClick={goPrev} disabled={!hasPrev} className="text-zinc-300 hover:text-white disabled:opacity-30 transition-colors">
             <SkipBack className="w-7 h-7 fill-current" />
           </button>
@@ -136,6 +139,20 @@ export default function PodcastPlayer({
           </button>
           <button onClick={goNext} disabled={!hasNext} className="text-zinc-300 hover:text-white disabled:opacity-30 transition-colors">
             <SkipForward className="w-7 h-7 fill-current" />
+          </button>
+
+          {/* Velocidad (1× / 1.5× / 2×) */}
+          <button
+            onClick={cycle}
+            aria-label={`Velocidad ${rate}×. Tocar para cambiar.`}
+            title="Velocidad de reproducción"
+            className={`absolute right-0 h-10 min-w-[3.25rem] px-3 rounded-full border text-sm font-bold tabular-nums transition-colors ${
+              rate === 1
+                ? "bg-zinc-900 border-zinc-700 text-zinc-300 hover:border-primary"
+                : "bg-primary/15 border-primary text-primary"
+            }`}
+          >
+            {rate}×
           </button>
         </div>
       </div>
