@@ -155,6 +155,13 @@ export interface DebateTurnResult {
   feedbackFinal?: SocraticEvaluation;
 }
 
+// ── Tutor/Agente por ruta (chat con memoria, dudas globales de la ruta) ──
+
+export interface TutorMessage {
+  role: "user" | "tutor";
+  content: string;
+}
+
 // ── Quiz acumulativo y Boss ──
 
 export interface QuizQuestionData {

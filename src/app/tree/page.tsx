@@ -9,6 +9,7 @@ import { useRouteRealtime } from "@/lib/useRouteRealtime";
 import { getRoute, retryLesson, resumeRoute, regenerateLesson } from "../routeActions";
 import type { RouteDetail, TreeNode, NodeState } from "@/lib/types";
 import { EXPLORER_RANKS } from "@/lib/reputation";
+import TutorChat from "./TutorChat";
 
 const NODE_TYPE_LABELS: Record<string, string> = {
   theory: "Teoría",
@@ -521,6 +522,9 @@ function KnowledgeTree() {
           );
         })()}
       </AnimatePresence>
+
+      {/* Tutor/Agente estratégico de la ruta (dudas globales, memoria por ruta) */}
+      {token && <TutorChat routeId={routeId} token={token} topic={route.topic} />}
     </main>
   );
 }

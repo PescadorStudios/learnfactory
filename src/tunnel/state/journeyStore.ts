@@ -18,6 +18,8 @@ import type { Lesson, LessonSummary } from "../types/contract";
 import type { Rail } from "../types/rail";
 import { provider } from "../content";
 import { assembleRail } from "../rail/assembleRail";
+import { supabaseBrowser } from "@/lib/supabase/client";
+import { recordTunnelLesson, getListeningStats } from "@/app/gamificationActions";
 
 export type Phase = "lobby" | "tunnel";
 
@@ -153,6 +155,12 @@ interface JourneyState {
   // --- Narrador (Fase 4) ---
   /** Emite una frase del narrador; la Capa 3 la muestra un instante. */
   narrate: (text: string, tone: NarrationTone) => void;
+
+  // --- Gamificación (recorrido global por usuario) ---
+  /** Lecciones/estaciones del Túnel completadas en total (todas las rutas). */
+  tunnelLessons: number;
+  /** Carga el conteo acumulado desde el perfil (para pintar el nivel al entrar). */
+  seedTunnelStats: () => Promise<void>;
 }
 
 const FRESH_TRAVERSAL = {
@@ -187,6 +195,7 @@ export const useJourney = create<JourneyState>((set, get) => ({
   reducedMotion: false,
   debugView: false,
   muted: false,
+  tunnelLessons: 0,
 
   async loadCatalog() {
     if (get().catalogStatus === "loading") return;
@@ -387,12 +396,49 @@ export const useJourney = create<JourneyState>((set, get) => ({
       bestStreak,
       narration: { text, tone, id: (s.narration?.id ?? 0) + 1 },
     });
+
+    // Recorrido global: cada estación cuenta una sola vez (el guard de arriba
+    // evita duplicados al re-entrar). Side-effect async (no bloquea el render).
+    recordTunnelProgress();
   },
 
   narrate(text, tone) {
     set((s) => ({ narration: { text, tone, id: (s.narration?.id ?? 0) + 1 } }));
   },
+
+  async seedTunnelStats() {
+    try {
+      const token = await tunnelToken();
+      if (!token) return;
+      const { tunnelLessons } = await getListeningStats(token);
+      set({ tunnelLessons });
+    } catch {
+      /* sin sesión / offline: el nivel queda en el valor por defecto */
+    }
+  },
 }));
+
+/** Token del usuario para las server actions (mismo patrón que el provider). */
+async function tunnelToken(): Promise<string | null> {
+  try {
+    const { data } = await supabaseBrowser().auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persiste +1 lección del Túnel y refleja el total en el store (para el HUD). */
+async function recordTunnelProgress() {
+  try {
+    const token = await tunnelToken();
+    if (!token) return;
+    const { totalLessons } = await recordTunnelLesson(token);
+    useJourney.setState({ tunnelLessons: totalLessons });
+  } catch {
+    /* sin sesión / offline: el viaje sigue, no se persiste el conteo */
+  }
+}
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);

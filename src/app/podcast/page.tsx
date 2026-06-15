@@ -32,7 +32,7 @@ export default function PodcastPage() {
 
   // Reproductor a pantalla completa cuando hay una cola.
   if (queue) {
-    return <PodcastPlayer queue={queue} onExit={() => setQueue(null)} />;
+    return <PodcastPlayer queue={queue} token={token ?? ""} onExit={() => setQueue(null)} />;
   }
 
   return (

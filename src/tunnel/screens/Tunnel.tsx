@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Canvas } from "@react-three/fiber";
 import { useJourney } from "../state/journeyStore";
+import { levelFor, TUNNEL_LEVELS } from "@/lib/listeningLevels";
 import { useFlyControls } from "../hooks/useFlyControls";
 import { colorForNiche } from "../theme";
 import { CameraRig } from "../world/CameraRig";
@@ -42,6 +43,8 @@ export function Tunnel() {
   const finishJourney = useJourney((s) => s.finishJourney);
   const captured = useJourney((s) => s.captured);
   const streak = useJourney((s) => s.streak);
+  const tunnelLessons = useJourney((s) => s.tunnelLessons);
+  const seedTunnelStats = useJourney((s) => s.seedTunnelStats);
   const muted = useJourney((s) => s.muted);
   const toggleMuted = useJourney((s) => s.toggleMuted);
   const toggleDebug = useJourney((s) => s.toggleDebug);
@@ -67,6 +70,19 @@ export function Tunnel() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [setReducedMotion]);
+
+  // Nivel de recorrido global (gamificación). Se siembra al montar y celebra
+  // (vía narrador) cuando sube de nivel al completar estaciones.
+  useEffect(() => { seedTunnelStats(); }, [seedTunnelStats]);
+  const tunnelLevel = levelFor(tunnelLessons, TUNNEL_LEVELS);
+  const prevLevelRef = useRef<number | null>(null);
+  useEffect(() => {
+    const lv = levelFor(tunnelLessons, TUNNEL_LEVELS).current;
+    if (prevLevelRef.current !== null && lv.level > prevLevelRef.current) {
+      narrate(`Nivel ${lv.level} del túnel · ${lv.name}`, "streak");
+    }
+    prevLevelRef.current = lv.level;
+  }, [tunnelLessons, narrate]);
 
   // Input de vuelo (arrastrar / teclado). Vive mientras el túnel está montado.
   const input = useFlyControls(true);
@@ -151,6 +167,12 @@ export function Tunnel() {
         )}
         <span className="hud__caps" title="Datos capturados">
           ✦ {captured.length}
+        </span>
+        <span
+          className="hud__caps"
+          title={`Túnel · ${tunnelLevel.current.name} · ${tunnelLessons} lecciones recorridas`}
+        >
+          🌀 Nv {tunnelLevel.current.level}
         </span>
         <button
           type="button"

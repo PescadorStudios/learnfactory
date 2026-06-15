@@ -12,6 +12,8 @@ import * as path from "path";
 import * as cheerio from "cheerio";
 import type {
   Sintesis,
+  Tree,
+  TutorMessage,
   StudyPack,
   NodeType,
   SocraticEvaluation,
@@ -1223,6 +1225,76 @@ SOLO devuelve el JSON, sin texto adicional:
   } catch (error) {
     console.error("[DebateTurn] Error:", error);
     return generateMockDebateTurn(nodeTitle, transcript);
+  }
+}
+
+// ──────────────────────────────────────────────────
+//  TUTOR / AGENTE POR RUTA (chat con memoria, dudas globales)
+// ──────────────────────────────────────────────────
+
+/** Versión recortada del árbol para el contexto del tutor (mapa de lecciones). */
+function treeMapBlock(tree: Tree): string {
+  const lines = tree.levels.map((lvl) => {
+    const nodos = lvl.nodes.map((n) => `${n.id} (${n.type}) ${n.title}`).join("; ");
+    return `Nivel ${lvl.id} — ${lvl.title}: ${nodos}`;
+  });
+  return `MAPA DE LECCIONES DE LA RUTA (para orientar al estudiante):\n${lines.join("\n")}`;
+}
+
+/**
+ * Un turno del Tutor de RUTA: responde dudas globales sobre TODA la ruta usando
+ * la síntesis maestra + el mapa de lecciones, con memoria de la conversación.
+ * Responde en prosa (no JSON). Vive fuera de las lecciones (no resuelve retos).
+ */
+export async function tutorTurnCore(
+  topic: string,
+  sintesis: Sintesis,
+  tree: Tree,
+  history: TutorMessage[],
+  userMessage: string
+): Promise<string> {
+  if (!apiKey) {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    return `Soy tu tutor de la ruta "${topic}". (Modo demo sin IA: configura GEMINI_API_KEY para respuestas reales.) Pregúntame sobre cualquier concepto de la ruta y te oriento.`;
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const recent = history.slice(-12);
+    const historyBlock = recent.length
+      ? recent.map((m) => `${m.role === "user" ? "ESTUDIANTE" : "TUTOR"}: ${m.content}`).join("\n")
+      : "(sin mensajes previos)";
+
+    const prompt = `
+Actúa como un tutor estratégico, experto y cercano de la academia "LearnFactory", dedicado a la ruta "${topic}".
+${sintesisBlock(sintesis)}
+
+${treeMapBlock(tree)}
+
+TU MISIÓN: ayudar al estudiante a entender y conectar TODO el material de esta ruta. Responde dudas globales,
+relaciona conceptos entre lecciones, sugiere por dónde seguir y aclara malentendidos. Eres un guía de estudio,
+NO un solucionador de los retos: si te piden la respuesta exacta de un quiz/ejercicio, no la des directamente;
+oriéntalo para que la razone.
+
+PAUTAS DE RESPUESTA:
+- Básate en la síntesis maestra; si algo no está cubierto, dilo con honestidad en vez de inventar.
+- Sé claro y conciso (2-5 oraciones salvo que pidan más detalle). Tono motivador y natural en español.
+- Puedes referirte a lecciones por su título cuando ayude a orientar.
+- Responde en texto plano (sin markdown pesado ni JSON).
+
+CONVERSACIÓN PREVIA (memoria de esta ruta):
+${historyBlock}
+
+NUEVO MENSAJE DEL ESTUDIANTE:
+${userMessage}
+
+Responde directamente al estudiante:`;
+
+    const result = await withTimeout(model.generateContent(prompt), TEXT_TIMEOUT_MS, "Turno del tutor");
+    return result.response.text().trim() || "No pude generar una respuesta. Intenta reformular tu pregunta.";
+  } catch (error) {
+    console.error("[TutorTurn] Error:", error);
+    return "Tuve un problema para responder ahora mismo. Vuelve a intentarlo en un momento.";
   }
 }
 

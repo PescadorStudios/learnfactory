@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, Play, Pause, SkipBack, SkipForward, Headphones, ListMusic } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronLeft, Play, Pause, SkipBack, SkipForward, Headphones, ListMusic, Trophy } from "lucide-react";
 import { usePlaybackRate } from "@/app/lesson/attention/usePlaybackRate";
+import { addPodcastListening, getListeningStats } from "@/app/gamificationActions";
+import { levelFor, PODCAST_LEVELS, formatListened, type LevelDef } from "@/lib/listeningLevels";
 import type { PodcastTrack } from "./types";
 
 function fmtTime(s: number): string {
@@ -14,14 +17,32 @@ function srcFor(t: PodcastTrack): string {
   return `${t.audioUrl}${t.audioUrl.includes("?") ? "&" : "?"}v=${t.durationSeconds}`;
 }
 
+/** Color de texto por tier del nivel (coherente con la reputación). */
+const TIER_TEXT: Record<LevelDef["tier"], string> = {
+  zinc: "text-zinc-300",
+  bronze: "text-amber-600",
+  silver: "text-zinc-200",
+  gold: "text-amber-400",
+  legend: "text-violet-300",
+};
+
+/** Suma del tiempo de medios que NO debe contarse como escucha (saltos/seeks). */
+const MAX_SANE_DELTA = 2; // s entre dos timeupdate consecutivos
+/** Segundos acumulados sin guardar tras los cuales se vacía al servidor. */
+const FLUSH_THRESHOLD = 30;
+
 export default function PodcastPlayer({
   queue,
+  token,
   onExit,
 }: {
   queue: PodcastTrack[];
+  token: string;
   onExit: () => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const queueRef = useRef(queue);
+  const indexRef = useRef(0);
   const [index, setIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
@@ -29,12 +50,128 @@ export default function PodcastPlayer({
   // Velocidad 1× / 1.5× / 2× (reaplica al cambiar de pista, mantiene tono natural).
   const { rate, cycle } = usePlaybackRate(audioRef);
 
+  // Gamificación de escucha (nivel global por usuario).
+  const [podcastSeconds, setPodcastSeconds] = useState(0);
+  const [levelUp, setLevelUp] = useState<LevelDef | null>(null);
+  const podcastSecondsRef = useRef(0);
+  const unsavedRef = useRef(0); // tiempo de medios escuchado pendiente de guardar
+  const lastTimeRef = useRef(0); // último currentTime visto (para el delta)
+
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+
   const current = queue[index];
   const hasNext = index < queue.length - 1;
   const hasPrev = index > 0;
 
-  const goNext = useCallback(() => setIndex((i) => (i < queue.length - 1 ? i + 1 : i)), [queue.length]);
-  const goPrev = useCallback(() => setIndex((i) => (i > 0 ? i - 1 : i)), []);
+  // ── Reproducción imperativa: cambiar de pista NO pasa por un re-render de React.
+  //    Reusamos el MISMO <audio> y fijamos src + play() de forma síncrona. iOS lo
+  //    trata como continuación de la reproducción → permite el avance con la
+  //    pantalla bloqueada (la raíz del fallo era el ciclo onEnded→setState→render).
+  const updateMetadata = useCallback((i: number) => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const t = queueRef.current[i];
+    if (!t) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: t.title,
+        artist: t.routeTopic,
+        album: "Learn Factory · Podcast",
+      });
+    } catch {
+      /* MediaSession no disponible */
+    }
+  }, []);
+
+  const playIndex = useCallback((i: number) => {
+    const a = audioRef.current;
+    const q = queueRef.current;
+    if (!a || i < 0 || i >= q.length) return;
+    indexRef.current = i;
+    setIndex(i);
+    lastTimeRef.current = 0;
+    setCurrentTime(0);
+    a.src = srcFor(q[i]);
+    updateMetadata(i);
+    a.play().catch(() => setIsPlaying(false));
+  }, [updateMetadata]);
+
+  // Vaciado del tiempo escuchado al servidor (acumula nivel global).
+  const flush = useCallback(async () => {
+    const secs = Math.floor(unsavedRef.current);
+    if (secs <= 0 || !token) return;
+    unsavedRef.current -= secs; // conserva el resto fraccional
+    const prevLevel = levelFor(podcastSecondsRef.current, PODCAST_LEVELS).current.level;
+    const { totalSeconds } = await addPodcastListening(token, secs);
+    podcastSecondsRef.current = totalSeconds;
+    setPodcastSeconds(totalSeconds);
+    const reached = levelFor(totalSeconds, PODCAST_LEVELS).current;
+    if (reached.level > prevLevel) setLevelUp(reached);
+  }, [token]);
+
+  // Semilla del total acumulado (para pintar el nivel correcto al entrar).
+  useEffect(() => {
+    if (!token) return;
+    getListeningStats(token).then(({ podcastSeconds: s }) => {
+      podcastSecondsRef.current = s;
+      setPodcastSeconds(s);
+    });
+  }, [token]);
+
+  // Arranque: fija la primera pista de forma imperativa (hay gesto del usuario en
+  // la pila, desde el lobby) y conecta los listeners NATIVOS del <audio>.
+  useEffect(() => {
+    playIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Listener nativo `ended`: avanza síncronamente (clave para iOS en background).
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const onEnded = () => {
+      const i = indexRef.current;
+      if (i < queueRef.current.length - 1) playIndex(i + 1);
+      else setIsPlaying(false);
+      flush(); // fire-and-forget; el avance ya ocurrió síncronamente arriba
+    };
+    a.addEventListener("ended", onEnded);
+    return () => a.removeEventListener("ended", onEnded);
+  }, [playIndex, flush]);
+
+  // MediaSession: controles de la pantalla de bloqueo / auriculares. Se registran
+  // una sola vez; los handlers leen el índice vivo desde los refs.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    try {
+      ms.setActionHandler("play", () => audioRef.current?.play());
+      ms.setActionHandler("pause", () => audioRef.current?.pause());
+      ms.setActionHandler("previoustrack", () => playIndex(indexRef.current - 1));
+      ms.setActionHandler("nexttrack", () => playIndex(indexRef.current + 1));
+    } catch {
+      /* MediaSession no disponible */
+    }
+    return () => {
+      try {
+        ms.setActionHandler("play", null);
+        ms.setActionHandler("pause", null);
+        ms.setActionHandler("previoustrack", null);
+        ms.setActionHandler("nexttrack", null);
+      } catch { /* noop */ }
+    };
+  }, [playIndex]);
+
+  // Vaciar el tiempo escuchado al ocultar/cerrar (iOS al bloquear) o desmontar.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [flush]);
 
   const togglePlay = useCallback(() => {
     const a = audioRef.current;
@@ -43,34 +180,25 @@ export default function PodcastPlayer({
     else a.pause();
   }, []);
 
-  // Al cambiar de pista, reproduce automáticamente (auto-avance). El reseteo del
-  // tiempo lo hace el evento onLoadStart del <audio> al cambiar de src.
-  useEffect(() => {
-    audioRef.current?.play().catch(() => setIsPlaying(false));
-  }, [index]);
+  const goNext = useCallback(() => playIndex(indexRef.current + 1), [playIndex]);
+  const goPrev = useCallback(() => playIndex(indexRef.current - 1), [playIndex]);
 
-  // MediaSession: controles desde la pantalla de bloqueo / auriculares (manejar,
-  // dormir). Degrada con elegancia si el navegador no lo soporta.
-  useEffect(() => {
-    if (typeof navigator === "undefined" || !("mediaSession" in navigator) || !current) return;
-    try {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: current.title,
-        artist: current.routeTopic,
-        album: "Learn Factory · Podcast",
-      });
-      navigator.mediaSession.setActionHandler("play", () => audioRef.current?.play());
-      navigator.mediaSession.setActionHandler("pause", () => audioRef.current?.pause());
-      navigator.mediaSession.setActionHandler("previoustrack", hasPrev ? goPrev : null);
-      navigator.mediaSession.setActionHandler("nexttrack", hasNext ? goNext : null);
-    } catch {
-      /* MediaSession no disponible */
+  const onTimeUpdate = (e: React.SyntheticEvent<HTMLAudioElement>) => {
+    const t = e.currentTarget.currentTime;
+    const delta = t - lastTimeRef.current;
+    // Cuenta como escucha solo el avance "normal" del tiempo de medios (ignora
+    // saltos hacia atrás y seeks largos hacia adelante).
+    if (delta > 0 && delta <= MAX_SANE_DELTA) {
+      unsavedRef.current += delta;
+      if (unsavedRef.current >= FLUSH_THRESHOLD) flush();
     }
-  }, [current, hasPrev, hasNext, goPrev, goNext]);
-
-  const onEnded = () => {
-    if (hasNext) goNext();
-    else setIsPlaying(false);
+    lastTimeRef.current = t;
+    setCurrentTime(t);
+    if ("mediaSession" in navigator && navigator.mediaSession.setPositionState && duration > 0) {
+      try {
+        navigator.mediaSession.setPositionState({ duration, position: t, playbackRate: rate });
+      } catch { /* setPositionState no soportado */ }
+    }
   };
 
   const seek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -78,24 +206,23 @@ export default function PodcastPlayer({
     if (!a || !duration) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    lastTimeRef.current = frac * duration; // no contar el salto como escucha
     a.currentTime = frac * duration;
   };
 
   if (!current) return null;
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const lvl = levelFor(podcastSeconds, PODCAST_LEVELS);
 
   return (
     <main className="h-[100dvh] bg-zinc-950 text-white flex flex-col">
       <audio
         ref={audioRef}
-        src={srcFor(current)}
         preload="auto"
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
-        onLoadStart={() => setCurrentTime(0)}
-        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        onPlay={() => { setIsPlaying(true); if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing"; }}
+        onPause={() => { setIsPlaying(false); flush(); if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused"; }}
+        onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-        onEnded={onEnded}
       />
 
       {/* Cabecera */}
@@ -113,6 +240,19 @@ export default function PodcastPlayer({
         </div>
         <p className="uppercase tracking-widest text-xs font-bold text-primary mb-2">{current.routeTopic}</p>
         <h1 className="text-2xl md:text-3xl font-bold leading-snug max-w-lg">{current.title}</h1>
+      </div>
+
+      {/* Nivel de escucha (gamificación) */}
+      <div className="max-w-2xl w-full mx-auto px-6 mb-3">
+        <div className="flex items-center justify-between text-xs mb-1.5">
+          <span className={`inline-flex items-center gap-1.5 font-bold ${TIER_TEXT[lvl.current.tier]}`}>
+            <Trophy className="w-3.5 h-3.5" /> Nivel {lvl.current.level} · {lvl.current.name}
+          </span>
+          <span className="text-zinc-500 tabular-nums">{formatListened(podcastSeconds)} escuchados</span>
+        </div>
+        <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-primary to-accent rounded-full" style={{ width: `${lvl.progressPct}%` }} />
+        </div>
       </div>
 
       {/* Controles */}
@@ -169,7 +309,7 @@ export default function PodcastPlayer({
               return (
                 <li key={`${t.routeId}::${t.nodeId}::${i}`}>
                   <button
-                    onClick={() => setIndex(i)}
+                    onClick={() => playIndex(i)}
                     className={`w-full flex items-center gap-3 text-left rounded-xl px-3 py-2 transition-colors ${
                       active ? "bg-primary/15" : "hover:bg-zinc-900"
                     }`}
@@ -189,6 +329,32 @@ export default function PodcastPlayer({
           </ul>
         </div>
       </div>
+
+      {/* 🎧 Subida de nivel de escucha */}
+      <AnimatePresence>
+        {levelUp && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setLevelUp(null)}>
+            <motion.div
+              initial={{ scale: 0.7, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 200, damping: 18 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-zinc-900 rounded-3xl p-8 w-full max-w-sm text-center border border-primary/50 shadow-[0_0_50px_rgba(99,102,241,0.3)]"
+            >
+              <div className="w-20 h-20 mx-auto mb-4 rounded-3xl bg-primary/15 border-2 border-primary/60 flex items-center justify-center">
+                <Trophy className={`w-10 h-10 ${TIER_TEXT[levelUp.tier]}`} />
+              </div>
+              <p className="text-xs uppercase tracking-widest font-bold mb-1 text-primary">¡Subiste de nivel escuchando!</p>
+              <h3 className="text-3xl font-bold mb-2">Nivel {levelUp.level} · {levelUp.name}</h3>
+              <p className="text-zinc-400 text-sm mb-6">Cada minuto en modo podcast suma. Sigue escuchando para llegar más lejos.</p>
+              <button onClick={() => setLevelUp(null)} className="w-full py-3 rounded-2xl font-bold text-white bg-primary hover:bg-primary-hover transition-all">
+                Seguir escuchando
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }
