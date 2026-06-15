@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowRight, ChevronRight, Sparkles, Headphones, Brain, Network,
-  Trophy, Plus, Video, Loader2, Target, MessageSquare, InfinityIcon,
+  Trophy, Plus, Loader2, Target, MessageSquare, InfinityIcon,
   Star, Zap, GraduationCap,
 } from "lucide-react";
 import { getLandingLibrary } from "@/app/socialActions";
@@ -92,12 +92,12 @@ export default function LandingPage() {
         {/* Capa: símbolo monumental desvanecido */}
         <LogoMark className="hidden md:block absolute -right-24 top-10 w-[30rem] h-[30rem] opacity-[0.05] rotate-12 pointer-events-none" />
 
-        <div className="relative z-10 max-w-6xl mx-auto px-4">
+        <div className="relative z-10 max-w-6xl mx-auto px-4 grid lg:grid-cols-[1.05fr_0.95fr] gap-10 lg:gap-8 items-center">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: "easeOut" }}
-            className="max-w-3xl"
+            className="max-w-2xl order-2 lg:order-1"
           >
             <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-primary/90 mb-5">
               <InfinityIcon className="w-4 h-4" /> El fin del scroll sin sentido
@@ -158,25 +158,65 @@ export default function LandingPage() {
               <span className="inline-flex items-center gap-2"><span className="w-1 h-1 rounded-full bg-accent/70" /> Biblioteca colectiva</span>
             </motion.div>
           </motion.div>
+
+          {/* Visual protagonista: mente neuronal despertando */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.94 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.2, duration: 0.9, ease: "easeOut" }}
+            className="relative order-1 lg:order-2"
+          >
+            <div className="absolute inset-4 bg-primary/25 blur-[90px] rounded-full pointer-events-none" />
+            <motion.div
+              animate={{ y: [0, -12, 0] }}
+              transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+              className="relative"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/landing/hero.webp"
+                alt="Una mente humana hecha de una red neuronal luminosa"
+                className="relative w-full max-w-xl mx-auto select-none [mask-image:radial-gradient(ellipse_75%_75%_at_50%_45%,#000_60%,transparent_100%)]"
+                draggable={false}
+              />
+            </motion.div>
+          </motion.div>
         </div>
       </section>
 
       {/* ════════════════ 2 · MANIFIESTO / EL PROBLEMA ════════════════ */}
       <section className="relative py-20 md:py-28 border-y border-zinc-800/60">
-        <div className="max-w-4xl mx-auto px-4 text-center">
-          <motion.span {...fadeUp} className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-accent/90 mb-5">
-            <Brain className="w-4 h-4" /> El problema
-          </motion.span>
-          <motion.h2 {...fadeUp} className="text-3xl md:text-5xl font-bold tracking-tight mb-7 leading-tight">
-            Las apps no fueron diseñadas para que crezcas.
-            <br />
-            <span className="text-zinc-500">Fueron diseñadas para retenerte.</span>
-          </motion.h2>
-          <motion.p {...fadeUp} className="text-zinc-400 text-lg md:text-xl leading-relaxed max-w-2xl mx-auto">
-            Cada deslizamiento entrena a tu cerebro para querer el siguiente. Horas que
-            desaparecen sin dejar nada. Aquí el scroll tiene un destino: cada minuto que
-            inviertes se convierte en un concepto que de verdad te llevas contigo.
-          </motion.p>
+        <div className="max-w-6xl mx-auto px-4 grid md:grid-cols-2 gap-10 md:gap-14 items-center">
+          {/* Imagen: la hipnosis del scroll infinito */}
+          <motion.div {...fadeUp} className="relative">
+            <div className="relative rounded-[1.75rem] overflow-hidden border border-zinc-800 shadow-2xl shadow-black/50">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/landing/problem.webp"
+                alt="Persona absorta por el feed infinito de su teléfono en la oscuridad"
+                className="w-full aspect-[16/9] object-cover select-none"
+                loading="lazy"
+                draggable={false}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/10 to-transparent" />
+            </div>
+          </motion.div>
+
+          <motion.div {...fadeUp}>
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-accent/90 mb-5">
+              <Brain className="w-4 h-4" /> El problema
+            </span>
+            <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-7 leading-tight">
+              Las apps no fueron diseñadas para que crezcas.
+              <br />
+              <span className="text-zinc-500">Fueron diseñadas para retenerte.</span>
+            </h2>
+            <p className="text-zinc-400 text-lg md:text-xl leading-relaxed">
+              Cada deslizamiento entrena a tu cerebro para querer el siguiente. Horas que
+              desaparecen sin dejar nada. Aquí el scroll tiene un destino: cada minuto que
+              inviertes se convierte en un concepto que de verdad te llevas contigo.
+            </p>
+          </motion.div>
         </div>
       </section>
 
@@ -219,16 +259,18 @@ export default function LandingPage() {
             {/* Modo Túnel */}
             <motion.div
               {...fadeUp}
-              className="group relative rounded-[2rem] overflow-hidden border border-violet-500/25 bg-[#06070d] min-h-[22rem] flex flex-col"
+              className="group relative rounded-[2rem] overflow-hidden border border-violet-500/25 bg-[#06070d] min-h-[24rem] flex flex-col"
             >
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_30%,rgba(56,189,248,0.16),transparent_55%),radial-gradient(circle_at_50%_90%,rgba(139,92,246,0.28),transparent_55%)] pointer-events-none" />
-              {/* Anillos concéntricos (boca del túnel) */}
-              <div className="absolute right-0 top-0 bottom-0 w-2/3 hidden sm:grid place-items-center pointer-events-none" aria-hidden>
-                <div className="absolute w-64 h-64 rounded-full border border-cyan-400/10 transition-transform duration-700 group-hover:scale-110" />
-                <div className="absolute w-48 h-48 rounded-full border border-cyan-400/15 transition-transform duration-700 group-hover:scale-110" />
-                <div className="absolute w-32 h-32 rounded-full border border-violet-400/25 transition-transform duration-700 group-hover:scale-105" />
-                <div className="absolute w-9 h-9 rounded-full bg-gradient-to-br from-cyan-300/50 to-violet-500/50 blur-md" />
-              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/landing/tunnel.webp"
+                alt="Corredor neuronal en 3D de nodos conectados"
+                className="absolute inset-0 w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-105 select-none"
+                loading="lazy"
+                draggable={false}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#06070d] via-[#06070d]/70 to-[#06070d]/10" />
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(56,189,248,0.12),transparent_60%)] pointer-events-none" />
               <div className="relative z-10 px-8 py-10 mt-auto max-w-sm">
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-cyan-300/90 mb-3">
                   <Network className="w-3.5 h-3.5" /> Red neuronal · Divergencia
@@ -246,14 +288,18 @@ export default function LandingPage() {
             {/* Modo Podcast */}
             <motion.div
               {...fadeUp}
-              className="group relative rounded-[2rem] overflow-hidden border border-primary/25 bg-[#0a0712] min-h-[22rem] flex flex-col"
+              className="group relative rounded-[2rem] overflow-hidden border border-primary/25 bg-[#0a0712] min-h-[24rem] flex flex-col"
             >
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_30%_30%,rgba(139,92,246,0.20),transparent_55%),radial-gradient(circle_at_85%_80%,rgba(59,130,246,0.16),transparent_55%)] pointer-events-none" />
-              <div className="absolute right-6 top-10 hidden sm:flex items-center justify-center pointer-events-none" aria-hidden>
-                <div className="w-28 h-28 rounded-full bg-gradient-to-br from-primary/25 to-secondary/20 border border-primary/30 flex items-center justify-center">
-                  <Headphones className="w-12 h-12 text-primary/80" />
-                </div>
-              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/landing/podcast.webp"
+                alt="Persona escuchando con audífonos, flotando entre ondas de sonido"
+                className="absolute inset-0 w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-105 select-none"
+                loading="lazy"
+                draggable={false}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#0a0712] via-[#0a0712]/70 to-[#0a0712]/10" />
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(139,92,246,0.14),transparent_60%)] pointer-events-none" />
               <div className="relative z-10 px-8 py-10 mt-auto max-w-sm">
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-primary/90 mb-3">
                   <Headphones className="w-3.5 h-3.5" /> Estudio pasivo
@@ -288,21 +334,16 @@ export default function LandingPage() {
               desde varios ángulos a la vez.
             </p>
           </motion.div>
-          <motion.div {...fadeUp} className="relative h-64 md:h-80">
-            {/* Nodos/red abstracta */}
-            <div className="absolute inset-0 grid place-items-center" aria-hidden>
-              {[0, 1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="absolute rounded-full border border-cyan-400/20"
-                  style={{ width: `${8 + i * 6}rem`, height: `${8 + i * 6}rem` }}
-                />
-              ))}
-              <div className="absolute w-3 h-3 rounded-full bg-cyan-300 shadow-[0_0_20px_rgba(56,189,248,0.8)]" style={{ top: "20%", left: "30%" }} />
-              <div className="absolute w-3 h-3 rounded-full bg-violet-400 shadow-[0_0_20px_rgba(176,107,255,0.8)]" style={{ top: "65%", left: "60%" }} />
-              <div className="absolute w-3 h-3 rounded-full bg-accent shadow-[0_0_20px_rgba(244,63,94,0.7)]" style={{ top: "40%", left: "75%" }} />
-              <div className="absolute w-10 h-10 rounded-full bg-gradient-to-br from-cyan-300/60 to-violet-500/60 blur-sm" />
-            </div>
+          <motion.div {...fadeUp} className="relative">
+            <div className="absolute inset-6 bg-cyan-400/15 blur-[80px] rounded-full pointer-events-none" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/landing/divergence.webp"
+              alt="Cerebro luminoso con conceptos de distintos campos conectados en un punto central"
+              className="relative w-full max-w-md mx-auto select-none [mask-image:radial-gradient(circle_at_center,#000_62%,transparent_100%)]"
+              loading="lazy"
+              draggable={false}
+            />
           </motion.div>
         </div>
       </section>
@@ -425,15 +466,23 @@ export default function LandingPage() {
       {/* ════════════════ 9 · CREADORES DE CONTENIDO ════════════════ */}
       <section className="relative py-20 md:py-28">
         <div className="max-w-5xl mx-auto px-4 grid md:grid-cols-2 gap-12 items-center">
-          <motion.div {...fadeUp} className="relative order-2 md:order-1 h-56 md:h-72 grid place-items-center">
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(244,63,94,0.16),transparent_60%)] pointer-events-none" />
-            <div className="relative w-28 h-28 rounded-3xl bg-gradient-to-br from-accent/30 to-primary/20 border border-accent/30 grid place-items-center">
-              <Video className="w-14 h-14 text-accent" />
+          <motion.div {...fadeUp} className="relative order-2 md:order-1">
+            <div className="absolute -inset-4 bg-accent/15 blur-[80px] rounded-full pointer-events-none" />
+            <div className="relative rounded-[1.75rem] overflow-hidden border border-zinc-800 shadow-2xl shadow-black/50">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/landing/creators.webp"
+                alt="Creadora de contenido grabando en un estudio con luz de aro"
+                className="w-full aspect-[4/3] object-cover select-none"
+                loading="lazy"
+                draggable={false}
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/60 via-transparent to-transparent" />
             </div>
           </motion.div>
           <motion.div {...fadeUp} className="order-1 md:order-2">
             <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-accent/90 mb-4">
-              <Video className="w-4 h-4" /> Para creadores
+              <Sparkles className="w-4 h-4" /> Para creadores
             </span>
             <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-5 leading-tight">
               Tu audiencia te ve. Haz que de verdad aprenda.
@@ -482,15 +531,23 @@ export default function LandingPage() {
 
       {/* ════════════════ FOOTER ════════════════ */}
       <footer className="border-t border-zinc-800/60 py-10">
-        <div className="max-w-6xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-6">
-          <Logo className="h-7" />
-          <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-zinc-400">
-            <button onClick={() => router.push(LOGIN)} className="hover:text-white transition-colors">Iniciar sesión</button>
-            <button onClick={goSignup} className="hover:text-white transition-colors">Crear ruta</button>
-            <button onClick={goSignup} className="hover:text-white transition-colors">El Túnel</button>
-            <button onClick={goSignup} className="hover:text-white transition-colors">Podcast</button>
-          </nav>
-          <p className="text-xs text-zinc-600">© {new Date().getFullYear()} LearnFactory</p>
+        <div className="max-w-6xl mx-auto px-4 flex flex-col items-center gap-6">
+          <div className="w-full flex flex-col md:flex-row items-center justify-between gap-6">
+            <Logo className="h-7" />
+            <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-zinc-400">
+              <button onClick={() => router.push(LOGIN)} className="hover:text-white transition-colors">Iniciar sesión</button>
+              <button onClick={goSignup} className="hover:text-white transition-colors">Crear ruta</button>
+              <button onClick={goSignup} className="hover:text-white transition-colors">El Túnel</button>
+              <button onClick={goSignup} className="hover:text-white transition-colors">Podcast</button>
+            </nav>
+          </div>
+          <div className="w-full pt-6 border-t border-zinc-800/60 flex flex-col-reverse sm:flex-row items-center justify-between gap-4">
+            <p className="text-xs text-zinc-600">© {new Date().getFullYear()} LearnFactory. Todos los derechos reservados.</p>
+            <nav className="flex items-center gap-5 text-xs text-zinc-500">
+              <button onClick={() => router.push("/terminos")} className="hover:text-zinc-300 transition-colors">Términos y condiciones</button>
+              <button onClick={() => router.push("/privacidad")} className="hover:text-zinc-300 transition-colors">Política de privacidad</button>
+            </nav>
+          </div>
         </div>
       </footer>
     </main>
