@@ -72,7 +72,7 @@ export async function synthesizeTunnelSpeech(
 const LF_PREFIX = "route:"; // prefijo del id de lección real (vs. ids del demo)
 const SEG_SECS = 4.4; // cadencia de subtítulos (las definiciones son más largas)
 const MAX_LINE = 150; // recorte por frase: natural al narrar y bajo MAX_TTS_CHARS
-const MAX_PODS = 6; // estaciones por ruta (no saturar el viaje)
+const MAX_PODS = 24; // tope de estaciones SINTETIZADAS (fallback); los audios reales no se recortan
 const MAX_CATALOG = 24; // tarjetas en el lobby (mías + biblioteca, deduplicadas)
 
 /** Concepto normalizado para sintetizar retos. */
@@ -321,7 +321,8 @@ export async function getTunnelLesson(
   // Cada nodo con su WAV pregenerado y sus cues se vuelve una estación jugable.
   const real = await getRouteAudioStations(token, routeId);
   if (real && real.stations.length > 0) {
-    const pods = real.stations.slice(0, MAX_PODS).map(audioLessonPod);
+    // Las estaciones reales NO se recortan: el viaje es tan largo como la ruta.
+    const pods = real.stations.map(audioLessonPod);
     return { id: lessonId, title: real.topic, niche: categoryLabel(category), pods };
   }
 

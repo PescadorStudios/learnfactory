@@ -23,8 +23,8 @@ import type {
 } from "../types/rail";
 import { colorForNiche } from "../theme";
 
-const LANE_GAP = 12; // separación lateral entre venas (unidades de mundo)
-const LAYER_GAP = 22; // separación en profundidad entre estaciones
+const LANE_GAP = 16; // separación lateral entre venas (unidades de mundo)
+const LAYER_GAP = 32; // separación en profundidad entre estaciones (más aire = sensación de viaje)
 const CROSS_EVERY = 2; // cada cuántas capas las venas se cruzan (bifurcaciones)
 
 const START_ID = "start";

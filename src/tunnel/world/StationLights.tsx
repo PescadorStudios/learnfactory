@@ -74,6 +74,23 @@ export function StationLights({ nodes }: { nodes: RailNode[] }) {
     <group>
       {items.map((it, i) => (
         <group key={it.id} position={it.pos}>
+          {/* Blanco de toque invisible y generoso: tocar el orbe vuela hasta él. */}
+          <mesh
+            onClick={(e) => {
+              e.stopPropagation();
+              useJourney.getState().flyTo(it.id);
+            }}
+            onPointerOver={(e) => {
+              e.stopPropagation();
+              document.body.style.cursor = "pointer";
+            }}
+            onPointerOut={() => {
+              document.body.style.cursor = "";
+            }}
+          >
+            <sphereGeometry args={[2, 12, 12]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+          </mesh>
           <mesh>
             <icosahedronGeometry args={[0.55, 1]} />
             <meshBasicMaterial

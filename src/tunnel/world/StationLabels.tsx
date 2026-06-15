@@ -14,26 +14,66 @@ import { useFrame } from "@react-three/fiber";
 import { colorForNiche } from "../theme";
 import type { RailNode } from "../types/rail";
 
+const LABEL_W = 512; // ancho del canvas (px)
+const LABEL_H = 256; // alto: deja sitio a hasta 3 líneas sin recortar títulos largos
+const LABEL_FONT = "700 40px system-ui, -apple-system, Segoe UI, sans-serif";
+const LABEL_MAX_LINES = 3; // líneas antes de poner "…"
+const LABEL_LINE_H = 50; // interlineado (px)
+
+/** Envuelve `text` en líneas que quepan en `maxW`, cortando por palabra. */
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxW: number): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (ctx.measureText(candidate).width <= maxW || !line) {
+      line = candidate;
+    } else {
+      lines.push(line);
+      line = word;
+      if (lines.length === LABEL_MAX_LINES) break; // ya no caben más líneas
+    }
+  }
+  if (line && lines.length < LABEL_MAX_LINES) lines.push(line);
+  // Si sobró texto (se cortó por límite de líneas), marca la última con "…".
+  if (lines.length === LABEL_MAX_LINES) {
+    const joined = lines.join(" ");
+    if (joined.replace(/\s+/g, " ").trim() !== text.replace(/\s+/g, " ").trim()) {
+      lines[LABEL_MAX_LINES - 1] = `${lines[LABEL_MAX_LINES - 1].replace(/[\s.,;:]+$/, "")}…`;
+    }
+  }
+  return lines.length ? lines : [text];
+}
+
 function labelTexture(text: string, accent: string): THREE.CanvasTexture {
-  const w = 512;
-  const h = 128;
+  const w = LABEL_W;
+  const h = LABEL_H;
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d")!;
   ctx.clearRect(0, 0, w, h);
-  ctx.font = "700 46px system-ui, -apple-system, Segoe UI, sans-serif";
+  ctx.font = LABEL_FONT;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const label = text.length > 26 ? `${text.slice(0, 25)}…` : text;
-  // Glow del nicho detrás del texto, luego el texto en blanco nítido.
-  ctx.shadowColor = accent;
-  ctx.shadowBlur = 22;
-  ctx.fillStyle = accent;
-  ctx.fillText(label, w / 2, h / 2);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText(label, w / 2, h / 2);
+
+  const lines = wrapLines(ctx, text, w - 32);
+  const total = lines.length;
+  const y0 = h / 2 - ((total - 1) * LABEL_LINE_H) / 2;
+
+  lines.forEach((line, i) => {
+    const y = y0 + i * LABEL_LINE_H;
+    // Glow del nicho detrás del texto, luego el texto en blanco nítido.
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 22;
+    ctx.fillStyle = accent;
+    ctx.fillText(line, w / 2, y);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(line, w / 2, y);
+  });
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -49,7 +89,7 @@ export function StationLabels({ nodes }: { nodes: RailNode[] }) {
         return {
           id: n.id,
           tex: labelTexture(n.title ?? "Estación", accent),
-          pos: new THREE.Vector3(n.position.x, 1.7, n.position.z),
+          pos: new THREE.Vector3(n.position.x, 2.4, n.position.z),
         };
       });
   }, [nodes]);
@@ -63,7 +103,8 @@ export function StationLabels({ nodes }: { nodes: RailNode[] }) {
       const m = mats.current[i];
       if (!m) continue;
       const d = camera.position.distanceTo(items[i].pos);
-      let o = d < 32 ? THREE.MathUtils.clamp((32 - d) / 14, 0, 1) : 0;
+      // Visible desde más lejos (acorde al mayor espaciado): lee el próximo destino.
+      let o = d < 46 ? THREE.MathUtils.clamp((46 - d) / 18, 0, 1) : 0;
       if (d < 4.5) o *= THREE.MathUtils.clamp((d - 1.5) / 3, 0, 1); // muy cerca: cede
       m.opacity = o * 0.95;
     }
@@ -72,7 +113,7 @@ export function StationLabels({ nodes }: { nodes: RailNode[] }) {
   return (
     <group>
       {items.map((it, i) => (
-        <sprite key={it.id} position={it.pos} scale={[5.2, 1.3, 1]}>
+        <sprite key={it.id} position={it.pos} scale={[6, 3, 1]}>
           <spriteMaterial
             ref={(el) => {
               mats.current[i] = el;

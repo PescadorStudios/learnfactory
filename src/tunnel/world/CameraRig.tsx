@@ -39,6 +39,10 @@ const BACK = 12; // cuánto se queda por detrás del foco (−Z) — vista más 
 const LOOK_AHEAD = 11; // hacia dónde mira por delante del foco (+Z) — anticipa el siguiente nodo
 const LEAN = 0.14; // ladeo lateral con la velocidad en X (vida, no marea)
 
+// Autopilot: al tocar un orbe o saltar de nodo, la cámara vuela hasta él y FRENA.
+const ARRIVE_GAIN = 0.9; // a qué ritmo decae la velocidad al acercarse (frena suave)
+const ARRIVE_EPS = 0.6; // distancia (mundo) a la que se considera "llegado" y para
+
 const ENTER_RADIUS = 5.5; // distancia en el plano para ofrecer "Entrar" (escala con la separación)
 const ENTER_SPEED = 5.5; // velocidad por debajo de la cual se puede entrar
 const FOCUS_DEADBAND = 1.25; // mueve el minimapa solo tras avanzar esto (mundo)
@@ -112,9 +116,39 @@ export function CameraRig({
     const thr = frozen ? 0 : input.current.throttle; // ↑/↓ → Z (profundidad)
     const str = frozen ? 0 : input.current.steer; // ←/→ → X (tema)
 
-    // --- 1) Velocidad objetivo (empuje del piloto), limitada en magnitud. ---
+    // El control manual SIEMPRE manda: mover el stick (no un simple tap) cancela el
+    // autopilot. Se mide por magnitud de empuje, no por "active", para que el toque
+    // que ACABA de fijar el destino no se cancele a sí mismo.
+    const steering = Math.abs(thr) > 0.02 || Math.abs(str) > 0.02;
+    if (steering && st.flyToId) st.clearFlyTo();
+    const autoTarget = !frozen && !steering && st.flyToId ? graph.pos.get(st.flyToId) : null;
+
+    // --- 1) Velocidad objetivo. Manual: empuje del piloto. Autopilot: hacia el orbe. ---
     let tvx = str * SPEED;
     let tvz = thr * SPEED;
+    if (autoTarget) {
+      // Persigue el destino frenando al acercarse (la velocidad decae con la distancia).
+      const dx = autoTarget.x - fx.current;
+      const dz = autoTarget.z - fz.current;
+      const dist = Math.hypot(dx, dz);
+      if (dist <= ARRIVE_EPS) {
+        // Llegó: clava el foco junto al orbe, detente y suelta el autopilot → "Entrar".
+        fx.current = autoTarget.x;
+        fz.current = autoTarget.z;
+        vx.current = 0;
+        vz.current = 0;
+        tvx = 0;
+        tvz = 0;
+        st.clearFlyTo();
+      } else {
+        // Lejos: a tope. Cerca: cae ~linealmente con la distancia (queda por debajo de
+        // ENTER_SPEED al entrar en ENTER_RADIUS → aparece "Entrar"). Piso mínimo para
+        // que siga acercándose hasta ARRIVE_EPS sin estancarse.
+        const want = THREE.MathUtils.clamp(dist * ARRIVE_GAIN, 1.5, SPEED);
+        tvx = (dx / dist) * want;
+        tvz = (dz / dist) * want;
+      }
+    }
     const tmag = Math.hypot(tvx, tvz);
     if (tmag > SPEED) {
       const s = SPEED / tmag;
@@ -123,7 +157,7 @@ export function CameraRig({
     }
 
     // --- 2) Inercia: resorte hacia el objetivo; al soltar, momentum → parar. ---
-    const driving = Math.abs(thr) > 0.01 || Math.abs(str) > 0.01;
+    const driving = !!autoTarget || Math.abs(thr) > 0.01 || Math.abs(str) > 0.01;
     const k = 1 - Math.exp(-dt / (driving ? ACCEL_TAU : COAST_TAU));
     vx.current += (tvx - vx.current) * k;
     vz.current += (tvz - vz.current) * k;

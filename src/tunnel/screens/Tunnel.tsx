@@ -40,6 +40,7 @@ export function Tunnel() {
   const nearestStationId = useJourney((s) => s.nearestStationId);
   const canEnter = useJourney((s) => s.canEnter);
   const enterStation = useJourney((s) => s.enterStation);
+  const jumpStation = useJourney((s) => s.jumpStation);
   const finishJourney = useJourney((s) => s.finishJourney);
   const captured = useJourney((s) => s.captured);
   const streak = useJourney((s) => s.streak);
@@ -98,14 +99,25 @@ export function Tunnel() {
     [nearestStationId, rail]
   );
 
-  // Enter = entrar a la estación cercana (además del botón del prompt).
+  // Atajos de teclado: Enter = entrar a la estación cercana; , / . (y [ / ]) =
+  // saltar al nodo anterior / siguiente (la cámara vuela hasta él y frena).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Enter") return;
       const s = useJourney.getState();
-      if (s.canEnter && s.nearestStationId && !s.activeStationId && !s.atEnd) {
+      if (s.activeStationId || s.atEnd) return;
+      if (e.key === "Enter") {
+        if (s.canEnter && s.nearestStationId) {
+          e.preventDefault();
+          s.enterStation(s.nearestStationId);
+        }
+        return;
+      }
+      if (e.key === "," || e.key === "[") {
         e.preventDefault();
-        s.enterStation(s.nearestStationId);
+        s.jumpStation(-1);
+      } else if (e.key === "." || e.key === "]") {
+        e.preventDefault();
+        s.jumpStation(1);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -205,6 +217,32 @@ export function Tunnel() {
       {/* Estación atracada (pantalla completa). key = remonta por estación. */}
       {activeNode && <StationChallenge key={activeNode.id} node={activeNode} />}
 
+      {/* Saltos nodo a nodo (vuelan la cámara y frenan). Útil sobre todo en móvil. */}
+      {!activeStationId && !atEnd && (
+        <>
+          <button
+            type="button"
+            data-no-drag
+            onClick={() => jumpStation(-1)}
+            style={{ ...jumpBtn, left: 14 }}
+            title="Nodo anterior ( , )"
+            aria-label="Saltar al nodo anterior"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            data-no-drag
+            onClick={() => jumpStation(1)}
+            style={{ ...jumpBtn, right: 14 }}
+            title="Siguiente nodo ( . )"
+            aria-label="Saltar al siguiente nodo"
+          >
+            ›
+          </button>
+        </>
+      )}
+
       {/* Prompt de entrada por proximidad o, si no, la pista de controles. */}
       {!activeStationId &&
         !atEnd &&
@@ -229,8 +267,8 @@ export function Tunnel() {
         ) : (
           <div style={hintWrap} aria-hidden>
             <span style={hintText}>
-              Arrastra para volar — ↑ adentrarte · ↓ volver · ← → cambiar de tema · acércate a una
-              neurona y frena para entrar
+              Toca una neurona para viajar hasta ella · arrastra para volar (↑↓ profundidad · ←→
+              tema) · ‹ › o , . para saltar de nodo · acércate y frena para entrar
             </span>
           </div>
         ))}
@@ -288,6 +326,25 @@ const enterCta: CSSProperties = {
   fontWeight: 800,
   letterSpacing: "0.08em",
   marginTop: 2,
+};
+const jumpBtn: CSSProperties = {
+  position: "fixed",
+  top: "50%",
+  transform: "translateY(-50%)",
+  zIndex: 35,
+  width: 48,
+  height: 48,
+  borderRadius: "50%",
+  border: "1px solid rgba(120,150,220,0.3)",
+  background: "rgba(8,10,18,0.6)",
+  color: "rgba(220,230,255,0.85)",
+  fontSize: 26,
+  lineHeight: 1,
+  cursor: "pointer",
+  backdropFilter: "blur(6px)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
 };
 const hintWrap: CSSProperties = {
   position: "fixed",

@@ -91,6 +91,8 @@ interface JourneyState {
   canEnter: boolean;
   /** Vuelo libre: posición de la cámara en el plano XZ (para el minimapa). */
   camFocus: { x: number; z: number };
+  /** Autopilot: estación a la que la cámara vuela (tap / salto); null = vuelo manual. */
+  flyToId: string | null;
   /** Datos capturados en orden de visita (HUD/recap). */
   captured: Captured[];
 
@@ -143,6 +145,12 @@ interface JourneyState {
   setNearest: (id: string | null, canEnter: boolean) => void;
   /** El rig publica su posición en el plano (con dead-band) para el minimapa. */
   setFocus: (x: number, z: number) => void;
+  /** Fija el destino del autopilot (tocar un orbe): la cámara vuela hasta él y frena. */
+  flyTo: (id: string) => void;
+  /** Cancela el autopilot (lo llama el rig al llegar, o al tomar el control manual). */
+  clearFlyTo: () => void;
+  /** Salta a la estación siguiente (+1) / anterior (−1) recorriendo TODA la red. */
+  jumpStation: (dir: 1 | -1) => void;
   /** Entra (o RE-entra) a una estación y monta su reto. Re-entrable. */
   enterStation: (stationId: string) => void;
   /** Sale de una estación SIN completarla (no la "quema": se puede volver). */
@@ -175,6 +183,7 @@ const FRESH_TRAVERSAL = {
   nearestStationId: null as string | null,
   canEnter: false,
   camFocus: { x: 0, z: 0 },
+  flyToId: null as string | null,
   captured: [] as Captured[],
   energy: 0.5,
   streak: 0,
@@ -330,6 +339,39 @@ export const useJourney = create<JourneyState>((set, get) => ({
 
   setFocus(x, z) {
     set({ camFocus: { x, z } });
+  },
+
+  flyTo(id) {
+    const s = get();
+    if (s.activeStationId || s.atEnd) return; // no desviar durante un reto / Recap
+    if (s.flyToId !== id) set({ flyToId: id });
+  },
+
+  clearFlyTo() {
+    if (get().flyToId !== null) set({ flyToId: null });
+  },
+
+  jumpStation(dir) {
+    const s = get();
+    if (!s.rail || s.activeStationId || s.atEnd) return;
+    // Recorrido lineal de TODA la red: ordena por profundidad y luego por carril.
+    const stations = s.rail.nodes
+      .filter((n) => n.kind === "station")
+      .sort((a, b) => a.layer - b.layer || a.lane - b.lane);
+    if (stations.length === 0) return;
+    // Índice de la estación más cercana al foco actual (referencia del salto).
+    const { x, z } = s.camFocus;
+    let curIdx = 0;
+    let best = Infinity;
+    stations.forEach((n, i) => {
+      const d = Math.hypot(n.position.x - x, n.position.z - z);
+      if (d < best) {
+        best = d;
+        curIdx = i;
+      }
+    });
+    const next = Math.max(0, Math.min(stations.length - 1, curIdx + dir));
+    set({ flyToId: stations[next].id });
   },
 
   enterStation(stationId) {
