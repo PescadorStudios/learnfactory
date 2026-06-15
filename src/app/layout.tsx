@@ -9,8 +9,9 @@ const outfit = Outfit({
 
 const SOCIAL_IMAGE =
   "https://res.cloudinary.com/deirdgemo/image/upload/v1781300854/FB1BB96B-AA89-48AC-B472-4BE7D43D4015_si9aen.png";
-const SITE_TITLE = "Learn Factory - Aprende cualquier tema";
-const SITE_DESCRIPTION = "Domina cualquier tema con IA y gamificación";
+const SITE_TITLE = "LearnFactory — El fin del scroll sin sentido";
+const SITE_DESCRIPTION =
+  "Convierte el tiempo de pantalla en conocimiento real. Rutas que te retan, te narran y conectan ideas — siempre gratis. O crea la tuya, sobre lo que sea, con IA.";
 
 export const metadata: Metadata = {
   title: SITE_TITLE,

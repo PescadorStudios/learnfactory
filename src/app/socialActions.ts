@@ -341,8 +341,9 @@ async function fetchCreators(ownerIds: string[]): Promise<Map<string, ProfileRow
  * ROUTE_CATEGORIES). Las categorías sin rutas no se muestran. Una fila
  * "Destacadas" va primero cuando hay tracción real.
  */
-export async function getLibrary(token: string): Promise<LibrarySection[]> {
-  await getUserFromToken(token); // requiere sesión, pero la biblioteca es común
+/** Arma la biblioteca pública (destacadas + filas por categoría) a partir de las
+ *  rutas públicas no bloqueadas. Compartido por la home con sesión y la landing. */
+async function buildLibrarySections(): Promise<LibrarySection[]> {
   const sb = supabaseAdmin();
 
   const { data: pool } = await sb
@@ -380,6 +381,17 @@ export async function getLibrary(token: string): Promise<LibrarySection[]> {
   }
 
   return sections;
+}
+
+export async function getLibrary(token: string): Promise<LibrarySection[]> {
+  await getUserFromToken(token); // requiere sesión, pero la biblioteca es común
+  return buildLibrarySections();
+}
+
+/** Igual que getLibrary pero SIN sesión: alimenta la landing pública (`/`).
+ *  Solo expone rutas ya públicas y no bloqueadas — seguro para anónimos. */
+export async function getLandingLibrary(): Promise<LibrarySection[]> {
+  return buildLibrarySections();
 }
 
 export async function searchPublicRoutes(token: string, q: string): Promise<RouteCard[]> {

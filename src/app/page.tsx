@@ -4,7 +4,7 @@ import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones } from "lucide-react";
-import { useRequireAuth } from "@/lib/useAuth";
+import { useAuth, useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
 import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
 import type { RouteSummary, LibrarySection, FeaturedCreator, RouteCard as RouteCardData, PlanState } from "@/lib/types";
@@ -14,6 +14,7 @@ import RouteCard from "@/components/RouteCard";
 import { Logo, LogoMark } from "@/components/Logo";
 import { RankPill } from "@/components/ReputationBadge";
 import { creatorRank } from "@/lib/reputation";
+import LandingPage from "@/components/landing/LandingPage";
 
 function HomeContent() {
   const router = useRouter();
@@ -371,10 +372,25 @@ function HomeContent() {
   );
 }
 
+/** Gate de la raíz: visitantes anónimos ven la landing; con sesión, el dashboard. */
+function Root() {
+  const { session, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <Loader2 className="w-12 h-12 text-primary animate-spin" />
+      </main>
+    );
+  }
+  if (!session) return <LandingPage />;
+  return <HomeContent />;
+}
+
 export default function Home() {
   return (
     <Suspense fallback={<main className="min-h-screen bg-zinc-950" />}>
-      <HomeContent />
+      <Root />
     </Suspense>
   );
 }
