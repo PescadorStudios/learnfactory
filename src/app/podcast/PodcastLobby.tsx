@@ -4,7 +4,10 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Search, Shuffle, Play, Check, Plus, Headphones, BookOpen } from "lucide-react";
 import type { PodcastRouteGroup } from "@/app/routeActions";
+import { ROUTE_CATEGORIES } from "@/lib/types";
 import { type PodcastTrack, trackId } from "./types";
+
+const ALL = "__all__";
 
 /** Normaliza para buscar sin acentos ni mayúsculas. */
 function norm(s: string): string {
@@ -26,6 +29,7 @@ export default function PodcastLobby({
   onPlay: (tracks: PodcastTrack[]) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [activeCat, setActiveCat] = useState<string>(ALL);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Todas las lecciones como pistas (con el tema de su ruta), por id.
@@ -37,18 +41,30 @@ export default function PodcastLobby({
     return map;
   }, [catalog]);
 
-  // Filtro por texto: rutas cuyo tema o alguna lección coincide.
+  // Categorías presentes en el catálogo (en el orden canónico) con su conteo de rutas.
+  const categories = useMemo(() => {
+    const count = new Map<string, number>();
+    for (const g of catalog) count.set(g.category, (count.get(g.category) ?? 0) + 1);
+    return ROUTE_CATEGORIES.filter((c) => count.has(c.id)).map((c) => ({
+      id: c.id,
+      label: c.label,
+      count: count.get(c.id)!,
+    }));
+  }, [catalog]);
+
+  // Filtro por categoría activa + texto (tema de ruta o título de lección).
   const groups = useMemo(() => {
     const q = norm(query);
-    if (!q) return catalog;
     return catalog
+      .filter((g) => activeCat === ALL || g.category === activeCat)
       .map((g) => {
+        if (!q) return g;
         if (norm(g.topic).includes(q)) return g;
         const lessons = g.lessons.filter((l) => norm(l.title).includes(q));
         return lessons.length ? { ...g, lessons } : null;
       })
       .filter((g): g is PodcastRouteGroup => g !== null);
-  }, [catalog, query]);
+  }, [catalog, query, activeCat]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -132,12 +148,42 @@ export default function PodcastLobby({
         </button>
       </div>
 
+      {/* Chips de categoría (filtro rápido) */}
+      {categories.length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-6" aria-label="Filtrar por categoría">
+          <button
+            onClick={() => setActiveCat(ALL)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+              activeCat === ALL ? "bg-primary/15 text-primary border-primary/40" : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white"
+            }`}
+          >
+            Todas <span className="opacity-60">{catalog.length}</span>
+          </button>
+          {categories.map((c) => {
+            const on = activeCat === c.id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => setActiveCat(on ? ALL : c.id)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
+                  on ? "bg-primary/15 text-primary border-primary/40" : "bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white"
+                }`}
+              >
+                {c.label} <span className="opacity-60">{c.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {catalog.length === 0 ? (
         <p className="text-zinc-500 py-16 text-center">
           Aún no hay lecciones de audio disponibles para escuchar.
         </p>
       ) : groups.length === 0 ? (
-        <p className="text-zinc-500 py-16 text-center">Nada coincide con «{query}».</p>
+        <p className="text-zinc-500 py-16 text-center">
+          {query ? <>Nada coincide con «{query}».</> : "No hay lecciones en esta categoría."}
+        </p>
       ) : (
         <div className="space-y-6">
           {groups.map((g) => {
