@@ -27,6 +27,12 @@ const PALETTE =
 
 const IMAGES = [
   {
+    id: "active",
+    aspectRatio: "16:9",
+    prompt:
+      "A focused young learner actively engaged in an interactive learning challenge, leaning toward a glowing futuristic holographic interface with floating multiple-choice answer cards, a progress bar and a small streak/score badge lighting up. Dynamic energy, sense of attention, challenge and reward — gamified studying that demands you respond. Composition: the person and the bright glowing interface concentrated on the RIGHT two-thirds; the LEFT third is calm, darker negative space. Violet and accent-rose lighting.",
+  },
+  {
     id: "hero",
     aspectRatio: "16:9",
     prompt:

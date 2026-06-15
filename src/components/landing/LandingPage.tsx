@@ -238,9 +238,19 @@ export default function LandingPage() {
           {/* Rutas activas — bloque ancho */}
           <motion.div
             {...fadeUp}
-            className="relative rounded-[2rem] overflow-hidden border border-primary/25 bg-[#0a0712] mb-6"
+            className="group relative rounded-[2rem] overflow-hidden border border-primary/25 bg-[#0a0712] mb-6 md:min-h-[20rem] flex items-center"
           >
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_15%_40%,rgba(139,92,246,0.20),transparent_55%),radial-gradient(circle_at_90%_50%,rgba(244,63,94,0.14),transparent_50%)] pointer-events-none" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/landing/active.webp"
+              alt="Estudiante respondiendo retos interactivos en una interfaz futurista"
+              className="absolute inset-0 w-full h-full object-cover object-right opacity-90 transition-transform duration-700 group-hover:scale-105 select-none"
+              loading="lazy"
+              draggable={false}
+            />
+            {/* Scrim: oscurece la izquierda (texto) y deja respirar la imagen a la derecha */}
+            <div className="absolute inset-0 bg-gradient-to-r from-[#0a0712] via-[#0a0712]/85 md:via-[#0a0712]/55 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0a0712] via-transparent to-transparent md:bg-none" />
             <div className="relative z-10 px-8 md:px-14 py-12 max-w-2xl">
               <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-primary/90 mb-3">
                 <Target className="w-3.5 h-3.5" /> Estudio activo
