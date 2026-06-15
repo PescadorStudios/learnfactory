@@ -10,6 +10,7 @@ import { XP, starsForBoss } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
 import QuizQuestion from "./QuizQuestion";
+import MicButton from "./MicButton";
 
 interface Props {
   routeId: string;
@@ -234,12 +235,21 @@ export default function BossExam({ routeId, token, lesson, onComplete, onExit }:
             </div>
           ) : (
             <>
-              <textarea
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 min-h-[160px] text-white placeholder:text-zinc-600 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500/50 resize-none transition-all mb-4"
-                placeholder="Demuestra que entiendes el argumento completo del material..."
-                value={openAnswer}
-                onChange={(e) => setOpenAnswer(e.target.value)}
-              />
+              <div className="relative mb-4">
+                <textarea
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 min-h-[160px] text-white placeholder:text-zinc-600 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500/50 resize-none transition-all"
+                  placeholder="Demuestra que entiendes el argumento completo del material..."
+                  value={openAnswer}
+                  onChange={(e) => setOpenAnswer(e.target.value)}
+                />
+                <div className="absolute right-3 bottom-3">
+                  <MicButton
+                    onTranscript={(chunk) =>
+                      setOpenAnswer((prev) => (prev ? prev.trimEnd() + " " : "") + chunk)
+                    }
+                  />
+                </div>
+              </div>
               <button
                 onClick={handleSubmitOpen}
                 disabled={openAnswer.trim().length < 10}

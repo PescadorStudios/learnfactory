@@ -111,14 +111,20 @@ export async function getPlan(token: string): Promise<PlanState | null> {
     .select("plan, route_quota, premium_since, batch_enabled")
     .eq("id", user.id)
     .single();
-  const { count } = await sb
+  const { data: ownRoutes } = await sb
     .from("routes")
-    .select("id", { count: "exact", head: true })
+    .select("credits")
     .eq("owner_id", user.id);
+  const routesUsed = ownRoutes?.length ?? 0;
+  const creditsUsed = (ownRoutes ?? []).reduce(
+    (sum, r) => sum + ((r as { credits: number | null }).credits ?? 1),
+    0
+  );
   return {
     plan: (profile?.plan as Plan) || "free",
     routeQuota: profile?.route_quota ?? 1,
-    routesUsed: count ?? 0,
+    routesUsed,
+    creditsUsed,
     premiumSince: profile?.premium_since ?? null,
     batchEnabled: Boolean(profile?.batch_enabled),
   };

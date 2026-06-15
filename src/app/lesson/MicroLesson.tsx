@@ -10,6 +10,7 @@ import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
 import QuizQuestion from "./QuizQuestion";
 import AttentionGame from "./attention/AttentionGame";
+import MicButton from "./MicButton";
 
 interface Props {
   routeId: string;
@@ -218,12 +219,16 @@ export default function MicroLesson({ token, lesson, audioSrc, onComplete, onExi
                   <div className="relative">
                     <textarea
                       className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 min-h-[120px] text-white placeholder:text-zinc-600 focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary/50 resize-none transition-all"
-                      placeholder="Escribe tu respuesta aquí..."
+                      placeholder="Escribe o dicta tu respuesta aquí..."
                       value={answerText}
                       onChange={(e) => setAnswerText(e.target.value)}
                     />
-                    <div className="absolute right-3 bottom-3 text-xs text-zinc-600">
-                      Explica con tus propias palabras
+                    <div className="absolute right-3 bottom-3">
+                      <MicButton
+                        onTranscript={(chunk) =>
+                          setAnswerText((prev) => (prev ? prev.trimEnd() + " " : "") + chunk)
+                        }
+                      />
                     </div>
                   </div>
                 )}

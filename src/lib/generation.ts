@@ -28,6 +28,7 @@ import type {
   DiscoveredSource,
 } from "./types";
 import { SOURCE_TYPES } from "./types";
+import { specFor, creditsFor, type RouteSize } from "./routeSize";
 
 const apiKey = process.env.GEMINI_API_KEY || "";
 const genAI = new GoogleGenerativeAI(apiKey);
@@ -126,10 +127,13 @@ async function waitForFileProcessing(fileName: string): Promise<void> {
   }
 }
 
-function getJsonModel() {
+function getJsonModel(maxOutputTokens?: number) {
   return genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    generationConfig: { responseMimeType: "application/json" },
+    generationConfig: {
+      responseMimeType: "application/json",
+      ...(maxOutputTokens ? { maxOutputTokens } : {}),
+    },
   });
 }
 
@@ -695,15 +699,20 @@ export async function processSources(sourcesStr: string): Promise<ProcessedSourc
 //  STUDY PACK (Síntesis Maestra + Árbol)
 // ──────────────────────────────────────────────────
 
-export async function generateStudyPack(topic: string, sourcesStr: string = ""): Promise<StudyPack> {
+export async function generateStudyPack(
+  topic: string,
+  sourcesStr: string = "",
+  size: RouteSize = "short"
+): Promise<StudyPack> {
   if (!apiKey) {
     console.log("No GEMINI_API_KEY found. Returning mock study pack.");
     await new Promise((resolve) => setTimeout(resolve, 2000));
     return generateMockStudyPack(topic);
   }
 
+  const spec = specFor(size);
   try {
-    const model = getJsonModel();
+    const model = getJsonModel(spec.maxOutputTokens);
     const processed = await processSources(sourcesStr);
 
     let sourceInstruction = "";
@@ -723,13 +732,13 @@ TAREA 1 — SÍNTESIS MAESTRA:
 Lee COMPLETAMENTE las fuentes antes de escribir nada. Construye una "Síntesis Maestra" que capture la tesis global del material como un todo coherente. Esta síntesis será la ÚNICA fuente de verdad para generar todas las lecciones del curso, así que debe ser absolutamente fiel al material: NUNCA saques conclusiones de fragmentos aislados; cada concepto debe explicarse según el argumento completo del autor, no según una frase suelta.
 
 TAREA 2 — ÁRBOL DE CONOCIMIENTO:
-Genera el árbol de aprendizaje (3 a 5 niveles lógicos) BASADO en la síntesis anterior.
+Genera el árbol de aprendizaje (${spec.levelsMin} a ${spec.levelsMax} niveles lógicos) BASADO en la síntesis anterior.
 Cada nivel debe tener un id (number), title, description, y un arreglo de "nodes".
 Cada node representa una habilidad o microlección con id (string como "1a", "2b"), title, type, status (todos "locked" excepto el primero que debe ser "unlocked"), y "conceptIds" con los ids de los conceptos de la síntesis que cubre.
 Tipos de nodo: "theory" y "practice" (microlecciones), "debate" (debate con la IA, usa 1-2 por curso en niveles intermedios), "quiz" (repaso acumulativo, usa 1-2 por curso), "boss" (examen final, SOLO el último nodo del último nivel).
-
+${size === "short" ? "" : "Genera una ruta EXHAUSTIVA y profunda: más nodos por nivel y mayor cobertura del material. Cada nodo es una microlección independiente, así que descompón el tema en muchas habilidades pequeñas y bien encadenadas.\n"}
 Reglas estrictas:
-- Entre 6 y 12 conceptos. La síntesis completa NO debe superar 5000 caracteres.
+- Entre ${spec.conceptsMin} y ${spec.conceptsMax} conceptos. La síntesis completa NO debe superar ${spec.synthesisChars} caracteres.
 - "citaTextual" debe ser una cita LITERAL y breve del material (máx 250 caracteres). Si la fuente no da texto literal (ej. solo un video), usa la paráfrasis más fiel posible.
 - "advertenciasDeContexto": lista de malentendidos probables si alguien lee un fragmento fuera de contexto, y cuál es la lectura correcta según el material completo.
 
@@ -776,8 +785,10 @@ SOLO devuelve el JSON, sin formato markdown ni texto adicional:
     }
     parts.push({ text: promptText });
 
-    console.log(`[StudyPack] Generando con ${processed.files.length} archivo(s) y ${processed.textContext.length} chars de contexto...`);
-    const result = await withTimeout(model.generateContent(parts), TEXT_TIMEOUT_MS, "Generación de la síntesis maestra");
+    console.log(`[StudyPack] Generando ruta "${size}" con ${processed.files.length} archivo(s) y ${processed.textContext.length} chars de contexto...`);
+    // Rutas más grandes generan más JSON: escalamos el timeout (corta = 90s).
+    const studyPackTimeout = Math.round(TEXT_TIMEOUT_MS * (1 + (creditsFor(size) - 1) * 0.6));
+    const result = await withTimeout(model.generateContent(parts), studyPackTimeout, "Generación de la síntesis maestra");
     const parsed = parseJsonResponse(result.response.text());
 
     if (!parsed?.sintesis?.conceptos?.length || !parsed?.tree?.levels?.length) {

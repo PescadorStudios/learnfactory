@@ -35,6 +35,7 @@ import type {
 } from "@/lib/types";
 import { ROUTE_CATEGORIES, SOURCE_TYPES } from "@/lib/types";
 import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
+import { creditsFor, normalizeSize, type RouteSize } from "@/lib/routeSize";
 
 const AUDIO_BUCKET = "lesson-audio";
 const COVER_BUCKET = "route-covers";
@@ -111,7 +112,8 @@ export async function createRoute(
   sourcesStr: string,
   visibility: "public" | "private" = "public",
   category?: string,
-  cover?: { prompt?: string; reference?: string }
+  cover?: { prompt?: string; reference?: string },
+  size: RouteSize = "short"
 ): Promise<{ routeId?: string; error?: string; quotaReached?: boolean }> {
   const user = await getUserFromToken(token);
   if (!user) return { error: "Sesión inválida" };
@@ -119,19 +121,26 @@ export async function createRoute(
   const sb = supabaseAdmin();
   await sb.from("profiles").upsert({ id: user.id, email: user.email }, { onConflict: "id", ignoreDuplicates: true });
 
-  // Cuota de creación: consumir es gratis, crear rutas con IA cuenta contra el plan.
+  // Cuota de creación: consumir es gratis, crear rutas con IA cuesta créditos.
+  // route_quota = balance de créditos; lo usado = suma del costo de cada ruta.
+  const routeSize = normalizeSize(size);
+  const cost = creditsFor(routeSize);
   const { data: profile } = await sb.from("profiles").select("route_quota").eq("id", user.id).single();
   const quota = profile?.route_quota ?? 1;
-  const { count: routesUsed } = await sb
+  const { data: ownRoutes } = await sb
     .from("routes")
-    .select("id", { count: "exact", head: true })
+    .select("credits")
     .eq("owner_id", user.id);
-  if ((routesUsed ?? 0) >= quota) {
+  const creditsUsed = (ownRoutes ?? []).reduce(
+    (sum, r) => sum + ((r as { credits: number | null }).credits ?? 1),
+    0
+  );
+  if (creditsUsed + cost > quota) {
     return { error: "quota", quotaReached: true };
   }
 
-  console.log(`[Route] Creando ruta "${topic}" para ${user.email}...`);
-  const pack = await generateStudyPack(topic, sourcesStr);
+  console.log(`[Route] Creando ruta "${topic}" (${routeSize}, ${cost} créditos) para ${user.email}...`);
+  const pack = await generateStudyPack(topic, sourcesStr, routeSize);
 
   const description = (pack.sintesis?.tesisGlobal || "").slice(0, 280) || null;
 
@@ -147,6 +156,8 @@ export async function createRoute(
       visibility,
       description,
       category: cleanCategory(category),
+      size: routeSize,
+      credits: cost,
     })
     .select("id")
     .single();

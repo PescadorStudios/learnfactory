@@ -8,6 +8,7 @@ import type { AttemptInput, DebateMessage, LessonData, SocraticEvaluation } from
 import { XP } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
+import MicButton from "./MicButton";
 
 interface Props {
   routeId: string;
@@ -147,10 +148,16 @@ export default function DebateNode({ token, lesson, onComplete, onExit }: Props)
             <div className="flex gap-3 items-end">
               <textarea
                 className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 min-h-[80px] text-white placeholder:text-zinc-600 focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary/50 resize-none transition-all"
-                placeholder="Escribe tu argumento..."
+                placeholder="Escribe o dicta tu argumento..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 disabled={thinking}
+              />
+              <MicButton
+                disabled={thinking}
+                onTranscript={(chunk) =>
+                  setInput((prev) => (prev ? prev.trimEnd() + " " : "") + chunk)
+                }
               />
               <button
                 onClick={handleSend}

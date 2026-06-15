@@ -1,11 +1,13 @@
 "use client";
 
-import { Suspense, useState, useRef } from "react";
+import { Suspense, useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { FileUp, Link as LinkIcon, ArrowRight, X, Loader2, Globe, Lock, Crown, Check, Tag, ImagePlus, Wand2, UserRound, Search, ExternalLink } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { createRoute, suggestCoverPrompt, discoverSources } from "../routeActions";
+import { getPlan } from "../socialActions";
+import { ROUTE_SIZES, ROUTE_SIZE_SPEC, creditsFor, type RouteSize } from "@/lib/routeSize";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
 import { extractUrls } from "@/lib/urlUtils";
 import { ROUTE_CATEGORIES, SOURCE_TYPES, type DiscoveredSource } from "@/lib/types";
@@ -25,6 +27,17 @@ function Sources() {
   const [category, setCategory] = useState("");
   const [showPaywall, setShowPaywall] = useState(false);
   const [topicInput, setTopicInput] = useState("");
+
+  // Tamaño de ruta + balance de créditos del usuario.
+  const [size, setSize] = useState<RouteSize>("short");
+  const [availableCredits, setAvailableCredits] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    getPlan(token).then(p => {
+      if (p) setAvailableCredits(Math.max(0, p.routeQuota - p.creditsUsed));
+    });
+  }, [token]);
 
   // States for inputs
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -165,6 +178,11 @@ function Sources() {
 
   const handleGenerateKnowledge = async () => {
     if (!token || !category) return;
+    // Sin créditos suficientes para el tamaño elegido → paywall (botón Bold).
+    if (availableCredits !== null && creditsFor(size) > availableCredits) {
+      setShowPaywall(true);
+      return;
+    }
     setIsGenerating(true);
     setGenError("");
     const sourcesStr = sources.map(s => s.name).join(",");
@@ -173,7 +191,7 @@ function Sources() {
       const result = await createRoute(token, topic, sourcesStr, visibility, category, {
         prompt: coverPrompt.trim() || undefined,
         reference: coverReference ?? undefined,
-      });
+      }, size);
       if (result.routeId) {
         router.push(`/tree?route=${result.routeId}`);
       } else if (result.quotaReached) {
@@ -611,6 +629,55 @@ function Sources() {
               <input ref={coverRefInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleCoverReference} />
             </div>
 
+            {/* Selector de tamaño de ruta */}
+            <div className="mb-5">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-bold text-zinc-300">Tamaño de la ruta</p>
+                {availableCredits !== null && (
+                  <span className="text-xs text-zinc-500">
+                    Tienes <span className="text-white font-semibold">{availableCredits}</span>{" "}
+                    {availableCredits === 1 ? "crédito" : "créditos"}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {ROUTE_SIZES.map(s => {
+                  const spec = ROUTE_SIZE_SPEC[s];
+                  const cost = creditsFor(s);
+                  const locked = availableCredits !== null && cost > availableCredits;
+                  const selected = size === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setSize(s)}
+                      className={`relative text-left rounded-2xl border p-4 transition-all ${
+                        selected
+                          ? "border-primary bg-primary/10"
+                          : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-white">{spec.label}</span>
+                        <span className={`inline-flex items-center gap-1 text-xs font-semibold ${locked ? "text-amber-400" : "text-zinc-400"}`}>
+                          {locked && <Crown className="w-3.5 h-3.5" />}
+                          {cost} {cost === 1 ? "crédito" : "créditos"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 leading-snug">{spec.blurb}</p>
+                      {locked && (
+                        <p className="text-[11px] text-amber-400/90 mt-1.5 font-medium">Requiere Premium</p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-zinc-500 mt-2">
+                Para mayor calidad, si eliges <span className="text-zinc-300">Mediana</span> o{" "}
+                <span className="text-zinc-300">Completa</span> asegúrate de aportar contenido sustancioso y en cantidad óptima.
+              </p>
+            </div>
+
             {genError && <p className="text-rose-400 text-sm mb-3 text-center">{genError}</p>}
             <button
               onClick={handleGenerateKnowledge}
@@ -651,7 +718,9 @@ function Sources() {
                 </div>
                 <h3 className="text-2xl font-bold mb-2">Hazte Premium</h3>
                 <p className="text-zinc-400 text-sm">
-                  Ya usaste tu ruta gratuita. Con Premium creas hasta <span className="text-white font-semibold">3 rutas</span> con IA.
+                  No te alcanzan los créditos para una ruta <span className="text-white font-semibold">{ROUTE_SIZE_SPEC[size].label}</span>{" "}
+                  ({creditsFor(size)} {creditsFor(size) === 1 ? "crédito" : "créditos"}). Con Premium sumas{" "}
+                  <span className="text-white font-semibold">3 créditos</span> para crear rutas más largas con IA.
                   Estudiar la biblioteca siempre es gratis.
                 </p>
                 <div className="mt-4 text-3xl font-bold text-white">

@@ -276,8 +276,12 @@ export interface DiscoveredSource {
 
 export interface PlanState {
   plan: Plan;
+  /** Balance de créditos del usuario (route_quota). */
   routeQuota: number;
+  /** Nº de rutas creadas (conteo). */
   routesUsed: number;
+  /** Créditos consumidos = suma del costo de cada ruta creada. */
+  creditsUsed: number;
   premiumSince: string | null;
   /** Creación de rutas en lote: el admin la activa manualmente por usuario. */
   batchEnabled: boolean;
