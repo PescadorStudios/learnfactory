@@ -98,6 +98,15 @@ function HomeContent() {
               transition={{ duration: 0.6, ease: "easeOut" }}
               className="relative rounded-[2rem] overflow-hidden border border-zinc-800/80 bg-zinc-950 mb-12"
             >
+              {/* Capa 0: imagen de fondo (fábrica de conocimiento, sujeto a la derecha) */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/home/home-hero.webp"
+                alt=""
+                aria-hidden
+                className="absolute inset-0 w-full h-full object-cover object-right opacity-90 pointer-events-none select-none"
+                draggable={false}
+              />
               {/* Capa 1: gradientes radiales profundos */}
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(59,130,246,0.16),transparent_55%)] pointer-events-none" />
               {/* Capa 2: línea de luz superior */}
@@ -108,8 +117,9 @@ function HomeContent() {
                 transition={{ duration: 7, repeat: Infinity, ease: "easeInOut" }}
                 className="absolute -top-40 right-0 w-[32rem] h-[32rem] rounded-full bg-primary/25 blur-[130px] pointer-events-none"
               />
-              {/* Capa 4: símbolo monumental desvanecido */}
-              <LogoMark className="hidden md:block absolute -right-20 top-1/2 -translate-y-1/2 w-[28rem] h-[28rem] opacity-[0.06] rotate-12 pointer-events-none" />
+              {/* Capa 4: scrim — oscurece la izquierda (texto) y deja respirar la imagen a la derecha */}
+              <div className="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/90 md:via-zinc-950/60 to-transparent pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent md:bg-none pointer-events-none" />
 
               <div className="relative z-10 px-8 md:px-14 py-12 md:py-16 max-w-3xl">
                 {/* El logo ES el protagonista */}
@@ -204,16 +214,20 @@ function HomeContent() {
                 aria-label="Entrar a El Túnel"
                 className="group relative w-full text-left rounded-[2rem] overflow-hidden border border-violet-500/25 hover:border-cyan-400/40 bg-[#06070d] transition-colors"
               >
+                {/* Imagen de fondo: corredor neuronal (boca del túnel a la derecha) */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/home/home-tunnel.webp"
+                  alt=""
+                  aria-hidden
+                  className="absolute inset-0 w-full h-full object-cover object-right opacity-90 transition-transform duration-700 group-hover:scale-105 pointer-events-none select-none"
+                  draggable={false}
+                />
                 {/* Corredor: gradientes radiales cian/violeta (la paleta del túnel) */}
                 <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_70%_50%,rgba(56,189,248,0.16),transparent_55%),radial-gradient(circle_at_92%_50%,rgba(139,92,246,0.30),transparent_50%)] pointer-events-none" />
-                {/* Boca del túnel: anillos concéntricos que respiran al hover */}
-                <div className="absolute right-0 top-0 bottom-0 w-2/3 hidden md:grid place-items-center pointer-events-none" aria-hidden>
-                  <div className="absolute w-72 h-72 rounded-full border border-cyan-400/10 transition-transform duration-700 group-hover:scale-110" />
-                  <div className="absolute w-56 h-56 rounded-full border border-cyan-400/15 transition-transform duration-700 group-hover:scale-110" />
-                  <div className="absolute w-40 h-40 rounded-full border border-violet-400/25 transition-transform duration-700 group-hover:scale-105" />
-                  <div className="absolute w-24 h-24 rounded-full border border-violet-400/40" />
-                  <div className="absolute w-10 h-10 rounded-full bg-gradient-to-br from-cyan-300/50 to-violet-500/50 blur-md transition-all group-hover:from-cyan-300/70 group-hover:to-violet-500/70" />
-                </div>
+                {/* Scrim: oscurece la izquierda (texto) y deja respirar la imagen a la derecha */}
+                <div className="absolute inset-0 bg-gradient-to-r from-[#06070d] via-[#06070d]/90 md:via-[#06070d]/60 to-transparent pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#06070d] via-transparent to-transparent md:bg-none pointer-events-none" />
 
                 <div className="relative z-10 px-8 md:px-14 py-10 md:py-12 max-w-2xl">
                   <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-cyan-300/90 mb-3">
@@ -250,12 +264,19 @@ function HomeContent() {
                 aria-label="Entrar al Modo Podcast"
                 className="group relative w-full text-left rounded-[2rem] overflow-hidden border border-primary/25 hover:border-primary/50 bg-[#0a0712] transition-colors"
               >
+                {/* Imagen de fondo: escucha inmersiva (persona con audífonos a la derecha) */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/home/home-podcast.webp"
+                  alt=""
+                  aria-hidden
+                  className="absolute inset-0 w-full h-full object-cover object-right opacity-90 transition-transform duration-700 group-hover:scale-105 pointer-events-none select-none"
+                  draggable={false}
+                />
                 <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_15%_50%,rgba(139,92,246,0.22),transparent_55%),radial-gradient(circle_at_88%_50%,rgba(59,130,246,0.18),transparent_50%)] pointer-events-none" />
-                <div className="absolute right-6 md:right-16 top-1/2 -translate-y-1/2 hidden sm:flex items-center justify-center pointer-events-none" aria-hidden>
-                  <div className="w-28 h-28 md:w-36 md:h-36 rounded-full bg-gradient-to-br from-primary/25 to-secondary/20 border border-primary/30 flex items-center justify-center">
-                    <Headphones className="w-12 h-12 md:w-16 md:h-16 text-primary/80" />
-                  </div>
-                </div>
+                {/* Scrim: oscurece la izquierda (texto) y deja respirar la imagen a la derecha */}
+                <div className="absolute inset-0 bg-gradient-to-r from-[#0a0712] via-[#0a0712]/90 md:via-[#0a0712]/60 to-transparent pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0a0712] via-transparent to-transparent md:bg-none pointer-events-none" />
                 <div className="relative z-10 px-8 md:px-14 py-9 md:py-11 max-w-2xl">
                   <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-primary/90 mb-3">
                     <Headphones className="w-3.5 h-3.5" /> Nuevo · Escucha continua
