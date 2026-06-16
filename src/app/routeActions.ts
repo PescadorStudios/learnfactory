@@ -32,6 +32,7 @@ import type {
   AttentionData,
   RouteCategory,
   DiscoveredSource,
+  MicroLessonProgress,
 } from "@/lib/types";
 import { ROUTE_CATEGORIES, SOURCE_TYPES } from "@/lib/types";
 import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
@@ -1161,6 +1162,14 @@ export async function saveAttempt(
     detail: input.detail,
   });
 
+  // La lección se completó: descartar cualquier borrador de "reanudar".
+  await sb
+    .from("lesson_progress")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("route_id", routeId)
+    .eq("node_id", nodeId);
+
   // Nuevo estudiante de la ruta: recomputar student_count desde la fuente (sin drift)
   if (isFirstInRoute) {
     const { data: distinctRows } = await sb
@@ -1213,6 +1222,67 @@ export async function saveAttempt(
     bestStars: Math.max(prevBest ?? 0, input.passed ? stars : 0),
     explorerRankUp,
   };
+}
+
+// ──────────────────────────────────────────────────
+//  REANUDAR MICROLECCIÓN (borrador de progreso parcial)
+// ──────────────────────────────────────────────────
+
+/** Guarda/actualiza el borrador de progreso de una microlección. */
+export async function saveLessonProgress(
+  token: string,
+  routeId: string,
+  nodeId: string,
+  state: MicroLessonProgress
+): Promise<void> {
+  const user = await getUserFromToken(token);
+  if (!user) return;
+  await supabaseAdmin()
+    .from("lesson_progress")
+    .upsert(
+      {
+        user_id: user.id,
+        route_id: routeId,
+        node_id: nodeId,
+        state,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,route_id,node_id" }
+    );
+}
+
+/** Devuelve el borrador guardado para reanudar, o null si no hay. */
+export async function getLessonProgress(
+  token: string,
+  routeId: string,
+  nodeId: string
+): Promise<MicroLessonProgress | null> {
+  const user = await getUserFromToken(token);
+  if (!user) return null;
+  const { data } = await supabaseAdmin()
+    .from("lesson_progress")
+    .select("state")
+    .eq("user_id", user.id)
+    .eq("route_id", routeId)
+    .eq("node_id", nodeId)
+    .maybeSingle();
+  return (data?.state as MicroLessonProgress) ?? null;
+}
+
+/** Borra el borrador (al elegir "empezar de nuevo"). */
+export async function clearLessonProgress(
+  token: string,
+  routeId: string,
+  nodeId: string
+): Promise<void> {
+  const user = await getUserFromToken(token);
+  if (!user) return;
+  await supabaseAdmin()
+    .from("lesson_progress")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("route_id", routeId)
+    .eq("node_id", nodeId);
 }
 
 /**

@@ -2,11 +2,11 @@
 
 import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Loader2, AlertTriangle, Mic, RefreshCw } from "lucide-react";
-import type { AttemptInput, LessonData } from "@/lib/types";
+import { Loader2, AlertTriangle, Mic, RefreshCw, Play, RotateCcw } from "lucide-react";
+import type { AttemptInput, LessonData, MicroLessonProgress } from "@/lib/types";
 import { useRequireAuth } from "@/lib/useAuth";
 import { useRouteRealtime } from "@/lib/useRouteRealtime";
-import { getLesson, saveAttempt, retryLesson } from "../routeActions";
+import { getLesson, saveAttempt, retryLesson, getLessonProgress, clearLessonProgress } from "../routeActions";
 import MicroLesson from "./MicroLesson";
 import DebateNode from "./DebateNode";
 import QuizNode from "./QuizNode";
@@ -17,6 +17,57 @@ function LessonLoading({ text = "Cargando..." }: { text?: string }) {
     <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white">
       <Loader2 className="w-12 h-12 text-primary animate-spin mb-4" />
       <p className="text-zinc-400">{text}</p>
+    </div>
+  );
+}
+
+function ResumePrompt({
+  step,
+  total,
+  onResume,
+  onRestart,
+  onExit,
+}: {
+  step: number;
+  total: number;
+  onResume: () => void;
+  onRestart: () => void | Promise<void>;
+  onExit: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const pct = total > 0 ? Math.round((step / total) * 100) : 0;
+  return (
+    <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
+      <div className="w-16 h-16 bg-primary/10 border border-primary/30 rounded-3xl flex items-center justify-center mb-6">
+        <Play className="w-8 h-8 text-primary" />
+      </div>
+      <h2 className="text-2xl font-bold mb-2">¿Continuamos donde lo dejaste?</h2>
+      <p className="text-zinc-400 max-w-md mb-8">
+        Guardamos tu avance en esta lección{total > 0 ? ` (${pct}% completado)` : ""}. Puedes seguir desde ahí
+        o empezar de nuevo. Empezar de nuevo cuenta como un intento al terminar.
+      </p>
+      <div className="flex flex-col w-full max-w-xs gap-3">
+        <button
+          onClick={onResume}
+          disabled={busy}
+          className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl font-bold bg-primary text-white hover:bg-primary-hover transition-all disabled:opacity-60"
+        >
+          <Play className="w-5 h-5" /> Continuar
+        </button>
+        <button
+          onClick={async () => {
+            setBusy(true);
+            await onRestart();
+          }}
+          disabled={busy}
+          className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl font-bold bg-zinc-900 border border-zinc-800 text-zinc-200 hover:border-zinc-700 transition-all disabled:opacity-60"
+        >
+          {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <RotateCcw className="w-5 h-5" />} Empezar de nuevo
+        </button>
+        <button onClick={onExit} disabled={busy} className="text-zinc-500 hover:text-white transition-colors text-sm mt-1">
+          Volver al árbol
+        </button>
+      </div>
     </div>
   );
 }
@@ -34,6 +85,11 @@ function LessonDispatcher() {
   const [saving, setSaving] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const fetchedAudioFor = useRef<string | null>(null);
+
+  // Reanudar microlección
+  const [progress, setProgress] = useState<MicroLessonProgress | null>(null);
+  const [resumeChoice, setResumeChoice] = useState<"pending" | "resume" | "fresh">("pending");
+  const progressFetched = useRef(false);
 
   const goToTree = useCallback(() => {
     router.push(`/tree?route=${routeId}`);
@@ -62,6 +118,13 @@ function LessonDispatcher() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Borrador de progreso (solo se consulta una vez al entrar).
+  useEffect(() => {
+    if (!token || !routeId || !nodeId || progressFetched.current) return;
+    progressFetched.current = true;
+    getLessonProgress(token, routeId, nodeId).then(setProgress);
+  }, [token, routeId, nodeId]);
 
   // Websocket: la lección llega sola en cuanto el lote la completa
   useRouteRealtime(routeId, load);
@@ -173,6 +236,26 @@ function LessonDispatcher() {
     );
   }
 
+  // Reanudar: si hay un borrador de una microlección y el usuario aún no elige,
+  // preguntar si continúa donde lo dejó o empieza de nuevo.
+  const isMicroLesson =
+    lesson.nodeType !== "quiz" && lesson.nodeType !== "debate" && lesson.nodeType !== "boss";
+  if (isMicroLesson && progress && resumeChoice === "pending") {
+    return (
+      <ResumePrompt
+        step={progress.currentStep}
+        total={lesson.steps?.length ?? 0}
+        onResume={() => setResumeChoice("resume")}
+        onRestart={async () => {
+          if (token) await clearLessonProgress(token, routeId, nodeId);
+          setProgress(null);
+          setResumeChoice("fresh");
+        }}
+        onExit={goToTree}
+      />
+    );
+  }
+
   // El audio se reproduce por streaming (arranque inmediato); solo esperamos a
   // tener la URL preparada, no a descargar el archivo completo.
   if (lesson.attention && lesson.audioUrl && !audioSrc) {
@@ -190,7 +273,13 @@ function LessonDispatcher() {
   if (lesson.nodeType === "quiz") return <QuizNode {...common} />;
   if (lesson.nodeType === "debate") return <DebateNode {...common} />;
   if (lesson.nodeType === "boss") return <BossExam {...common} />;
-  return <MicroLesson {...common} audioSrc={audioSrc} />;
+  return (
+    <MicroLesson
+      {...common}
+      audioSrc={audioSrc}
+      initialProgress={resumeChoice === "resume" ? progress : null}
+    />
+  );
 }
 
 export default function LessonPage() {

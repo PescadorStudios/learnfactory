@@ -162,6 +162,14 @@ export interface TutorMessage {
   content: string;
 }
 
+/** Una conversación (thread) del tutor: varias por (usuario, ruta), cada una
+ *  con su propio contexto, para manejar varios temas en paralelo. */
+export interface TutorThread {
+  id: string;
+  title: string;
+  updatedAt: string;
+}
+
 // ── Quiz acumulativo y Boss ──
 
 export interface QuizQuestionData {
@@ -473,4 +481,17 @@ export interface SaveAttemptResult {
   bestStars: number;
   /** Si este intento hizo subir el rango de explorador, el nuevo nivel (2-5). */
   explorerRankUp?: number;
+}
+
+/** Borrador de progreso de una microlección, para reanudar donde se dejó.
+ *  Captura el paso actual + los acumuladores necesarios para puntuar bien. */
+export interface MicroLessonProgress {
+  phase: "audio" | "steps";
+  currentStep: number;
+  lives: number;
+  xpTotal: number;
+  attention: { correct: number; total: number };
+  socraticScores: number[];
+  quizCorrect: boolean;
+  masteryUpdates: Array<{ conceptId: string; delta: number }>;
 }

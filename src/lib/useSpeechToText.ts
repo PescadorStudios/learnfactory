@@ -89,6 +89,16 @@ export function useSpeechToText({
     onResultRef.current = onResult;
   });
 
+  // Intención del usuario de seguir dictando (para auto-reiniciar en Android,
+  // que ignora `continuous` y corta tras cada pausa).
+  const shouldListenRef = useRef(false);
+  // Error fatal (sin permiso/mic): no reiniciar para evitar bucles.
+  const fatalErrorRef = useRef(false);
+  // Nº de resultados FINALES ya emitidos en la sesión actual. Android reentrega
+  // los finales ya entregados en cada `onresult`; emitimos solo los nuevos para
+  // no duplicar palabras.
+  const emittedFinalsRef = useRef(0);
+
   useEffect(() => {
     const Ctor = getRecognitionCtor();
     // Detect capability after mount so the initial client render matches the
@@ -104,25 +114,52 @@ export function useSpeechToText({
 
     recognition.onresult = (event) => {
       let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      let finalCount = 0;
+      // Recorremos TODO el array (es acumulativo dentro de una sesión) en vez de
+      // confiar en `event.resultIndex`, que Android no avanza de forma fiable.
+      for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i];
         const transcript = result[0]?.transcript ?? "";
         if (result.isFinal) {
-          const chunk = transcript.trim();
-          if (chunk) onResultRef.current(chunk);
+          // Emitir solo los finales que aún no habíamos entregado.
+          if (finalCount >= emittedFinalsRef.current) {
+            const chunk = transcript.trim();
+            if (chunk) onResultRef.current(chunk);
+          }
+          finalCount++;
         } else {
           interim += transcript;
         }
       }
+      emittedFinalsRef.current = finalCount;
       setInterimTranscript(interim);
     };
 
     recognition.onerror = (event) => {
-      setError(errorMessage(event.error));
-      setListening(false);
+      const code = event.error;
+      // not-allowed/audio-capture son fatales: no reiniciar. no-speech/aborted
+      // son transitorios en Android; dejamos que onend reinicie la escucha.
+      if (code === "not-allowed" || code === "service-not-allowed" || code === "audio-capture") {
+        fatalErrorRef.current = true;
+        shouldListenRef.current = false;
+        setError(errorMessage(code));
+        setListening(false);
+      }
     };
 
     recognition.onend = () => {
+      if (shouldListenRef.current && !fatalErrorRef.current) {
+        // Android corta tras cada pausa: reiniciamos la misma sesión lógica.
+        emittedFinalsRef.current = 0;
+        setInterimTranscript("");
+        try {
+          recognition.start();
+        } catch {
+          // start() puede tirar si se llama demasiado pronto; la próxima
+          // interacción del usuario lo recupera.
+        }
+        return;
+      }
       setListening(false);
       setInterimTranscript("");
     };
@@ -130,6 +167,8 @@ export function useSpeechToText({
     recognitionRef.current = recognition;
 
     return () => {
+      // Evitar que el onend disparado por abort() reinicie tras desmontar.
+      shouldListenRef.current = false;
       recognition.onresult = null;
       recognition.onerror = null;
       recognition.onend = null;
@@ -144,6 +183,7 @@ export function useSpeechToText({
 
   const stop = useCallback(() => {
     const recognition = recognitionRef.current;
+    shouldListenRef.current = false;
     if (!recognition) return;
     try {
       recognition.stop();
@@ -162,6 +202,9 @@ export function useSpeechToText({
     }
     setError(null);
     setInterimTranscript("");
+    shouldListenRef.current = true;
+    fatalErrorRef.current = false;
+    emittedFinalsRef.current = 0;
     try {
       recognition.start();
       setListening(true);

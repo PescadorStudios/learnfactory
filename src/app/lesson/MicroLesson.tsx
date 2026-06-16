@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check, Loader2, Quote } from "lucide-react";
 import { evaluateSocraticAnswer } from "../actions";
-import type { AttemptInput, LessonData, SocraticEvaluation } from "@/lib/types";
+import { saveLessonProgress } from "../routeActions";
+import type { AttemptInput, LessonData, MicroLessonProgress, SocraticEvaluation } from "@/lib/types";
 import { XP, starsForMicroLesson } from "@/lib/gamification";
 import LessonHeader from "./LessonHeader";
 import SocraticFeedback from "./SocraticFeedback";
@@ -19,15 +20,19 @@ interface Props {
   audioSrc: string | null;
   onComplete: (input: AttemptInput) => void;
   onExit: () => void;
+  /** Borrador para reanudar donde se dejó (null = empezar de cero). */
+  initialProgress?: MicroLessonProgress | null;
 }
 
-export default function MicroLesson({ token, lesson, audioSrc, onComplete, onExit }: Props) {
+export default function MicroLesson({ routeId, token, lesson, audioSrc, onComplete, onExit, initialProgress }: Props) {
   const lessonSteps = lesson.steps || [];
   const hasAudio = Boolean(lesson.attention && audioSrc && lesson.audioDurationSeconds);
 
-  const [phase, setPhase] = useState<"audio" | "steps">(hasAudio ? "audio" : "steps");
-  const [currentStep, setCurrentStep] = useState(0);
-  const [lives, setLives] = useState(3);
+  const [phase, setPhase] = useState<"audio" | "steps">(
+    initialProgress?.phase ?? (hasAudio ? "audio" : "steps")
+  );
+  const [currentStep, setCurrentStep] = useState(initialProgress?.currentStep ?? 0);
+  const [lives, setLives] = useState(initialProgress?.lives ?? 3);
 
   // Estado del paso quiz
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
@@ -38,12 +43,49 @@ export default function MicroLesson({ token, lesson, audioSrc, onComplete, onExi
   const [evaluating, setEvaluating] = useState(false);
   const [evaluation, setEvaluation] = useState<SocraticEvaluation | null>(null);
 
-  // Acumuladores para el score final
-  const xpTotal = useRef(0);
-  const attention = useRef({ correct: 0, total: 0 });
-  const socraticScores = useRef<number[]>([]);
-  const quizCorrectRef = useRef(false);
-  const masteryUpdates = useRef<Array<{ conceptId: string; delta: number }>>([]);
+  // Acumuladores para el score final (se restauran al reanudar).
+  const xpTotal = useRef(initialProgress?.xpTotal ?? 0);
+  const attention = useRef(initialProgress?.attention ?? { correct: 0, total: 0 });
+  const socraticScores = useRef<number[]>(initialProgress?.socraticScores ?? []);
+  const quizCorrectRef = useRef(initialProgress?.quizCorrect ?? false);
+  const masteryUpdates = useRef<Array<{ conceptId: string; delta: number }>>(
+    initialProgress?.masteryUpdates ?? []
+  );
+
+  // ── Reanudar: persistir el borrador cuando hay progreso real ──
+  // "Progreso real" = ya pasó el audio (si lo hay) o avanzó algún paso. Así no
+  // creamos borradores de lecciones apenas empezadas.
+  const hasMeaningfulProgress = phase === "steps" && (currentStep > 0 || hasAudio);
+
+  const snapshot = useCallback(
+    (override?: Partial<MicroLessonProgress>): MicroLessonProgress => ({
+      phase,
+      currentStep,
+      lives,
+      xpTotal: xpTotal.current,
+      attention: attention.current,
+      socraticScores: socraticScores.current,
+      quizCorrect: quizCorrectRef.current,
+      masteryUpdates: masteryUpdates.current,
+      ...override,
+    }),
+    [phase, currentStep, lives]
+  );
+
+  // Guarda el paso/fase actuales cuando cambian (punto principal de reanudación).
+  useEffect(() => {
+    if (!hasMeaningfulProgress) return;
+    void saveLessonProgress(token, routeId, lesson.nodeId, snapshot());
+  }, [phase, currentStep, hasMeaningfulProgress, snapshot, token, routeId, lesson.nodeId]);
+
+  // Salir: si hay progreso, persistir el estado completo (incluye vidas y
+  // puntuaciones del paso en curso) antes de navegar.
+  const handleExit = useCallback(() => {
+    if (hasMeaningfulProgress) {
+      void saveLessonProgress(token, routeId, lesson.nodeId, snapshot());
+    }
+    onExit();
+  }, [hasMeaningfulProgress, snapshot, token, routeId, lesson.nodeId, onExit]);
 
   if (lessonSteps.length === 0) {
     return (
@@ -67,7 +109,7 @@ export default function MicroLesson({ token, lesson, audioSrc, onComplete, onExi
           xpTotal.current += XP.audioFocusPass;
           setPhase("steps");
         }}
-        onExit={onExit}
+        onExit={handleExit}
       />
     );
   }
@@ -164,7 +206,7 @@ export default function MicroLesson({ token, lesson, audioSrc, onComplete, onExi
 
   return (
     <main className="min-h-screen bg-zinc-950 flex flex-col">
-      <LessonHeader progress={progress} lives={lives} onExit={onExit} />
+      <LessonHeader progress={progress} lives={lives} onExit={handleExit} />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col max-w-2xl w-full mx-auto p-6 md:p-12">
