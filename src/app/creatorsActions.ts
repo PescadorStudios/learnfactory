@@ -327,6 +327,7 @@ export interface CreatorPatch {
   emailBody?: string;
   personalizedNote?: string;
   routeLink?: string;
+  email?: string;            // editable a mano: fijar/cambiar/limpiar el correo
   status?: CreatorStatus;
 }
 
@@ -337,6 +338,7 @@ export async function crmUpdateCreator(
 ): Promise<{ ok: boolean; error?: string }> {
   const admin = await requireAdmin(token);
   if (!admin) return { ok: false, error: "No autorizado" };
+  const sb = supabaseAdmin();
 
   const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.emailSubject !== undefined) upd.email_subject = patch.emailSubject;
@@ -348,7 +350,20 @@ export async function crmUpdateCreator(
     upd.status = patch.status;
   }
 
-  const sb = supabaseAdmin();
+  // Correo manual: vacío → lo limpia; con texto → debe ser un email válido.
+  if (patch.email !== undefined) {
+    const e = patch.email.trim();
+    if (e && !isValidEmail(e)) return { ok: false, error: "El correo no tiene un formato válido." };
+    upd.email = e || null;
+    upd.email_status = e ? "found" : "not_found";
+    // Si estaba 'solo_manual' por no tener correo y ahora sí tiene uno válido,
+    // lo subimos a 'investigado' (salvo que el patch ya traiga un status explícito).
+    if (e && patch.status === undefined) {
+      const { data: cur } = await sb.from("creators").select("status").eq("id", id).single();
+      if (cur?.status === "solo_manual") upd.status = "investigado";
+    }
+  }
+
   const { error } = await sb.from("creators").update(upd).eq("id", id);
   if (error) return { ok: false, error: "No se pudo guardar." };
   return { ok: true };

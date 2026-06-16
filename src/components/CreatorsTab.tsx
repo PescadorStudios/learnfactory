@@ -143,6 +143,7 @@ export default function CreatorsTab({ token }: { token: string | null }) {
       case "emailBody": return c.emailBody;
       case "personalizedNote": return c.personalizedNote;
       case "routeLink": return c.routeLink;
+      case "email": return c.email || "";
       default: return "";
     }
   };
@@ -159,6 +160,12 @@ export default function CreatorsTab({ token }: { token: string | null }) {
     if (res.ok) {
       setCreators(cs => cs.map(x => x.id === c.id ? { ...x, ...patchToRow(patch) } : x));
       setDrafts(d => { const n = { ...d }; delete n[c.id]; return n; });
+      setRowMsg(m => ({ ...m, [c.id]: "" }));
+      // Cambiar el correo puede mover el estado (solo_manual → investigado) y
+      // los conteros: recargamos para reflejarlo.
+      if (patch.email !== undefined) { loadConfig(); load(); }
+    } else {
+      setRowMsg(m => ({ ...m, [c.id]: res.error || "No se pudo guardar." }));
     }
   };
 
@@ -395,10 +402,11 @@ export default function CreatorsTab({ token }: { token: string | null }) {
             const body = fieldVal(c, "emailBody");
             const note = fieldVal(c, "personalizedNote");
             const link = fieldVal(c, "routeLink");
+            const email = fieldVal(c, "email");
             const vars: MergeVars = { name: c.name, best_series: c.bestSeries || "", personalized_note: note, route_link: link };
             const previewSubject = renderTemplate(subject, vars);
             const previewHtml = bodyToHtml(renderTemplate(body, vars)) + signature;
-            const canApprove = isValidEmail(c.email) && note.trim() && link.trim() && subject.trim() && body.trim();
+            const canApprove = isValidEmail(email) && note.trim() && link.trim() && subject.trim() && body.trim();
             const dirty = drafts[c.id] && Object.keys(drafts[c.id]).length > 0;
 
             return (
@@ -444,6 +452,15 @@ export default function CreatorsTab({ token }: { token: string | null }) {
                               <span className="text-zinc-400 font-bold">Gancho:</span> {c.personalizationHook}
                             </p>
                           )}
+                          <div>
+                            <label className="text-xs text-zinc-500">
+                              Correo {isValidEmail(email) ? <span className="text-emerald-400">· válido</span> : email.trim() ? <span className="text-rose-400">· formato inválido</span> : <span className="text-amber-400">· falta (escríbelo a mano)</span>}
+                            </label>
+                            <input
+                              type="email" value={email} onChange={e => setField(c.id, "email", e.target.value)} onBlur={() => saveRow(c)} placeholder="correo@dominio.com"
+                              className={`w-full bg-zinc-950 border rounded-xl py-2 px-3 text-sm text-white focus:outline-none focus:border-primary ${email.trim() && !isValidEmail(email) ? "border-rose-500/50" : isValidEmail(email) ? "border-zinc-800" : "border-amber-500/40"}`}
+                            />
+                          </div>
                           <div>
                             <label className="text-xs text-zinc-500">Asunto</label>
                             <input
@@ -548,6 +565,11 @@ function patchToRow(p: CreatorPatch): Partial<CreatorRow> {
   if (p.emailBody !== undefined) r.emailBody = p.emailBody;
   if (p.personalizedNote !== undefined) r.personalizedNote = p.personalizedNote;
   if (p.routeLink !== undefined) r.routeLink = p.routeLink;
+  if (p.email !== undefined) {
+    const e = p.email.trim();
+    r.email = e || null;
+    r.emailStatus = e ? "found" : "not_found";
+  }
   if (p.status !== undefined) r.status = p.status;
   return r;
 }
