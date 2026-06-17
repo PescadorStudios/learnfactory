@@ -738,8 +738,11 @@ Genera el árbol de aprendizaje (${spec.levelsMin} a ${spec.levelsMax} niveles l
 Cada nivel debe tener un id (number), title, description, y un arreglo de "nodes".
 Cada node representa una habilidad o microlección con id (string como "1a", "2b"), title, type, status (todos "locked" excepto el primero que debe ser "unlocked"), y "conceptIds" con los ids de los conceptos de la síntesis que cubre.
 Tipos de nodo: "theory" y "practice" (microlecciones), "debate" (debate con la IA, usa 1-2 por curso en niveles intermedios), "quiz" (repaso acumulativo, usa 1-2 por curso), "boss" (examen final, SOLO el último nodo del último nivel).
-${size === "short" ? "" : "Genera una ruta EXHAUSTIVA y profunda: más nodos por nivel y mayor cobertura del material. Cada nodo es una microlección independiente, así que descompón el tema en muchas habilidades pequeñas y bien encadenadas.\n"}
+${size === "short"
+  ? "Aunque sea una ruta corta, cubre el tema de forma completa: descompón el material en microlecciones pequeñas y bien encadenadas, sin dejar conceptos importantes fuera ni agrupar varios en un mismo nodo.\n"
+  : "Genera una ruta EXHAUSTIVA y profunda: más nodos por nivel y mayor cobertura del material. Cada nodo es una microlección independiente, así que descompón el tema en muchas habilidades pequeñas y bien encadenadas.\n"}
 Reglas estrictas:
+- Genera entre ${spec.nodesMin} y ${spec.nodesMax} microlecciones (nodos) en total, repartidas entre los niveles. Cada nodo es una microlección independiente: NO agrupes varios conceptos en un mismo nodo.
 - Entre ${spec.conceptsMin} y ${spec.conceptsMax} conceptos. La síntesis completa NO debe superar ${spec.synthesisChars} caracteres.
 - "citaTextual" debe ser una cita LITERAL y breve del material (máx 250 caracteres). Si la fuente no da texto literal (ej. solo un video), usa la paráfrasis más fiel posible.
 - "advertenciasDeContexto": lista de malentendidos probables si alguien lee un fragmento fuera de contexto, y cuál es la lectura correcta según el material completo.

@@ -258,6 +258,8 @@ export interface BatchRouteInput {
   coverPrompt?: string;
   /** Imagen de referencia opcional para la portada (base64, con o sin prefijo data URL). */
   coverReference?: string;
+  /** Tamaño de la ruta (corta/mediana/completa). Default: "short". */
+  size?: RouteSize;
 }
 
 /**
@@ -327,7 +329,7 @@ async function generateFullRoute(routeId: string, topic: string, sources: string
     let pack;
     try {
       console.log(`[Batch] Síntesis de "${topic}" (ruta ${routeId})...`);
-      pack = await generateStudyPack(topic, sources);
+      pack = await generateStudyPack(topic, sources, normalizeSize(item.size));
     } finally {
       releaseStudyPackSlot();
     }
@@ -402,13 +404,19 @@ export async function createRouteBatch(
   if (clean.length === 0) return { ok: false, error: "Cada ruta necesita un tema y al menos un link." };
   if (clean.length > BATCH_MAX) return { ok: false, error: `Máximo ${BATCH_MAX} rutas por lote.` };
 
-  // Cuota: el lote completo debe caber en lo que queda
+  // Cuota: el lote completo debe caber en lo que queda. Igual que createRoute,
+  // contamos por CRÉDITOS (cada tamaño cuesta distinto), no por número de rutas.
   const quota = profile.route_quota ?? 1;
-  const { count: routesUsed } = await sb
+  const { data: ownRoutes } = await sb
     .from("routes")
-    .select("id", { count: "exact", head: true })
+    .select("credits")
     .eq("owner_id", user.id);
-  if ((routesUsed ?? 0) + clean.length > quota) {
+  const creditsUsed = (ownRoutes ?? []).reduce(
+    (sum, r) => sum + ((r as { credits: number | null }).credits ?? 1),
+    0
+  );
+  const batchCost = clean.reduce((sum, i) => sum + creditsFor(normalizeSize(i.size)), 0);
+  if (creditsUsed + batchCost > quota) {
     return { ok: false, error: "quota", quotaReached: true };
   }
 
@@ -426,6 +434,8 @@ export async function createRouteBatch(
         status: "generating",
         visibility: i.visibility,
         category: i.category,
+        size: normalizeSize(i.size),
+        credits: creditsFor(normalizeSize(i.size)),
       }))
     )
     .select("id, topic");

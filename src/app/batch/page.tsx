@@ -18,6 +18,7 @@ import { getPlan } from "@/app/socialActions";
 import { fileToResizedDataUrl } from "@/lib/imageUtils";
 import { extractUrls } from "@/lib/urlUtils";
 import { ROUTE_CATEGORIES, type PlanState, type RouteSummary } from "@/lib/types";
+import { ROUTE_SIZES, ROUTE_SIZE_SPEC, creditsFor, type RouteSize } from "@/lib/routeSize";
 import AppHeader from "@/components/AppHeader";
 import { LogoMark } from "@/components/Logo";
 
@@ -32,10 +33,11 @@ interface Slot {
   coverOpen: boolean;
   coverPrompt: string;
   coverReference: string | null; // base64 (data URL)
+  size: RouteSize;
 }
 
 function emptySlot(id: number): Slot {
-  return { id, topic: "", links: [], linkDraft: "", category: "", coverOpen: false, coverPrompt: "", coverReference: null };
+  return { id, topic: "", links: [], linkDraft: "", category: "", coverOpen: false, coverPrompt: "", coverReference: null, size: "short" };
 }
 
 export default function BatchPage() {
@@ -123,6 +125,7 @@ export default function BatchPage() {
       category: s.category,
       coverPrompt: s.coverPrompt.trim() || undefined,
       coverReference: s.coverReference ?? undefined,
+      size: s.size,
     }));
     try {
       const res = await createRouteBatch(token, items);
@@ -401,6 +404,29 @@ export default function BatchPage() {
                           <option key={c.id} value={c.id}>{c.label}</option>
                         ))}
                       </select>
+
+                      {/* Tamaño de la ruta (corta por defecto) */}
+                      <div className="grid grid-cols-3 gap-2 mb-3">
+                        {ROUTE_SIZES.map(sz => {
+                          const spec = ROUTE_SIZE_SPEC[sz];
+                          const selected = s.size === sz;
+                          return (
+                            <button
+                              key={sz}
+                              type="button"
+                              onClick={() => patchSlot(s.id, { size: sz })}
+                              className={`rounded-xl border px-2 py-2 text-center transition-all ${
+                                selected ? "border-violet-500 bg-violet-500/10" : "border-zinc-800 bg-zinc-950 hover:border-zinc-700"
+                              }`}
+                            >
+                              <span className="block text-xs font-bold text-white">{spec.label}</span>
+                              <span className="block text-[10px] text-zinc-500">
+                                {creditsFor(sz)} {creditsFor(sz) === 1 ? "créd." : "créds."}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
 
                       {/* Portada opcional */}
                       <button

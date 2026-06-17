@@ -25,6 +25,9 @@ export interface RouteSizeSpec {
   conceptsMax: number;
   levelsMin: number;
   levelsMax: number;
+  /** Piso/techo de microlecciones (nodos) totales del árbol. */
+  nodesMin: number;
+  nodesMax: number;
   /** Tope de caracteres de la síntesis maestra. */
   synthesisChars: number;
   /** maxOutputTokens del JSON del study pack (escala con el tamaño). */
@@ -41,6 +44,8 @@ export const ROUTE_SIZE_SPEC: Record<RouteSize, RouteSizeSpec> = {
     conceptsMax: 12,
     levelsMin: 3,
     levelsMax: 5,
+    nodesMin: 7,
+    nodesMax: 10,
     synthesisChars: 5000,
     maxOutputTokens: 8192,
   },
@@ -52,6 +57,8 @@ export const ROUTE_SIZE_SPEC: Record<RouteSize, RouteSizeSpec> = {
     conceptsMax: 22,
     levelsMin: 5,
     levelsMax: 7,
+    nodesMin: 14,
+    nodesMax: 20,
     synthesisChars: 10000,
     maxOutputTokens: 24000,
   },
@@ -63,6 +70,8 @@ export const ROUTE_SIZE_SPEC: Record<RouteSize, RouteSizeSpec> = {
     conceptsMax: 32,
     levelsMin: 7,
     levelsMax: 9,
+    nodesMin: 22,
+    nodesMax: 32,
     synthesisChars: 15000,
     maxOutputTokens: 48000,
   },
