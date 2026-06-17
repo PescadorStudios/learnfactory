@@ -5,11 +5,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Loader2, Users, Search, RefreshCw, Check, AlertTriangle, ClipboardPaste,
   MonitorPlay, AtSign, Hash, Send, ChevronDown, ChevronUp, Eye, Clock, Square, CheckSquare,
-  StopCircle, PenSquare,
+  StopCircle, PenSquare, Trash2, X,
 } from "lucide-react";
 import {
   crmGetConfig, crmImportBatch, crmListCreators, crmUpdateCreator, crmApproveCreator,
-  crmSendOne, crmSendFollowup, crmSetFollowupTemplate,
+  crmSendOne, crmSendFollowup, crmSetFollowupTemplate, crmDeleteCreator,
   type CrmConfig, type CreatorRow, type ListFilters, type CreatorPatch,
 } from "@/app/creatorsActions";
 import { adminGetSignature } from "@/app/emailActions";
@@ -77,6 +77,10 @@ export default function CreatorsTab({ token }: { token: string | null }) {
   const [drafts, setDrafts] = useState<Record<string, CreatorPatch>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
   const [rowMsg, setRowMsg] = useState<Record<string, string>>({});
+
+  // Borrado (limpiar la vista)
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [delBusy, setDelBusy] = useState<string | null>(null);
 
   // Selección + envío en lote
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -181,6 +185,20 @@ export default function CreatorsTab({ token }: { token: string | null }) {
       setRowMsg(m => ({ ...m, [c.id]: "" }));
     } else {
       setRowMsg(m => ({ ...m, [c.id]: res.error || "No se pudo aprobar." }));
+    }
+  };
+
+  const doDelete = async (id: string) => {
+    if (!token) return;
+    setDelBusy(id);
+    const res = await crmDeleteCreator(token, id);
+    setDelBusy(null);
+    if (res.ok) {
+      setCreators(cs => cs.filter(x => x.id !== id));
+      setSelected(s => { const n = new Set(s); n.delete(id); return n; });
+      if (expanded === id) setExpanded(null);
+      setConfirmDel(null);
+      loadConfig();
     }
   };
 
@@ -438,6 +456,21 @@ export default function CreatorsTab({ token }: { token: string | null }) {
                     {c.instagramUrl && <a href={c.instagramUrl} target="_blank" rel="noopener noreferrer" title="Instagram" className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-pink-500/20 text-zinc-400 hover:text-pink-400 flex items-center justify-center transition-all"><AtSign className="w-4 h-4" /></a>}
                     {c.xUrl && <a href={c.xUrl} target="_blank" rel="noopener noreferrer" title="X" className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center transition-all"><Hash className="w-4 h-4" /></a>}
                   </div>
+                  {/* Eliminar (limpiar la vista) con confirmación inline */}
+                  {confirmDel === c.id ? (
+                    <div className="shrink-0 flex items-center gap-1">
+                      <button onClick={() => doDelete(c.id)} disabled={delBusy === c.id} title="Confirmar borrado" className="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 flex items-center justify-center transition-all disabled:opacity-50">
+                        {delBusy === c.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      </button>
+                      <button onClick={() => setConfirmDel(null)} disabled={delBusy === c.id} title="Cancelar" className="w-8 h-8 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white flex items-center justify-center transition-all">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmDel(c.id)} title="Eliminar creador" className="shrink-0 w-8 h-8 rounded-lg bg-zinc-800 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 flex items-center justify-center transition-all">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                   <button onClick={() => setExpanded(isOpen ? null : c.id)} className="shrink-0 text-zinc-500 hover:text-white">
                     {isOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                   </button>

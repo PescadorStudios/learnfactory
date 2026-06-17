@@ -372,6 +372,15 @@ export async function crmUpdateCreator(
   return { ok: true };
 }
 
+/** Borra un creador (y su bitácora, vía cascade). Para limpiar la vista. */
+export async function crmDeleteCreator(token: string, id: string): Promise<{ ok: boolean }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false };
+  const sb = supabaseAdmin();
+  const { error } = await sb.from("creators").delete().eq("id", id);
+  return { ok: !error };
+}
+
 /** Valida las reglas duras y, si pasan, marca 'listo'. Devuelve el motivo si no. */
 export async function crmApproveCreator(token: string, id: string): Promise<{ ok: boolean; error?: string }> {
   const admin = await requireAdmin(token);
