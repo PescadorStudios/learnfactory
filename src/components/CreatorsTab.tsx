@@ -403,9 +403,12 @@ export default function CreatorsTab({ token }: { token: string | null }) {
             const note = fieldVal(c, "personalizedNote");
             const link = fieldVal(c, "routeLink");
             const email = fieldVal(c, "email");
-            const vars: MergeVars = { name: c.name, best_series: c.bestSeries || "", personalized_note: note, route_link: link };
+            const vars: MergeVars = { name: c.name, tema: c.tema || "", personalized_note: note, route_link: link };
             const previewSubject = renderTemplate(subject, vars);
             const previewHtml = bodyToHtml(renderTemplate(body, vars)) + signature;
+            // Advertencia: la plantilla usa {{tema}} (o el alias {{best_series}}) pero la fila no tiene tema.
+            const usesTema = /\{\{\s*(tema|best_series)\s*\}\}/.test(subject + body);
+            const temaMissing = usesTema && !(c.tema || "").trim();
             const canApprove = isValidEmail(email) && note.trim() && link.trim() && subject.trim() && body.trim();
             const dirty = drafts[c.id] && Object.keys(drafts[c.id]).length > 0;
 
@@ -519,6 +522,12 @@ export default function CreatorsTab({ token }: { token: string | null }) {
                         {/* Preview en vivo */}
                         <div>
                           <div className="flex items-center gap-1.5 text-xs text-zinc-500 mb-1.5"><Eye className="w-3.5 h-3.5" /> Preview del correo final</div>
+                          {temaMissing && (
+                            <p className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/40 rounded-xl p-2.5 mb-1.5 flex items-start gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                              La plantilla usa <code className="font-mono">{"{{tema}}"}</code> pero esta fila no tiene tema: saldría vacío. Agrega el tema (reimporta el JSON) o quita el merge field.
+                            </p>
+                          )}
                           <div className="rounded-xl border border-zinc-800 bg-white overflow-hidden">
                             <div className="px-4 py-2.5 border-b border-zinc-200 bg-zinc-50">
                               <p className="text-[11px] text-zinc-500">Para: {c.email || "(sin email)"}</p>

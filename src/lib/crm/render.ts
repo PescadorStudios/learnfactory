@@ -4,23 +4,28 @@
 
 export interface MergeVars {
   name: string;
-  best_series: string;
+  tema: string;
   personalized_note: string;
   route_link: string;
 }
 
-/** Reemplaza {{name}}, {{best_series}}, {{personalized_note}}, {{route_link}}. */
+/**
+ * Reemplaza {{name}}, {{tema}}, {{personalized_note}}, {{route_link}}.
+ * {{best_series}} se mantiene como alias retrocompatible de {{tema}} para no
+ * romper plantillas guardadas viejas (rinde el mismo valor de `tema`).
+ */
 export function renderTemplate(tpl: string, vars: MergeVars): string {
   return (tpl || "")
     .replace(/\{\{\s*name\s*\}\}/g, vars.name ?? "")
-    .replace(/\{\{\s*best_series\s*\}\}/g, vars.best_series ?? "")
+    .replace(/\{\{\s*tema\s*\}\}/g, vars.tema ?? "")
+    .replace(/\{\{\s*best_series\s*\}\}/g, vars.tema ?? "")
     .replace(/\{\{\s*personalized_note\s*\}\}/g, vars.personalized_note ?? "")
     .replace(/\{\{\s*route_link\s*\}\}/g, vars.route_link ?? "");
 }
 
 /** Mensaje de seguimiento por defecto (un solo toque). Editable en el panel. */
 export const DEFAULT_FOLLOWUP_TEMPLATE =
-  "Hola {{name}}, te escribí hace unos días sobre el curso que armé con tu serie de {{best_series}}. " +
+  "Hola {{name}}, te escribí hace unos días sobre el curso que armé con tu serie de {{tema}}. " +
   "Sé que andas con mil cosas, así que te dejo el enlace de nuevo por si lo quieres ver con calma: {{route_link}}\n\n" +
   "Si no es lo tuyo, sin problema — no te vuelvo a escribir. Un abrazo,\nMauricio — Learn Factory";
 

@@ -80,6 +80,7 @@ export interface CreatorRow {
   email: string | null;
   emailStatus: string;
   bestSeries: string | null;
+  tema: string | null;
   personalizationHook: string | null;
   emailSubject: string;
   emailBody: string;
@@ -118,6 +119,7 @@ function mapRow(r: Record<string, unknown>, followupDays: number): CreatorRow {
     email: (r.email as string) ?? null,
     emailStatus: r.email_status as string,
     bestSeries: (r.best_series as string) ?? null,
+    tema: (r.tema as string) ?? null,
     personalizationHook: (r.personalization_hook as string) ?? null,
     emailSubject: (r.email_subject as string) ?? "",
     emailBody: (r.email_body as string) ?? "",
@@ -261,6 +263,7 @@ export async function crmImportBatch(token: string, jsonText: string): Promise<I
       email,
       email_status: validEmailStatus(c.email_status),
       best_series: (c.best_series_to_convert as string) ?? null,
+      tema: (c.tema as string) ?? null,
       personalization_hook: (c.personalization_hook as string) ?? null,
       channel_priority: (c.channel_priority as unknown) ?? null,
       source_notes: (c.source_notes as string) ?? null,
@@ -440,7 +443,7 @@ export async function crmSendOne(token: string, id: string): Promise<SendOneResu
 
   const vars: MergeVars = {
     name: c.name as string,
-    best_series: (c.best_series as string) || "",
+    tema: (c.tema as string) || "",
     personalized_note: (c.personalized_note as string) || "",
     route_link: (c.route_link as string) || "",
   };
@@ -499,7 +502,7 @@ export async function crmSendFollowup(token: string, id: string): Promise<SendOn
 
   const vars: MergeVars = {
     name: c.name as string,
-    best_series: (c.best_series as string) || "",
+    tema: (c.tema as string) || "",
     personalized_note: (c.personalized_note as string) || "",
     route_link: (c.route_link as string) || "",
   };

@@ -48,6 +48,7 @@ create table if not exists public.creators (
                          check (email_status in ('found', 'not_found', 'guessed')),
 
   best_series          text,
+  tema                 text,                                  -- merge field {{tema}}
   personalization_hook text,
 
   -- Plantilla editable por fila + merge fields.
