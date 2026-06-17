@@ -8,17 +8,22 @@ import { after } from "next/server";
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import {
   generateStudyPack,
-  generateLessonContent,
-  generateQuizNode,
   generateBossExam,
   generateCoverImage,
   buildCoverPrompt,
   craftCoverPrompt,
   findSourcesOnline,
 } from "@/lib/generation";
+import {
+  AUDIO_BUCKET,
+  STALE_GENERATING_MS,
+  flattenNodes,
+  buildLessonPlan,
+  generateOneLesson,
+} from "@/lib/routeGen";
+import { enqueueRouteJob, kickWorker } from "@/lib/routeJobs";
 import type {
   Tree,
-  TreeNode,
   Sintesis,
   RouteSummary,
   RouteDetail,
@@ -28,7 +33,6 @@ import type {
   SaveAttemptResult,
   LessonGenStatus,
   BossExamData,
-  AttentionMode,
   AttentionData,
   RouteCategory,
   DiscoveredSource,
@@ -38,17 +42,10 @@ import { ROUTE_CATEGORIES, SOURCE_TYPES } from "@/lib/types";
 import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
 import { creditsFor, normalizeSize, type RouteSize } from "@/lib/routeSize";
 
-const AUDIO_BUCKET = "lesson-audio";
+// AUDIO_BUCKET y STALE_GENERATING_MS viven en @/lib/routeGen (compartidos con el worker).
 const COVER_BUCKET = "route-covers";
 const REVIEW_AFTER_DAYS = 4;
 const REVIEW_MASTERY_THRESHOLD = 80;
-// Una lección "generating" más vieja que esto se considera huérfana (su proceso
-// murió, p.ej. reinicio del server): se puede reclamar y reintentar.
-const STALE_GENERATING_MS = 5 * 60 * 1000;
-
-// Evita que dos loops de generación corran a la vez sobre la misma ruta en este
-// proceso (createRoute + resumeRoute, o varios resumes seguidos).
-const activeRouteGen = new Set<string>();
 
 // ──────────────────────────────────────────────────
 //  AUTH / PERFIL
@@ -98,10 +95,6 @@ export async function ensureProfile(token: string): Promise<{ ok: boolean }> {
 // ──────────────────────────────────────────────────
 //  CREAR RUTA + PREGENERACIÓN EN BACKGROUND
 // ──────────────────────────────────────────────────
-
-function flattenNodes(tree: Tree): TreeNode[] {
-  return tree.levels.flatMap(l => l.nodes);
-}
 
 function cleanCategory(category?: string): RouteCategory {
   return (ROUTE_CATEGORIES.some(c => c.id === category) ? category : "otros") as RouteCategory;
@@ -179,8 +172,10 @@ export async function createRoute(
   }));
   await sb.from("lessons").insert(lessonRows);
 
-  // Pregenerar todo en segundo plano después de responder
-  after(() => generateRouteLessons(route.id));
+  // Encolar el job durable y despertar al worker (que termina solo, aunque el
+  // usuario cierre la ventana; el cron de Vercel es la red de seguridad).
+  await enqueueRouteJob(route.id);
+  after(() => kickWorker());
   // Portada con IA en background: si el usuario dio su prompt/referencia se
   // usan (se genera UNA sola vez, sin gastar la automática); si no, prompt base.
   const coverPrompt = cover?.prompt?.trim() || buildCoverPrompt(topic, pack.sintesis?.tesisGlobal);
@@ -359,7 +354,9 @@ async function generateFullRoute(routeId: string, topic: string, sources: string
     // La portada no bloquea las lecciones: corre en paralelo dentro del mismo job
     const coverJob = generateAndStoreCover(routeId, topic, coverPrompt, references);
 
-    await generateRouteLessons(routeId);
+    // Encolar la generación de lecciones en el worker durable y despertarlo.
+    await enqueueRouteJob(routeId);
+    await kickWorker();
     await coverJob;
   } catch (e) {
     console.error(`[Batch] ✗ Ruta ${routeId} ("${topic}") falló:`, e);
@@ -492,166 +489,8 @@ export async function deleteRoute(token: string, routeId: string): Promise<{ ok:
   return { ok: true };
 }
 
-/**
- * Plan de generación por nodo, calculable ANTES de generar nada:
- * - studiedConceptIds: conceptos de todos los nodos anteriores en el árbol.
- * - attentionMode: las 3 mecánicas de atención rotan en orden cíclico entre
- *   las lecciones con audio (espía → subtítulos → co-piloto), nunca dos
- *   veces seguidas la misma.
- */
-interface LessonPlanEntry {
-  node: TreeNode;
-  studiedConceptIds: string[];
-  attentionMode: AttentionMode;
-}
-
-const ATTENTION_CYCLE: AttentionMode[] = ["spy", "subtitles", "copilot"];
-
-function buildLessonPlan(tree: Tree): Map<string, LessonPlanEntry> {
-  const plan = new Map<string, LessonPlanEntry>();
-  const studied: string[] = [];
-  let audioLessonIndex = 0;
-
-  for (const node of flattenNodes(tree)) {
-    let attentionMode: AttentionMode = "spy";
-    if (node.type === "theory" || node.type === "practice") {
-      attentionMode = ATTENTION_CYCLE[audioLessonIndex % ATTENTION_CYCLE.length];
-      audioLessonIndex++;
-    }
-    plan.set(node.id, { node, studiedConceptIds: [...studied], attentionMode });
-    for (const c of node.conceptIds || []) {
-      if (!studied.includes(c)) studied.push(c);
-    }
-  }
-  return plan;
-}
-
-/**
- * Generación EN PARALELO (estilo lote): los prompts de todas las lecciones se
- * preparan de antemano (buildLessonPlan) y se despachan todos a la vez. Cada
- * fila de `lessons` es el placeholder de su resultado: al completarse, la fila
- * se actualiza y Supabase Realtime (websockets) empuja el cambio al cliente.
- * El TTS lleva un semáforo interno para respetar rate limits.
- */
-async function generateRouteLessons(routeId: string) {
-  if (activeRouteGen.has(routeId)) {
-    console.log(`[RouteGen] Ruta ${routeId} ya tiene un lote activo; no se relanza.`);
-    return;
-  }
-  activeRouteGen.add(routeId);
-
-  const sb = supabaseAdmin();
-  try {
-    const { data: route } = await sb.from("routes").select("topic, sintesis, tree").eq("id", routeId).single();
-    if (!route) return;
-
-    const tree = route.tree as Tree;
-    const sintesis = route.sintesis as Sintesis;
-    const plan = buildLessonPlan(tree);
-
-    await sb.from("routes").update({ status: "generating" }).eq("id", routeId);
-
-    // Reclamar lecciones huérfanas (generating viejas) y reintentar las que
-    // están en error: vuelven a "pending" para que el lote las regenere.
-    const staleCutoff = new Date(Date.now() - STALE_GENERATING_MS).toISOString();
-    await sb.from("lessons").update({ status: "pending", error: null })
-      .eq("route_id", routeId).eq("status", "error").neq("node_type", "debate");
-    await sb.from("lessons").update({ status: "pending", error: null })
-      .eq("route_id", routeId).eq("status", "generating").lt("generating_at", staleCutoff);
-
-    const { data: rows } = await sb.from("lessons").select("node_id, status").eq("route_id", routeId);
-    const statusByNode = new Map((rows || []).map(r => [r.node_id, r.status]));
-
-    const tasks = [...plan.values()].filter(
-      p => p.node.type !== "debate" && statusByNode.get(p.node.id) === "pending"
-    );
-
-    if (tasks.length > 0) {
-      console.log(`[RouteGen] ⚡ Despachando ${tasks.length} lecciones EN PARALELO (ruta ${routeId})...`);
-      await Promise.allSettled(
-        tasks.map(p => generateOneLesson(routeId, route.topic, sintesis, p.node, p.studiedConceptIds, p.attentionMode))
-      );
-    }
-
-    await sb.from("routes").update({ status: "ready" }).eq("id", routeId);
-    console.log(`[RouteGen] ✓ Ruta ${routeId} completamente generada.`);
-  } catch (e) {
-    console.error(`[RouteGen] Error fatal en ruta ${routeId}:`, e);
-    await sb.from("routes").update({ status: "ready" }).eq("id", routeId); // las lecciones en error se reintentan individualmente
-  } finally {
-    activeRouteGen.delete(routeId);
-  }
-}
-
-async function generateOneLesson(
-  routeId: string,
-  topic: string,
-  sintesis: Sintesis,
-  node: TreeNode,
-  studiedConceptIds: string[],
-  attentionMode: AttentionMode,
-  guidance?: string
-) {
-  const sb = supabaseAdmin();
-  const focal = node.conceptIds || [];
-
-  await sb.from("lessons")
-    .update({ status: "generating", error: null, generating_at: new Date().toISOString() })
-    .eq("route_id", routeId).eq("node_id", node.id);
-  console.log(`[RouteGen] Generando ${node.type} "${node.title}" (${node.id}, atención: ${attentionMode})...`);
-
-  try {
-    if (node.type === "theory" || node.type === "practice") {
-      const content = await generateLessonContent(
-        topic, node.title, node.type, sintesis, focal, studiedConceptIds, attentionMode, guidance
-      );
-
-      let audioPath: string | null = null;
-      if (content.wav && content.attention) {
-        audioPath = `${routeId}/${node.id}.wav`;
-        let uploaded = false;
-        for (let i = 1; i <= 3 && !uploaded; i++) {
-          const { error: upErr } = await sb.storage
-            .from(AUDIO_BUCKET)
-            .upload(audioPath, content.wav, { contentType: "audio/wav", upsert: true });
-          if (!upErr) {
-            uploaded = true;
-          } else {
-            console.error(`[RouteGen] Error subiendo audio de ${node.id} (intento ${i}/3):`, upErr.message);
-            if (i < 3) await new Promise(r => setTimeout(r, 3000));
-          }
-        }
-        if (!uploaded) {
-          // El audio es parte central de la experiencia: marcar error para que el usuario reintente
-          throw new Error("No se pudo subir el audio a Storage tras 3 intentos.");
-        }
-      }
-
-      await sb.from("lessons").update({
-        content: { steps: content.steps },
-        audio_questions: audioPath ? content.attention : null,
-        audio_duration: audioPath ? content.durationSeconds : null,
-        audio_path: audioPath,
-        status: "ready",
-      }).eq("route_id", routeId).eq("node_id", node.id);
-    } else if (node.type === "quiz") {
-      const reviewIds = studiedConceptIds.filter(c => !focal.includes(c));
-      const quiz = await generateQuizNode(topic, sintesis, focal, reviewIds, guidance);
-      await sb.from("lessons").update({ content: quiz, status: "ready" }).eq("route_id", routeId).eq("node_id", node.id);
-    } else if (node.type === "boss") {
-      const exam = await generateBossExam(topic, sintesis, guidance);
-      await sb.from("lessons").update({ content: exam, status: "ready" }).eq("route_id", routeId).eq("node_id", node.id);
-    }
-
-    console.log(`[RouteGen] ✓ ${node.id} lista`);
-  } catch (e) {
-    console.error(`[RouteGen] ✗ Error en ${node.id}:`, e);
-    await sb.from("lessons").update({
-      status: "error",
-      error: e instanceof Error ? e.message : "Error desconocido",
-    }).eq("route_id", routeId).eq("node_id", node.id);
-  }
-}
+// buildLessonPlan y generateOneLesson viven en @/lib/routeGen (los comparte el
+// worker durable /api/route-jobs/worker, que es quien genera las lecciones).
 
 /**
  * Regenera una lección bajo demanda del CREADOR del curso, con un prompt
@@ -693,8 +532,8 @@ export async function regenerateLesson(
 
 /**
  * Reintenta la generación de una lección fallida y CONTINÚA la cola completa:
- * relanza el loop de la ruta, que regenera esa lección y todas las que sigan
- * pendientes (así un reintento nunca deja el resto de la cola huérfana).
+ * re-encola el job de la ruta (resetea sus intentos a 0 para que el worker la
+ * regenere) y despierta al worker, que completa esa y todas las pendientes.
  */
 export async function retryLesson(token: string, routeId: string, nodeId: string): Promise<{ ok: boolean }> {
   const user = await getUserFromToken(token);
@@ -704,15 +543,18 @@ export async function retryLesson(token: string, routeId: string, nodeId: string
   const { data: route } = await sb.from("routes").select("id").eq("id", routeId).single();
   if (!route) return { ok: false };
 
-  await sb.from("lessons").update({ status: "pending", error: null }).eq("route_id", routeId).eq("node_id", nodeId);
-  after(() => generateRouteLessons(routeId));
+  // attempts a 0: un reintento manual no debe chocar con el tope automático.
+  await sb.from("lessons").update({ status: "pending", error: null, attempts: 0 })
+    .eq("route_id", routeId).eq("node_id", nodeId);
+  await enqueueRouteJob(routeId);
+  after(() => kickWorker());
   return { ok: true };
 }
 
 /**
- * Reanuda la generación de una ruta entera: relanza el loop, que reclama las
- * lecciones huérfanas/en error y completa las pendientes. Útil si el proceso de
- * background murió (reinicio del server) y la cola se cortó.
+ * Reanuda la generación de una ruta entera: re-encola el job y despierta al
+ * worker, que reclama las lecciones huérfanas/en error y completa las pendientes.
+ * Sigue disponible como fallback manual, aunque el cron ya las completa solo.
  */
 export async function resumeRoute(token: string, routeId: string): Promise<{ ok: boolean }> {
   const user = await getUserFromToken(token);
@@ -722,7 +564,11 @@ export async function resumeRoute(token: string, routeId: string): Promise<{ ok:
   const { data: route } = await sb.from("routes").select("owner_id").eq("id", routeId).single();
   if (!route || route.owner_id !== user.id) return { ok: false };
 
-  after(() => generateRouteLessons(routeId));
+  // Reintentos manuales: limpiar el tope para lecciones atascadas en error.
+  await sb.from("lessons").update({ attempts: 0 })
+    .eq("route_id", routeId).eq("status", "error");
+  await enqueueRouteJob(routeId);
+  after(() => kickWorker());
   return { ok: true };
 }
 
