@@ -2,10 +2,16 @@ import { NextResponse, after } from "next/server";
 import crypto from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { buildLessonPlan, generateOneLesson, STALE_GENERATING_MS } from "@/lib/routeGen";
+import {
+  buildLessonPlan,
+  generateOneLesson,
+  prepareRoute,
+  generateAndStoreCover,
+  flattenNodes,
+  STALE_GENERATING_MS,
+} from "@/lib/routeGen";
 import { kickWorker, getBaseUrl } from "@/lib/routeJobs";
 import { sendRouteReadyEmail } from "@/lib/email/routeReady";
-import type { Tree, Sintesis } from "@/lib/types";
 
 // ============================================================================
 // WORKER DURABLE DE GENERACIÓN DE RUTAS
@@ -82,20 +88,24 @@ async function renewLease(sb: SupabaseClient, jobId: string, routeId: string, to
 
 async function runJob(sb: SupabaseClient, job: JobRow, startedAt: number) {
   const routeId = job.route_id;
-  const { data: route } = await sb
-    .from("routes")
-    .select("topic, sintesis, tree")
-    .eq("id", routeId)
-    .single();
 
-  if (!route) {
-    await sb.from("route_jobs").update({ status: "done", lease_until: null }).eq("id", job.id);
-    return { jobId: job.id, gone: true };
+  // Garantiza síntesis maestra + placeholders de lecciones (los genera si la ruta
+  // nació con árbol vacío, como hace ahora createRoute). La síntesis pesada vive
+  // aquí, no en el request, así createRoute responde al instante.
+  const prep = await prepareRoute(routeId);
+  if (!prep.ok) {
+    await sb.from("routes").update({ status: "error" }).eq("id", routeId);
+    await sb.from("route_jobs").update({
+      status: "error", lease_until: null, last_error: prep.error, updated_at: new Date().toISOString(),
+    }).eq("id", job.id);
+    return { jobId: job.id, status: "error", phase: "synthesis", error: prep.error };
   }
 
-  const tree = route.tree as Tree;
-  const sintesis = route.sintesis as Sintesis;
+  const { topic, tree, sintesis, cover } = prep.data;
+  if (cover) after(() => generateAndStoreCover(routeId, topic, cover.prompt, cover.refs));
+
   const plan = buildLessonPlan(tree);
+  await sb.from("route_jobs").update({ total: flattenNodes(tree).length }).eq("id", job.id);
 
   await sb.from("routes").update({ status: "generating" }).eq("id", routeId);
 
@@ -129,7 +139,7 @@ async function runJob(sb: SupabaseClient, job: JobRow, startedAt: number) {
         const entry = plan.get(nid);
         if (!entry) return Promise.resolve();
         return generateOneLesson(
-          routeId, route.topic, sintesis, entry.node, entry.studiedConceptIds, entry.attentionMode
+          routeId, topic, sintesis, entry.node, entry.studiedConceptIds, entry.attentionMode
         );
       })
     );
@@ -177,7 +187,7 @@ async function runJob(sb: SupabaseClient, job: JobRow, startedAt: number) {
   if (notifyClaim && notifyClaim.length > 0 && job.owner_email) {
     const routeUrl = `${getBaseUrl()}/tree?route=${routeId}`;
     const res = await sendRouteReadyEmail(job.owner_email, {
-      topic: route.topic, routeUrl, lessonsCount: counts.ready,
+      topic, routeUrl, lessonsCount: counts.ready,
     });
     if (!res.ok) console.error(`[Worker] Correo "ruta lista" falló (ruta ${routeId}):`, res.error);
     else console.log(`[Worker] ✓ Correo "ruta lista" enviado a ${job.owner_email}.`);

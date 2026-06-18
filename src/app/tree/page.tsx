@@ -130,6 +130,21 @@ function KnowledgeTree() {
   }
   if (!route) return <TreeLoading />;
 
+  // Síntesis en curso: la ruta nació con árbol vacío y el worker la está armando.
+  // (load() sigue sondeando porque route.status === "generating".)
+  if (route.tree.levels.length === 0) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
+        <Loader2 className="w-12 h-12 text-primary mb-4 animate-spin" />
+        <h2 className="text-2xl font-bold mb-2">Preparando tu ruta…</h2>
+        <p className="text-zinc-400 max-w-sm">
+          Analizando las fuentes y diseñando el plan de <span className="text-white font-semibold">{route.topic}</span>.
+          Puede tardar un minuto — puedes cerrar esta pestaña y volver luego, sigue trabajando sola.
+        </p>
+      </div>
+    );
+  }
+
   // Progresión: completado = tiene bestStars; desbloqueado = primer no completado
   const allNodes = route.tree.levels.flatMap(l => l.nodes);
   const completedIds = new Set(allNodes.filter(n => route.nodes[n.id]?.bestStars !== null).map(n => n.id));

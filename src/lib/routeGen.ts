@@ -7,16 +7,131 @@ import {
   generateLessonContent,
   generateQuizNode,
   generateBossExam,
+  generateStudyPack,
+  generateCoverImage,
+  buildCoverPrompt,
 } from "@/lib/generation";
+import { normalizeSize } from "@/lib/routeSize";
 import type { Tree, TreeNode, Sintesis, AttentionMode } from "@/lib/types";
 
 export const AUDIO_BUCKET = "lesson-audio";
+export const COVER_BUCKET = "route-covers";
 // Una lección "generating" más vieja que esto se considera huérfana (su proceso
 // murió, p.ej. fin de invocación serverless): se puede reclamar y reintentar.
 export const STALE_GENERATING_MS = 5 * 60 * 1000;
 
 export function flattenNodes(tree: Tree): TreeNode[] {
   return tree.levels.flatMap(l => l.nodes);
+}
+
+/** Decodifica base64 (con o sin prefijo data URL) a referencia para Gemini. */
+export function toCoverReference(base64?: string | null): Array<{ mimeType: string; data: string }> {
+  if (!base64) return [];
+  let contentType = "image/png";
+  let data = base64;
+  const m = base64.match(/^data:(image\/[a-zA-Z+]+);base64,(.*)$/);
+  if (m) {
+    contentType = m[1];
+    data = m[2];
+  }
+  if (!data) return [];
+  return [{ mimeType: contentType, data }];
+}
+
+/** Genera una portada con IA y la sube a Storage, guardando cover_path/cover_prompt. */
+export async function generateAndStoreCover(
+  routeId: string,
+  topic: string,
+  prompt: string,
+  references: Array<{ mimeType: string; data: string }> = []
+) {
+  const sb = supabaseAdmin();
+  try {
+    const img = await generateCoverImage(prompt, references);
+    if (!img) {
+      console.warn(`[Cover] Ruta ${routeId}: sin portada (generación falló).`);
+      return;
+    }
+    const coverPath = `${routeId}/cover.png`;
+    const { error } = await sb.storage.from(COVER_BUCKET).upload(coverPath, img, {
+      contentType: "image/png",
+      upsert: true,
+    });
+    if (error) {
+      console.error(`[Cover] Error subiendo portada de ${routeId}:`, error.message);
+      return;
+    }
+    await sb.from("routes").update({ cover_path: coverPath, cover_prompt: prompt }).eq("id", routeId);
+    console.log(`[Cover] ✓ Portada de ${routeId} lista.`);
+  } catch (e) {
+    console.error(`[Cover] Error generando portada de ${routeId}:`, e);
+  }
+}
+
+interface PreparedRoute {
+  topic: string;
+  tree: Tree;
+  sintesis: Sintesis;
+  /** Si la síntesis se acaba de generar, la tarea de portada a despachar (en after()). */
+  cover?: { prompt: string; refs: Array<{ mimeType: string; data: string }> };
+}
+
+/**
+ * Garantiza que la ruta tenga su síntesis maestra (árbol) y los placeholders de
+ * lecciones, generándolos si aún no existen. El worker la llama ANTES de generar
+ * lecciones: así la síntesis pesada corre en background (con maxDuration alto y
+ * reintentos del cron) en vez de bloquear el request de createRoute. Idempotente:
+ * si el árbol ya existe, solo asegura los placeholders y vuelve.
+ */
+export async function prepareRoute(routeId: string): Promise<{ ok: true; data: PreparedRoute } | { ok: false; error: string }> {
+  const sb = supabaseAdmin();
+  const { data: route } = await sb
+    .from("routes")
+    .select("topic, sintesis, tree, sources, size, cover_prompt, cover_reference")
+    .eq("id", routeId)
+    .single();
+  if (!route) return { ok: false, error: "Ruta no encontrada" };
+
+  let tree = route.tree as Tree;
+  let sintesis = route.sintesis as Sintesis;
+  let cover: PreparedRoute["cover"];
+
+  const needsSynthesis = !tree?.levels || tree.levels.length === 0;
+  if (needsSynthesis) {
+    console.log(`[RouteGen] Síntesis maestra de la ruta ${routeId}...`);
+    const pack = await generateStudyPack(route.topic, route.sources || "", normalizeSize(route.size));
+    if (!pack?.tree?.levels?.length) {
+      return { ok: false, error: "La síntesis no produjo un árbol válido." };
+    }
+    sintesis = pack.sintesis;
+    tree = pack.tree;
+    const description = (pack.sintesis?.tesisGlobal || "").slice(0, 280) || null;
+    await sb.from("routes").update({ sintesis, tree, description }).eq("id", routeId);
+
+    // Portada: prompt del usuario o uno base con la tesis ya disponible.
+    const coverPrompt = route.cover_prompt?.trim() || buildCoverPrompt(route.topic, pack.sintesis?.tesisGlobal);
+    cover = { prompt: coverPrompt, refs: toCoverReference(route.cover_reference) };
+    if (route.cover_reference) {
+      await sb.from("routes").update({ cover_reference: null }).eq("id", routeId);
+    }
+  }
+
+  // Asegurar los placeholders de lecciones (cubre el create decoupled y un fallo
+  // a mitad de la síntesis): si no hay ninguna, se insertan desde el árbol.
+  const { count } = await sb.from("lessons").select("id", { count: "exact", head: true }).eq("route_id", routeId);
+  if (!count) {
+    const rows = flattenNodes(tree).map(node => ({
+      route_id: routeId,
+      node_id: node.id,
+      node_type: node.type,
+      title: node.title,
+      concept_ids: node.conceptIds || [],
+      status: node.type === "debate" ? "ready" : "pending",
+    }));
+    await sb.from("lessons").upsert(rows, { onConflict: "route_id,node_id" });
+  }
+
+  return { ok: true, data: { topic: route.topic, tree, sintesis, cover } };
 }
 
 /**

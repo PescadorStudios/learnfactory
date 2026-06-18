@@ -39,6 +39,13 @@ create index if not exists route_jobs_lease_idx  on public.route_jobs(lease_unti
 -- tope (lo aplica el worker) la lección deja de reintentarse y el job va a error.
 alter table public.lessons add column if not exists attempts int not null default 0;
 
+-- La síntesis maestra (árbol) ahora corre en el WORKER, no en el request de
+-- createRoute (así la creación responde al instante y no da "error de conexión").
+-- La ruta nace con árbol vacío; aquí se guarda la imagen de referencia de portada
+-- (base64) que el usuario subió, para que el worker la use al generar la portada.
+-- Se limpia (null) una vez generada la portada.
+alter table public.routes add column if not exists cover_reference text;
+
 -- ── RLS: solo el service role escribe; el dueño puede consultar su job ───────
 alter table public.route_jobs enable row level security;
 drop policy if exists route_jobs_owner_read on public.route_jobs;

@@ -9,17 +9,19 @@ import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import {
   generateStudyPack,
   generateBossExam,
-  generateCoverImage,
   buildCoverPrompt,
   craftCoverPrompt,
   findSourcesOnline,
 } from "@/lib/generation";
 import {
   AUDIO_BUCKET,
+  COVER_BUCKET,
   STALE_GENERATING_MS,
   flattenNodes,
   buildLessonPlan,
   generateOneLesson,
+  generateAndStoreCover,
+  toCoverReference,
 } from "@/lib/routeGen";
 import { enqueueRouteJob, kickWorker } from "@/lib/routeJobs";
 import type {
@@ -42,8 +44,8 @@ import { ROUTE_CATEGORIES, SOURCE_TYPES } from "@/lib/types";
 import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
 import { creditsFor, normalizeSize, type RouteSize } from "@/lib/routeSize";
 
-// AUDIO_BUCKET y STALE_GENERATING_MS viven en @/lib/routeGen (compartidos con el worker).
-const COVER_BUCKET = "route-covers";
+// AUDIO_BUCKET, COVER_BUCKET, STALE_GENERATING_MS y los helpers de portada/síntesis
+// viven en @/lib/routeGen (compartidos con el worker).
 const REVIEW_AFTER_DAYS = 4;
 const REVIEW_MASTERY_THRESHOLD = 80;
 
@@ -134,24 +136,28 @@ export async function createRoute(
   }
 
   console.log(`[Route] Creando ruta "${topic}" (${routeSize}, ${cost} créditos) para ${user.email}...`);
-  const pack = await generateStudyPack(topic, sourcesStr, routeSize);
 
-  const description = (pack.sintesis?.tesisGlobal || "").slice(0, 280) || null;
-
+  // Ruta placeholder: nace con árbol VACÍO y responde al instante. La síntesis
+  // maestra (Gemini, lo lento) y las lecciones las hace el worker en background,
+  // así createRoute no excede el límite del proxy ni da "error de conexión".
+  // La portada se genera en el worker tras la síntesis (necesita la tesis).
+  const placeholderSintesis = { tesisGlobal: "", conceptos: [], advertenciasDeContexto: [] };
   const { data: route, error } = await sb
     .from("routes")
     .insert({
       owner_id: user.id,
       topic,
       sources: sourcesStr,
-      sintesis: pack.sintesis,
-      tree: pack.tree,
+      sintesis: placeholderSintesis,
+      tree: { topic, levels: [] },
       status: "generating",
       visibility,
-      description,
+      description: null,
       category: cleanCategory(category),
       size: routeSize,
       credits: cost,
+      cover_prompt: cover?.prompt?.trim() || null,
+      cover_reference: cover?.reference || null,
     })
     .select("id")
     .single();
@@ -161,59 +167,14 @@ export async function createRoute(
     return { error: "No se pudo guardar la ruta." };
   }
 
-  const lessonRows = flattenNodes(pack.tree).map(node => ({
-    route_id: route.id,
-    node_id: node.id,
-    node_type: node.type,
-    title: node.title,
-    concept_ids: node.conceptIds || [],
-    // Los debates son conversacionales (se generan en vivo): nacen listos
-    status: node.type === "debate" ? "ready" : "pending",
-  }));
-  await sb.from("lessons").insert(lessonRows);
-
-  // Encolar el job durable y despertar al worker (que termina solo, aunque el
-  // usuario cierre la ventana; el cron de Vercel es la red de seguridad).
+  // Encolar el job durable y despertar al worker (que sintetiza, genera y manda
+  // el correo; termina solo aunque el usuario cierre la ventana; el cron de
+  // Vercel es la red de seguridad).
   await enqueueRouteJob(route.id);
   after(() => kickWorker());
-  // Portada con IA en background: si el usuario dio su prompt/referencia se
-  // usan (se genera UNA sola vez, sin gastar la automática); si no, prompt base.
-  const coverPrompt = cover?.prompt?.trim() || buildCoverPrompt(topic, pack.sintesis?.tesisGlobal);
-  const coverRefs = toCoverReference(cover?.reference);
-  after(() => generateAndStoreCover(route.id, topic, coverPrompt, coverRefs));
 
-  console.log(`[Route] ✓ Ruta ${route.id} creada con ${lessonRows.length} lecciones. Generación en background iniciada.`);
+  console.log(`[Route] ✓ Ruta ${route.id} creada (placeholder). Síntesis y generación en background.`);
   return { routeId: route.id };
-}
-
-/** Genera una portada con IA y la sube a Storage, guardando cover_path/cover_prompt. */
-async function generateAndStoreCover(
-  routeId: string,
-  topic: string,
-  prompt: string,
-  references: Array<{ mimeType: string; data: string }> = []
-) {
-  const sb = supabaseAdmin();
-  try {
-    const img = await generateCoverImage(prompt, references);
-    if (!img) {
-      console.warn(`[Cover] Ruta ${routeId}: sin portada (generación falló).`);
-      return;
-    }
-    const coverPath = `${routeId}/cover.png`;
-    const { error } = await sb.storage.from(COVER_BUCKET).upload(coverPath, img, {
-      contentType: "image/png",
-      upsert: true,
-    });
-    if (error) {
-      console.error(`[Cover] Error subiendo portada de ${routeId}:`, error.message);
-      return;
-    }
-    await sb.from("routes").update({ cover_path: coverPath, cover_prompt: prompt }).eq("id", routeId);
-    console.log(`[Cover] ✓ Portada de ${routeId} lista.`);
-  } catch (e) {
-    console.error(`[Cover] Error generando portada de ${routeId}:`, e);
-  }
 }
 
 /** URL pública de la portada de una ruta (helper interno). */
@@ -303,19 +264,6 @@ export async function discoverSources(
   return { ok: true, sources };
 }
 
-/** Decodifica base64 (con o sin prefijo data URL) a referencia para Gemini. */
-function toCoverReference(base64?: string): Array<{ mimeType: string; data: string }> {
-  if (!base64) return [];
-  let contentType = "image/png";
-  let data = base64;
-  const m = base64.match(/^data:(image\/[a-zA-Z+]+);base64,(.*)$/);
-  if (m) {
-    contentType = m[1];
-    data = m[2];
-  }
-  if (!data) return [];
-  return [{ mimeType: contentType, data }];
-}
 
 /**
  * Pipeline completo de UNA ruta del lote: síntesis maestra → árbol + lecciones
