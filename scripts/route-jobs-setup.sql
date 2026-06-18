@@ -83,6 +83,10 @@ $$;
 -- Marca pending → generating (no debates), pone generating_at = now() e
 -- incrementa attempts. SKIP LOCKED evita que dos workers tomen la misma
 -- lección. Devuelve los node_id reclamados para que el worker los genere.
+-- IMPORTANTE: TODAS las columnas internas van calificadas con alias de tabla
+-- (s.* / l.*). Sin calificar, `order by node_id` choca con el nombre de la
+-- columna de retorno y Postgres lanza "column reference node_id is ambiguous"
+-- (lo que hacía que el worker no generara ninguna lección).
 create or replace function public.claim_route_lessons(p_route_id uuid, p_limit int)
 returns table(node_id text)
 language plpgsql
@@ -95,11 +99,11 @@ begin
       error         = null,
       attempts      = l.attempts + 1
   where l.id in (
-    select id from public.lessons
-    where route_id = p_route_id
-      and status   = 'pending'
-      and node_type <> 'debate'
-    order by node_id asc
+    select s.id from public.lessons s
+    where s.route_id  = p_route_id
+      and s.status    = 'pending'
+      and s.node_type <> 'debate'
+    order by s.node_id asc
     for update skip locked
     limit p_limit
   )
