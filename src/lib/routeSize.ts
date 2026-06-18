@@ -32,6 +32,12 @@ export interface RouteSizeSpec {
   synthesisChars: number;
   /** maxOutputTokens del JSON del study pack (escala con el tamaño). */
   maxOutputTokens: number;
+  /**
+   * Presupuesto de caracteres de TEXTO de fuentes que entra al prompt de la
+   * síntesis. Si el material extraído lo supera, se recorta proporcionalmente
+   * (~4 chars ≈ 1 token; 120k chars ≈ 30k tokens, bien bajo el límite de Gemini).
+   */
+  sourceCharBudget: number;
 }
 
 /** Targets de estructura del árbol por tamaño (mediana ≈ 2×, completa ≈ 3×). */
@@ -48,6 +54,7 @@ export const ROUTE_SIZE_SPEC: Record<RouteSize, RouteSizeSpec> = {
     nodesMax: 10,
     synthesisChars: 5000,
     maxOutputTokens: 8192,
+    sourceCharBudget: 160_000,
   },
   medium: {
     size: "medium",
@@ -61,6 +68,7 @@ export const ROUTE_SIZE_SPEC: Record<RouteSize, RouteSizeSpec> = {
     nodesMax: 20,
     synthesisChars: 10000,
     maxOutputTokens: 24000,
+    sourceCharBudget: 360_000,
   },
   full: {
     size: "full",
@@ -74,6 +82,7 @@ export const ROUTE_SIZE_SPEC: Record<RouteSize, RouteSizeSpec> = {
     nodesMax: 32,
     synthesisChars: 15000,
     maxOutputTokens: 48000,
+    sourceCharBudget: 640_000,
   },
 };
 

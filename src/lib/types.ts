@@ -46,6 +46,8 @@ export interface Tree {
 export interface StudyPack {
   sintesis: Sintesis;
   tree: Tree;
+  /** Aviso legible si las fuentes se recortaron por exceder el presupuesto. */
+  sourceNotice?: string;
 }
 
 // ── Pasos de microlección ──
@@ -435,6 +437,8 @@ export interface RouteDetail {
   explorerRank: number;
   /** % de ESTA ruta completado por el usuario (0-100). */
   myCompletionPct: number;
+  /** Aviso/error de generación: en `error` = motivo; en `ready` = aviso de recorte. */
+  genNotice: string | null;
 }
 
 export interface LessonData {

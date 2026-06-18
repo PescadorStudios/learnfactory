@@ -10,6 +10,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as cheerio from "cheerio";
+import { extractText, getDocumentProxy } from "unpdf";
 import type {
   Sintesis,
   Tree,
@@ -63,6 +64,13 @@ function releaseTtsSlot(): void {
 // de generación continúa con la siguiente lección en vez de quedar bloqueado.
 const TEXT_TIMEOUT_MS = 90_000;   // generación de texto/JSON
 const TTS_TIMEOUT_MS = 180_000;   // síntesis de ~3 min de audio (más lenta)
+
+// ── Ingesta de fuentes (robustez a escala) ──
+const SOURCE_CONCURRENCY = 3;          // descargas/extracciones en paralelo
+const DRIVE_MAX_BYTES = 40 * 1024 * 1024; // 40 MB por archivo de Drive
+const DRIVE_TIMEOUT_MS = 60_000;       // timeout de descarga por archivo
+const PDF_MIN_TEXT_CHARS = 400;        // menos que esto ⇒ PDF escaneado/sin texto
+const SCANNED_FALLBACK_MAX = 2;        // máx PDFs escaneados que van a la File API
 
 // ──────────────────────────────────────────────────
 //  HELPERS
@@ -491,14 +499,155 @@ async function generateCoverImageOnce(
 interface ProcessedSources {
   textContext: string;
   files: Array<{ mimeType: string; uri: string }>;
+  /** Aviso legible si se recortó/omitió material (o null si todo entró). */
+  notice?: string;
+  /** El usuario aportó al menos una fuente (sourcesStr no vacío). */
+  hadUserSources: boolean;
+  /** Se obtuvo contenido real (texto extraído o archivo subido). */
+  anyContent: boolean;
+}
+
+type SourcePiece =
+  | { kind: "text"; name: string; text: string }
+  | { kind: "scanned"; name: string; fileId: string; buffer: Buffer }
+  | { kind: "failed"; name: string };
+
+/** Ejecuta `fn` sobre `items` con concurrencia máxima `limit`. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, worker));
+  return results;
+}
+
+/** Toma un span representativo de un texto largo: cabeza + muestreo del resto. */
+function representativeSpan(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const headLen = Math.floor(cap * 0.6);
+  const head = text.slice(0, headLen);
+  const rest = text.slice(headLen);
+  const remaining = cap - headLen;
+  const blocks = 4;
+  const blockLen = Math.floor(remaining / blocks);
+  let sampled = "";
+  for (let b = 0; b < blocks; b++) {
+    const start = Math.floor((rest.length / blocks) * b);
+    sampled += rest.slice(start, start + blockLen) + "\n…\n";
+  }
+  return head + "\n…\n" + sampled;
+}
+
+async function processOneSource(source: string): Promise<SourcePiece> {
+  const sourceType = detectSourceType(source);
+  try {
+    switch (sourceType) {
+      case "drive": {
+        const fileId = extractDriveId(source);
+        if (!fileId) return { kind: "failed", name: source };
+        const buffer = await downloadFromDrive(fileId);
+        if (!buffer) return { kind: "failed", name: source };
+        const text = await extractPdfText(buffer);
+        if (text.length >= PDF_MIN_TEXT_CHARS) {
+          console.log(`[Drive] ✓ Texto extraído localmente (${fileId}): ${text.length} chars`);
+          return { kind: "text", name: source, text: `\n--- DOCUMENTO (${source}) ---\n${text}\n---\n` };
+        }
+        // Sin texto utilizable → probablemente escaneado: candidato a File API.
+        return { kind: "scanned", name: source, fileId, buffer };
+      }
+      case "youtube": {
+        const videoId = extractYoutubeId(source);
+        if (!videoId) return { kind: "failed", name: source };
+        return { kind: "text", name: source, text: await getYoutubeContext(videoId) };
+      }
+      case "web": {
+        return { kind: "text", name: source, text: await scrapeWebPage(source) };
+      }
+      default:
+        return { kind: "text", name: source, text: `\nReferencia del usuario: ${source}\n` };
+    }
+  } catch (e) {
+    console.error(`[processSources] Error procesando "${source}":`, e);
+    return { kind: "failed", name: source };
+  }
+}
+
+export async function processSources(sourcesStr: string, budget: number): Promise<ProcessedSources> {
+  const sources = (sourcesStr || "").split(",").map(s => s.trim()).filter(Boolean);
+  const base: ProcessedSources = { textContext: "", files: [], hadUserSources: sources.length > 0, anyContent: false };
+  if (sources.length === 0 || !apiKey) return base;
+
+  // 1) Descargar + extraer todas las fuentes en paralelo (acotado).
+  const pieces = await mapLimit(sources, SOURCE_CONCURRENCY, processOneSource);
+
+  const textPieces = pieces.filter((p): p is Extract<SourcePiece, { kind: "text" }> => p.kind === "text");
+  const scanned = pieces.filter((p): p is Extract<SourcePiece, { kind: "scanned" }> => p.kind === "scanned");
+  const failed = pieces.filter(p => p.kind === "failed").map(p => p.name);
+
+  // 2) PDFs escaneados (sin texto): subir hasta N a la File API; el resto se omite.
+  const files: Array<{ mimeType: string; uri: string }> = [];
+  const skippedScanned: string[] = [];
+  for (const s of scanned) {
+    if (!fileManager || files.length >= SCANNED_FALLBACK_MAX) { skippedScanned.push(s.name); continue; }
+    const tempFilePath = path.join(os.tmpdir(), `learnfactory_drive_${s.fileId}.pdf`);
+    try {
+      fs.writeFileSync(tempFilePath, s.buffer);
+      console.log(`[Drive] PDF sin texto (${s.fileId}) → File API (fallback OCR)...`);
+      const up = await fileManager.uploadFile(tempFilePath, { mimeType: "application/pdf", displayName: `Drive_${s.fileId}.pdf` });
+      await waitForFileProcessing(up.file.name);
+      files.push({ mimeType: up.file.mimeType, uri: up.file.uri });
+    } catch (e) {
+      console.error(`[Drive] Fallback File API falló (${s.fileId}):`, e);
+      skippedScanned.push(s.name);
+    } finally {
+      try { fs.unlinkSync(tempFilePath); } catch {}
+    }
+  }
+
+  // 3) Presupuesto: recortar el texto combinado proporcionalmente si excede.
+  const totalChars = textPieces.reduce((sum, p) => sum + p.text.length, 0);
+  let combined: string;
+  let trimmedNote: string | undefined;
+  if (totalChars <= budget) {
+    combined = textPieces.map(p => p.text).join("\n");
+  } else {
+    combined = textPieces.map(p => {
+      const cap = Math.max(2000, Math.floor(budget * (p.text.length / totalChars)));
+      return p.text.length > cap ? representativeSpan(p.text, cap) : p.text;
+    }).join("\n");
+    const totalWords = Math.round(totalChars / 6).toLocaleString("es");
+    const usedWords = Math.round(combined.length / 6).toLocaleString("es");
+    trimmedNote = `Tu material era muy extenso (~${totalWords} palabras): usé ~${usedWords} para construir la ruta. Para cubrir todo, divídelo en varias rutas o elige el tamaño "Completa".`;
+  }
+
+  // 4) Aviso combinado (recorte + escaneados omitidos + fuentes ilegibles).
+  const notes: string[] = [];
+  if (trimmedNote) notes.push(trimmedNote);
+  if (skippedScanned.length) notes.push(`${skippedScanned.length} PDF(s) sin texto seleccionable no se incluyeron (parecen escaneados).`);
+  if (failed.length) notes.push(`No se pudo leer ${failed.length} fuente(s) (¿el enlace de Drive es público?).`);
+
+  return {
+    textContext: combined,
+    files,
+    notice: notes.length ? notes.join(" ") : undefined,
+    hadUserSources: true,
+    anyContent: combined.trim().length > 0 || files.length > 0,
+  };
 }
 
 async function downloadFromDrive(fileId: string): Promise<Buffer | null> {
+  const fetchDrive = (url: string) =>
+    fetch(url, { redirect: "follow", signal: AbortSignal.timeout(DRIVE_TIMEOUT_MS) });
   try {
     const directUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
     console.log(`[Drive] Intentando descarga directa: ${fileId}`);
 
-    let res = await fetch(directUrl, { redirect: "follow" });
+    let res = await fetchDrive(directUrl);
 
     if (!res.ok) {
       console.warn(`[Drive] Descarga directa falló (${res.status}). ¿El archivo es público?`);
@@ -509,8 +658,7 @@ async function downloadFromDrive(fileId: string): Promise<Buffer | null> {
 
     if (contentType.includes("text/html")) {
       console.log("[Drive] Recibida página de confirmación. Intentando con confirm=t...");
-      const confirmUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
-      res = await fetch(confirmUrl, { redirect: "follow" });
+      res = await fetchDrive(`https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`);
 
       if (!res.ok) {
         console.warn(`[Drive] Descarga con confirmación también falló (${res.status}).`);
@@ -524,12 +672,36 @@ async function downloadFromDrive(fileId: string): Promise<Buffer | null> {
       }
     }
 
+    // Tope de tamaño: evita meter en memoria un archivo gigantesco.
+    const declared = Number(res.headers.get("content-length") || 0);
+    if (declared && declared > DRIVE_MAX_BYTES) {
+      console.warn(`[Drive] Archivo ${fileId} demasiado grande (${(declared / 1024 / 1024).toFixed(0)} MB > ${DRIVE_MAX_BYTES / 1024 / 1024} MB). Se omite.`);
+      return null;
+    }
+
     const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.length > DRIVE_MAX_BYTES) {
+      console.warn(`[Drive] Archivo ${fileId} excede el tope tras descargar (${(buffer.length / 1024 / 1024).toFixed(0)} MB). Se omite.`);
+      return null;
+    }
     console.log(`[Drive] Descargado exitosamente: ${(buffer.length / 1024 / 1024).toFixed(2)} MB`);
     return buffer;
   } catch (error) {
     console.error("[Drive] Error descargando archivo:", error);
     return null;
+  }
+}
+
+/** Extrae el texto de un PDF localmente (unpdf/pdfjs). "" si no tiene texto (escaneado). */
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  try {
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const { text } = await extractText(pdf, { mergePages: true });
+    const merged = Array.isArray(text) ? text.join("\n") : text;
+    return merged.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  } catch (e) {
+    console.error("[PDF] Error extrayendo texto:", e);
+    return "";
   }
 }
 
@@ -613,89 +785,6 @@ async function scrapeWebPage(url: string): Promise<string> {
   }
 }
 
-export async function processSources(sourcesStr: string): Promise<ProcessedSources> {
-  const emptyResult: ProcessedSources = { textContext: "", files: [] };
-
-  if (!sourcesStr || !apiKey) return emptyResult;
-
-  const sources = sourcesStr.split(",").map(s => s.trim()).filter(Boolean);
-  let combinedContext = "";
-  const geminiFiles: Array<{ mimeType: string; uri: string }> = [];
-
-  for (const source of sources) {
-    const sourceType = detectSourceType(source);
-
-    try {
-      switch (sourceType) {
-        case "drive": {
-          const fileId = extractDriveId(source);
-          if (!fileId) {
-            console.warn("[Drive] No se pudo extraer ID de:", source);
-            combinedContext += `\nReferencia (Drive no reconocido): ${source}\n`;
-            break;
-          }
-
-          if (!fileManager) {
-            console.warn("[Drive] No hay FileManager disponible.");
-            break;
-          }
-
-          const buffer = await downloadFromDrive(fileId);
-          if (!buffer) {
-            combinedContext += `\nReferencia (Drive inaccesible): ${source}\n`;
-            break;
-          }
-
-          const tempFilePath = path.join(os.tmpdir(), `learnfactory_drive_${fileId}.pdf`);
-          fs.writeFileSync(tempFilePath, buffer);
-
-          console.log(`[Drive] Subiendo a Gemini File API...`);
-          const uploadResult = await fileManager.uploadFile(tempFilePath, {
-            mimeType: "application/pdf",
-            displayName: `Drive_${fileId}.pdf`,
-          });
-
-          await waitForFileProcessing(uploadResult.file.name);
-
-          geminiFiles.push({
-            mimeType: uploadResult.file.mimeType,
-            uri: uploadResult.file.uri,
-          });
-          console.log(`[Drive] ✓ Archivo listo en Gemini: ${uploadResult.file.uri}`);
-
-          try { fs.unlinkSync(tempFilePath); } catch {}
-          break;
-        }
-
-        case "youtube": {
-          const videoId = extractYoutubeId(source);
-          if (videoId) {
-            const context = await getYoutubeContext(videoId);
-            combinedContext += context;
-          } else {
-            combinedContext += `\nReferencia (YouTube no reconocido): ${source}\n`;
-          }
-          break;
-        }
-
-        case "web": {
-          const webContent = await scrapeWebPage(source);
-          combinedContext += webContent;
-          break;
-        }
-
-        default: {
-          combinedContext += `\nReferencia del usuario: ${source}\n`;
-        }
-      }
-    } catch (e) {
-      console.error(`[processSources] Error procesando "${source}":`, e);
-      combinedContext += `\nReferencia (error): ${source}\n`;
-    }
-  }
-
-  return { textContext: combinedContext, files: geminiFiles };
-}
 
 // ──────────────────────────────────────────────────
 //  STUDY PACK (Síntesis Maestra + Árbol)
@@ -715,7 +804,13 @@ export async function generateStudyPack(
   const spec = specFor(size);
   try {
     const model = getJsonModel(spec.maxOutputTokens);
-    const processed = await processSources(sourcesStr);
+    const processed = await processSources(sourcesStr, spec.sourceCharBudget);
+
+    // El usuario dio fuentes pero no se pudo leer NADA: no inventamos una ruta
+    // genérica. Error claro para que lo corrija (enlaces públicos, etc.).
+    if (processed.hadUserSources && !processed.anyContent) {
+      throw new Error("No pudimos leer tus fuentes. Revisa que los enlaces de Google Drive sean públicos ('cualquier persona con el enlace') y vuelve a intentar.");
+    }
 
     let sourceInstruction = "";
     if (processed.textContext) {
@@ -793,18 +888,36 @@ SOLO devuelve el JSON, sin formato markdown ni texto adicional:
     console.log(`[StudyPack] Generando ruta "${size}" con ${processed.files.length} archivo(s) y ${processed.textContext.length} chars de contexto...`);
     // Rutas más grandes generan más JSON: escalamos el timeout (corta = 90s).
     const studyPackTimeout = Math.round(TEXT_TIMEOUT_MS * (1 + (creditsFor(size) - 1) * 0.6));
-    const result = await withTimeout(model.generateContent(parts), studyPackTimeout, "Generación de la síntesis maestra");
-    const parsed = parseJsonResponse(result.response.text());
 
-    if (!parsed?.sintesis?.conceptos?.length || !parsed?.tree?.levels?.length) {
-      throw new Error("Respuesta incompleta: falta sintesis o tree.");
+    // Reintento transitorio (429/503/timeout): hasta 2 intentos con backoff.
+    let parsed: { sintesis?: { conceptos?: unknown[] }; tree?: { levels?: unknown[] } } | null = null;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = await withTimeout(model.generateContent(parts), studyPackTimeout, "Generación de la síntesis maestra");
+        const candidate = parseJsonResponse(result.response.text());
+        if (!candidate?.sintesis?.conceptos?.length || !candidate?.tree?.levels?.length) {
+          throw new Error("Respuesta incompleta: falta sintesis o tree.");
+        }
+        parsed = candidate;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.error(`[StudyPack] Intento ${attempt}/2 falló:`, e);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 6000));
+      }
+    }
+    if (!parsed) {
+      throw lastErr instanceof Error ? lastErr : new Error("La IA no pudo generar la síntesis. Reintenta en un momento.");
     }
 
-    console.log(`[StudyPack] ✓ Síntesis con ${parsed.sintesis.conceptos.length} conceptos, árbol con ${parsed.tree.levels.length} niveles`);
-    return parsed as StudyPack;
+    console.log(`[StudyPack] ✓ Síntesis con ${parsed.sintesis!.conceptos!.length} conceptos, árbol con ${parsed.tree!.levels!.length} niveles`);
+    return { ...(parsed as unknown as StudyPack), sourceNotice: processed.notice };
   } catch (error) {
+    // Con API key, NO devolvemos un mock genérico: propagamos el error para que
+    // el worker marque la ruta en 'error' con un motivo claro (nunca "ruta vacía").
     console.error("[StudyPack] Error:", error);
-    return generateMockStudyPack(topic);
+    throw error instanceof Error ? error : new Error("No se pudo generar la síntesis.");
   }
 }
 

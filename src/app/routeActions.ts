@@ -114,6 +114,13 @@ export async function createRoute(
   const user = await getUserFromToken(token);
   if (!user) return { error: "Sesión inválida" };
 
+  // Guarda barata e instantánea: demasiadas fuentes. El control real de tamaño
+  // (recorte al presupuesto) lo hace el worker tras extraer el texto.
+  const sourceCount = (sourcesStr || "").split(",").map(s => s.trim()).filter(Boolean).length;
+  if (sourceCount > 25) {
+    return { error: "Demasiadas fuentes (máximo 25). Junta el material en menos archivos o crea varias rutas." };
+  }
+
   const sb = supabaseAdmin();
   await sb.from("profiles").upsert({ id: user.id, email: user.email }, { onConflict: "id", ignoreDuplicates: true });
 
@@ -616,7 +623,7 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
   const sb = supabaseAdmin();
   const { data: route } = await sb
     .from("routes")
-    .select("id, topic, status, sintesis, tree, owner_id, visibility, blocked, cover_path, description")
+    .select("id, topic, status, sintesis, tree, owner_id, visibility, blocked, cover_path, description, gen_notice")
     .eq("id", routeId)
     .single();
   // Acceso: dueño siempre; cualquiera si la ruta es pública. Si está fuera del
@@ -699,6 +706,7 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
     isOwner,
     explorerRank: myRank,
     myCompletionPct,
+    genNotice: (route as { gen_notice?: string | null }).gen_notice ?? null,
   };
 }
 

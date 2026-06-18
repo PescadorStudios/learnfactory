@@ -99,14 +99,21 @@ export async function prepareRoute(routeId: string): Promise<{ ok: true; data: P
   const needsSynthesis = !tree?.levels || tree.levels.length === 0;
   if (needsSynthesis) {
     console.log(`[RouteGen] Síntesis maestra de la ruta ${routeId}...`);
-    const pack = await generateStudyPack(route.topic, route.sources || "", normalizeSize(route.size));
+    let pack;
+    try {
+      pack = await generateStudyPack(route.topic, route.sources || "", normalizeSize(route.size));
+    } catch (e) {
+      // Fallo de fuentes/IA: error claro y terminal (NO ruta vacía genérica).
+      return { ok: false, error: e instanceof Error ? e.message : "No se pudo generar la síntesis." };
+    }
     if (!pack?.tree?.levels?.length) {
       return { ok: false, error: "La síntesis no produjo un árbol válido." };
     }
     sintesis = pack.sintesis;
     tree = pack.tree;
     const description = (pack.sintesis?.tesisGlobal || "").slice(0, 280) || null;
-    await sb.from("routes").update({ sintesis, tree, description }).eq("id", routeId);
+    // gen_notice = aviso de recorte si las fuentes excedían el presupuesto.
+    await sb.from("routes").update({ sintesis, tree, description, gen_notice: pack.sourceNotice ?? null }).eq("id", routeId);
 
     // Portada: prompt del usuario o uno base con la tesis ya disponible.
     const coverPrompt = route.cover_prompt?.trim() || buildCoverPrompt(route.topic, pack.sintesis?.tesisGlobal);

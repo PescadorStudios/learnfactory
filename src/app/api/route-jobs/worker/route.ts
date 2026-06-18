@@ -94,7 +94,9 @@ async function runJob(sb: SupabaseClient, job: JobRow, startedAt: number) {
   // aquí, no en el request, así createRoute responde al instante.
   const prep = await prepareRoute(routeId);
   if (!prep.ok) {
-    await sb.from("routes").update({ status: "error" }).eq("id", routeId);
+    // Síntesis falló (fuentes ilegibles, IA caída): error visible + devolver el
+    // crédito (credits=0) para no cobrar una creación fallida.
+    await sb.from("routes").update({ status: "error", gen_notice: prep.error, credits: 0 }).eq("id", routeId);
     await sb.from("route_jobs").update({
       status: "error", lease_until: null, last_error: prep.error, updated_at: new Date().toISOString(),
     }).eq("id", job.id);

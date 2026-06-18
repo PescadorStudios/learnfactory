@@ -46,6 +46,11 @@ alter table public.lessons add column if not exists attempts int not null defaul
 -- Se limpia (null) una vez generada la portada.
 alter table public.routes add column if not exists cover_reference text;
 
+-- Aviso/error de generación visible para el usuario. Doble uso según `status`:
+--   status='error'  → motivo del fallo (fuentes ilegibles, IA caída, etc.)
+--   status='ready'  → aviso de recorte (el material era muy extenso)
+alter table public.routes add column if not exists gen_notice text;
+
 -- ── RLS: solo el service role escribe; el dueño puede consultar su job ───────
 alter table public.route_jobs enable row level security;
 drop policy if exists route_jobs_owner_read on public.route_jobs;

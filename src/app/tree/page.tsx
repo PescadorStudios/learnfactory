@@ -130,6 +130,32 @@ function KnowledgeTree() {
   }
   if (!route) return <TreeLoading />;
 
+  // La síntesis falló (fuentes ilegibles, demasiado contenido, IA caída): mostrar
+  // el motivo (gen_notice) en vez de una ruta vacía. El crédito ya fue devuelto.
+  if (route.tree.levels.length === 0 && route.status === "error") {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-6 text-center">
+        <AlertTriangle className="w-12 h-12 text-rose-500 mb-4" />
+        <h2 className="text-2xl font-bold mb-2">No se pudo crear la ruta</h2>
+        <p className="text-zinc-400 max-w-md mb-6">
+          {route.genNotice || "Hubo un problema al procesar tus fuentes. No se te cobró el crédito."}
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={async () => { if (!token) return; setResuming(true); await resumeRoute(token, routeId); await load(); setResuming(false); }}
+            disabled={resuming}
+            className="px-6 py-3 rounded-2xl font-bold bg-primary text-white hover:bg-primary-hover transition-all disabled:opacity-60 flex items-center gap-2">
+            {resuming ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Reintentar
+          </button>
+          <button onClick={() => router.push("/")}
+            className="px-6 py-3 rounded-2xl font-bold bg-zinc-800 text-white hover:bg-zinc-700 transition-all">
+            Volver al inicio
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Síntesis en curso: la ruta nació con árbol vacío y el worker la está armando.
   // (load() sigue sondeando porque route.status === "generating".)
   if (route.tree.levels.length === 0) {
@@ -259,6 +285,17 @@ function KnowledgeTree() {
           >
             Ruta de <span className="text-primary">{route.topic}</span>
           </motion.h1>
+
+          {route.genNotice && route.status !== "error" && (
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="text-zinc-400 text-xs sm:text-sm mb-4 flex items-start justify-center gap-2 max-w-xl mx-auto"
+            >
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{route.genNotice}</span>
+            </motion.p>
+          )}
 
           {stillGenerating > 0 && !showResume && (
             <motion.p
