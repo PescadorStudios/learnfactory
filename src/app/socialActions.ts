@@ -394,6 +394,24 @@ export async function getLandingLibrary(): Promise<LibrarySection[]> {
   return buildLibrarySections();
 }
 
+/** Tarjeta pública de UNA ruta por id (sin sesión) — para incrustar una ruta
+ *  de muestra en una landing con su portada tal cual aparece en la home.
+ *  Devuelve null si no existe, no es pública o está bloqueada. */
+export async function getPublicRouteCard(routeId: string): Promise<RouteCard | null> {
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from("routes")
+    .select(ROUTE_CARD_COLS)
+    .eq("id", routeId)
+    .eq("visibility", "public")
+    .eq("blocked", false)
+    .maybeSingle();
+  if (!data) return null;
+  const row = data as RouteRow;
+  const creators = await fetchCreators([row.owner_id]);
+  return toRouteCard(row, creators.get(row.owner_id));
+}
+
 export async function searchPublicRoutes(token: string, q: string): Promise<RouteCard[]> {
   await getUserFromToken(token);
   const term = q.trim();
