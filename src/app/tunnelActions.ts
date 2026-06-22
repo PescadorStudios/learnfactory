@@ -13,7 +13,7 @@
 import { synthesizeSpeech } from "@/lib/generation";
 import { getMyRoutes, getRoute, getRouteAudioStations, type RouteAudioStation } from "./routeActions";
 import { getLibrary } from "./socialActions";
-import { categoryLabel } from "@/lib/types";
+import { categoryLabel, ROUTE_CATEGORIES } from "@/lib/types";
 import type { Sintesis } from "@/lib/types";
 import type {
   AudioLessonChallenge,
@@ -73,7 +73,7 @@ const LF_PREFIX = "route:"; // prefijo del id de lección real (vs. ids del demo
 const SEG_SECS = 4.4; // cadencia de subtítulos (las definiciones son más largas)
 const MAX_LINE = 150; // recorte por frase: natural al narrar y bajo MAX_TTS_CHARS
 const MAX_PODS = 24; // tope de estaciones SINTETIZADAS (fallback); los audios reales no se recortan
-const MAX_CATALOG = 24; // tarjetas en el lobby (mías + biblioteca, deduplicadas)
+const MAX_CATALOG = 60; // tope de tarjetas en el lobby (mías + biblioteca, deduplicadas)
 
 /** Concepto normalizado para sintetizar retos. */
 interface Fact {
@@ -273,34 +273,74 @@ export async function getTunnelCatalog(token: string): Promise<LessonSummary[]> 
     getLibrary(token).catch(() => []),
   ]);
 
-  const byId = new Map<string, LessonSummary>();
-  const add = (
-    routeId: string,
-    topic: string,
-    category: string,
-    description: string | null,
-    estPods: number
-  ) => {
-    if (byId.has(routeId) || byId.size >= MAX_CATALOG) return;
-    byId.set(routeId, {
-      id: `${LF_PREFIX}${category}:${routeId}`,
-      title: topic,
-      niche: categoryLabel(category),
-      blurb: clip(description || "Una ruta de Learn Factory, ahora como viaje.", 90),
-      estPods,
-    });
+  // Candidatos agrupados por categoría, deduplicados por id (conservando la
+  // versión más rica: "mis rutas" traen estaciones reales, así que van primero).
+  interface Cand {
+    id: string;
+    topic: string;
+    category: string;
+    description: string | null;
+    estPods: number;
+  }
+  const seen = new Set<string>();
+  const byCat = new Map<string, Cand[]>();
+  const push = (c: Cand) => {
+    if (seen.has(c.id)) return;
+    seen.add(c.id);
+    const arr = byCat.get(c.category) ?? [];
+    arr.push(c);
+    byCat.set(c.category, arr);
   };
 
   // Mis rutas primero (pocas, relevantes) — solo las listas y con nodos.
   for (const r of mine) {
     if (r.status !== "ready" || r.totalNodes <= 0) continue;
-    add(r.id, r.topic, r.category, r.description, clampPods(Math.round(r.totalNodes / 2)));
+    push({
+      id: r.id,
+      topic: r.topic,
+      category: r.category,
+      description: r.description,
+      estPods: clampPods(Math.round(r.totalNodes / 2)),
+    });
   }
-  // Luego rellena con la biblioteca pública hasta el tope.
+  // Luego la biblioteca pública.
   for (const sec of sections) {
-    for (const c of sec.routes) add(c.id, c.topic, c.category, c.description, 4);
+    for (const c of sec.routes) {
+      push({ id: c.id, topic: c.topic, category: c.category, description: c.description, estPods: 4 });
+    }
   }
-  return [...byId.values()];
+
+  // Reparto JUSTO: ronda por categorías (orden fijo de ROUTE_CATEGORIES, las
+  // desconocidas al final) tomando una ruta de cada una por vuelta. Así el tope
+  // global nunca deja a una categoría fuera por recencia — antes, con 24 rutas
+  // de tope llenadas por fecha, las rutas más antiguas de una categoría (p. ej.
+  // teología) caían del catálogo aunque estuvieran públicas y listas.
+  const order: string[] = ROUTE_CATEGORIES.map(c => c.id).filter(id => byCat.has(id));
+  for (const k of byCat.keys()) if (!order.includes(k)) order.push(k);
+  const cursor = new Map(order.map(k => [k, 0]));
+
+  const out: LessonSummary[] = [];
+  let progressed = true;
+  while (out.length < MAX_CATALOG && progressed) {
+    progressed = false;
+    for (const cat of order) {
+      if (out.length >= MAX_CATALOG) break;
+      const arr = byCat.get(cat)!;
+      const i = cursor.get(cat)!;
+      if (i >= arr.length) continue;
+      cursor.set(cat, i + 1);
+      progressed = true;
+      const c = arr[i];
+      out.push({
+        id: `${LF_PREFIX}${c.category}:${c.id}`,
+        title: c.topic,
+        niche: categoryLabel(c.category),
+        blurb: clip(c.description || "Una ruta de Learn Factory, ahora como viaje.", 90),
+        estPods: c.estPods,
+      });
+    }
+  }
+  return out;
 }
 
 /**
