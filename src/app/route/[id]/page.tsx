@@ -9,6 +9,7 @@ import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility, updateR
 import { setRouteCategory, deleteRoute } from "@/app/routeActions";
 import { ROUTE_CATEGORIES, categoryLabel, type RouteLanding, type RouteStudent } from "@/lib/types";
 import { explorerRank, creatorRank as creatorRankOf } from "@/lib/reputation";
+import { trackMeta } from "@/lib/meta/pixel";
 import AppHeader from "@/components/AppHeader";
 import StarRating from "@/components/StarRating";
 import CoverEditor from "@/components/CoverEditor";
@@ -71,6 +72,13 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
 
   const handleStudy = () => {
     const dest = `/tree?route=${id}`;
+    // Evento de funnel: clic en "Estudiar" (intención). El usuario puede ser
+    // anónimo (llega del anuncio) → el match se hace con fbp/fbc/IP/UA.
+    trackMeta("Lead", {
+      email: session?.user?.email,
+      externalId: session?.user?.id,
+      customData: { content_name: data?.topic, content_ids: [id], content_type: "route" },
+    });
     if (!session) { requireLogin(dest); return; }
     router.push(dest);
   };

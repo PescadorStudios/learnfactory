@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Outfit } from "next/font/google";
 import "./globals.css";
+import MetaPixel from "@/components/MetaPixel";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -49,6 +50,7 @@ export default function RootLayout({
       <body
         className={`${outfit.variable} font-sans antialiased bg-zinc-950 text-zinc-50`}
       >
+        <MetaPixel />
         {children}
       </body>
     </html>

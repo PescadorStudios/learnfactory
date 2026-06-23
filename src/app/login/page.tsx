@@ -7,6 +7,7 @@ import { Loader2, LogIn, UserPlus } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/useAuth";
 import { registerUser } from "../routeActions";
+import { trackMeta } from "@/lib/meta/pixel";
 import { Logo } from "@/components/Logo";
 
 function LoginContent() {
@@ -81,7 +82,7 @@ function LoginContent() {
         }
       }
 
-      const { error: signInErr } = await sb.auth.signInWithPassword({
+      const { data: signInData, error: signInErr } = await sb.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
@@ -89,6 +90,15 @@ function LoginContent() {
         setError(mode === "signin" ? "Correo o contraseña incorrectos." : signInErr.message);
         setBusy(false);
         return;
+      }
+      // Evento de CONVERSIÓN: cuenta creada. Pixel + CAPI deduplicados, con
+      // email + external_id hasheados server-side para máximo match quality.
+      if (mode === "signup") {
+        trackMeta("CompleteRegistration", {
+          email: email.trim(),
+          externalId: signInData.user?.id,
+          customData: { content_name: "registro" },
+        });
       }
       router.push(next);
     } catch {
