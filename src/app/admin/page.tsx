@@ -265,24 +265,31 @@ export default function AdminPage() {
                   animate={{ opacity: 1, y: 0 }}
                   className="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-4 flex items-center gap-4"
                 >
-                  <div className="w-11 h-11 rounded-full overflow-hidden bg-zinc-800 flex items-center justify-center shrink-0">
-                    {u.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={u.avatarUrl} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <UserIcon className="w-5 h-5 text-zinc-500" />
-                    )}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white truncate">{u.displayName || (u.username ? `@${u.username}` : u.email)}</span>
-                      {u.plan === "premium" && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                      {u.role === "admin" && <span className="text-[10px] uppercase font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0">admin</span>}
+                  {/* Entrar al perfil: ver exactamente qué ha estudiado el usuario */}
+                  <button
+                    onClick={() => router.push(`/admin/user/${u.id}`)}
+                    title="Ver qué ha estudiado"
+                    className="flex items-center gap-4 flex-1 min-w-0 text-left group"
+                  >
+                    <div className="w-11 h-11 rounded-full overflow-hidden bg-zinc-800 flex items-center justify-center shrink-0 group-hover:ring-2 group-hover:ring-primary/50 transition-all">
+                      {u.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={u.avatarUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <UserIcon className="w-5 h-5 text-zinc-500" />
+                      )}
                     </div>
-                    <p className="text-xs text-zinc-500 truncate">{u.email}</p>
-                    <p className="text-xs text-zinc-600 mt-0.5">{u.routesUsed} rutas creadas · cuota actual {u.routeQuota}</p>
-                  </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white truncate group-hover:text-primary transition-colors">{u.displayName || (u.username ? `@${u.username}` : u.email)}</span>
+                        {u.plan === "premium" && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                        {u.role === "admin" && <span className="text-[10px] uppercase font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0">admin</span>}
+                      </div>
+                      <p className="text-xs text-zinc-500 truncate">{u.email}</p>
+                      <p className="text-xs text-zinc-600 mt-0.5">{u.routesUsed} rutas creadas · cuota actual {u.routeQuota}</p>
+                    </div>
+                  </button>
 
                   {/* Toggle de creación en lote (exclusiva, manual por usuario) */}
                   <button

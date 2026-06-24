@@ -600,6 +600,34 @@ export async function getMyRoutes(token: string): Promise<RouteSummary[]> {
   });
 }
 
+/**
+ * Marca que el usuario COMENZÓ a estudiar una ruta (matrícula implícita), aunque
+ * todavía no haya completado ni la primera lección. Se llama al abrir el árbol.
+ * Idempotente: una sola fila por (usuario, ruta). El dueño NO se registra como
+ * estudiante de su propia ruta, y solo cuentan rutas accesibles (públicas o
+ * propias, no bloqueadas) — coherente con getRoute.
+ */
+export async function markRouteStarted(token: string, routeId: string): Promise<{ ok: boolean }> {
+  const user = await getUserFromToken(token);
+  if (!user || !routeId) return { ok: false };
+
+  const sb = supabaseAdmin();
+  const { data: route } = await sb
+    .from("routes")
+    .select("owner_id, visibility, blocked")
+    .eq("id", routeId)
+    .maybeSingle();
+  if (!route || route.blocked) return { ok: false };
+  if (route.owner_id === user.id) return { ok: true }; // el dueño no es su propio estudiante
+  if (route.visibility !== "public") return { ok: false };
+
+  // onConflict do nothing: si ya estaba registrado, no se altera started_at.
+  const { error } = await sb
+    .from("route_starts")
+    .upsert({ user_id: user.id, route_id: routeId }, { onConflict: "user_id,route_id", ignoreDuplicates: true });
+  return { ok: !error };
+}
+
 /** Racha: días consecutivos (terminando hoy o ayer) con al menos un intento. */
 function computeStreak(dates: string[]): number {
   const days = new Set(dates.map(d => d.slice(0, 10)));

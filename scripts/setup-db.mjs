@@ -166,6 +166,18 @@ create table if not exists public.tutor_messages (
 create index if not exists tutor_messages_user_route_idx
   on public.tutor_messages(user_id, route_id, created_at);
 
+-- ── Inicio de estudio (matrícula implícita): el usuario abrió la ruta para
+--    estudiarla aunque aún no haya completado ni la primera lección. El dueño
+--    NO se registra como estudiante de su propia ruta. ──
+create table if not exists public.route_starts (
+  user_id    uuid not null references public.profiles(id) on delete cascade,
+  route_id   uuid not null references public.routes(id) on delete cascade,
+  started_at timestamptz not null default now(),
+  primary key (user_id, route_id)
+);
+create index if not exists route_starts_user_idx on public.route_starts(user_id, started_at desc);
+create index if not exists route_starts_route_idx on public.route_starts(route_id);
+
 -- RLS activado sin políticas: la API anónima queda bloqueada; el service role la salta.
 alter table public.profiles enable row level security;
 alter table public.routes enable row level security;
@@ -178,6 +190,7 @@ alter table public.route_ratings enable row level security;
 alter table public.payment_orders enable row level security;
 alter table public.bold_transactions enable row level security;
 alter table public.tutor_messages enable row level security;
+alter table public.route_starts enable row level security;
 
 -- ── Realtime (websockets) para el progreso de generación ──
 -- Políticas de SOLO LECTURA para usuarios autenticados: necesarias para que

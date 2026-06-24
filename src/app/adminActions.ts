@@ -111,6 +111,147 @@ export async function adminGrantRoutes(token: string, userId: string, delta: num
 }
 
 // ──────────────────────────────────────────────────
+//  Perfil de estudio de un usuario. El admin entra al perfil y ve EXACTAMENTE
+//  qué ha estudiado: todas las rutas que comenzó (incluso sin haber completado
+//  ni la primera lección) y su avance en cada una.
+// ──────────────────────────────────────────────────
+
+export interface AdminStudyRoute {
+  routeId: string;
+  topic: string;
+  coverUrl: string | null;
+  ownerName: string;
+  totalNodes: number;
+  completedNodes: number;
+  completionPct: number;
+  avgStars: number | null;
+  startedAt: string | null;       // cuándo abrió la ruta (matrícula implícita)
+  lastActivityAt: string | null;  // último intento registrado
+  status: string;                 // estado de generación de la ruta
+  blocked: boolean;
+  visibility: "public" | "private";
+}
+
+export interface AdminUserStudy {
+  user: {
+    id: string;
+    email: string;
+    username: string | null;
+    displayName: string | null;
+    avatarUrl: string | null;
+    plan: string;
+    role: string;
+    createdAt: string | null;
+    routesCompleted: number;
+    avgStars: number;
+  };
+  routes: AdminStudyRoute[];
+}
+
+export async function adminGetUserStudy(token: string, userId: string): Promise<AdminUserStudy | null> {
+  const admin = await requireAdmin(token);
+  if (!admin) return null;
+  const sb = supabaseAdmin();
+
+  const { data: profile } = await sb
+    .from("profiles")
+    .select("id, email, username, display_name, avatar_path, plan, role, created_at, routes_completed, avg_stars")
+    .eq("id", userId)
+    .single();
+  if (!profile) return null;
+
+  // Rutas comenzadas (matrícula implícita) + rutas con intentos. La unión cubre
+  // las que abrió aunque no haya hecho ni una lección.
+  const [{ data: starts }, { data: attempts }] = await Promise.all([
+    sb.from("route_starts").select("route_id, started_at").eq("user_id", userId),
+    sb.from("attempts").select("route_id, node_id, stars, passed, created_at").eq("user_id", userId),
+  ]);
+
+  const startedMap = new Map<string, string>((starts || []).map(s => [s.route_id, s.started_at]));
+  const routeIds = [...new Set([...startedMap.keys(), ...(attempts || []).map(a => a.route_id)])];
+  if (routeIds.length === 0) {
+    return {
+      user: {
+        id: profile.id, email: profile.email, username: profile.username ?? null,
+        displayName: profile.display_name ?? null,
+        avatarUrl: profile.avatar_path ? sb.storage.from(AVATAR_BUCKET).getPublicUrl(profile.avatar_path).data.publicUrl : null,
+        plan: profile.plan || "free", role: profile.role || "user", createdAt: profile.created_at ?? null,
+        routesCompleted: profile.routes_completed ?? 0, avgStars: profile.avg_stars ?? 0,
+      },
+      routes: [],
+    };
+  }
+
+  const [{ data: routes }, { data: lessons }] = await Promise.all([
+    sb.from("routes").select("id, topic, owner_id, cover_path, status, blocked, visibility").in("id", routeIds),
+    sb.from("lessons").select("route_id").in("route_id", routeIds),
+  ]);
+
+  // Nombre del creador de cada ruta
+  const ownerIds = [...new Set((routes || []).map(r => r.owner_id))];
+  const { data: owners } = await sb.from("profiles").select("id, username, display_name, email").in("id", ownerIds);
+  const ownerMap = new Map((owners || []).map(o => [o.id, o]));
+
+  // Total de lecciones por ruta
+  const totalByRoute = new Map<string, number>();
+  for (const l of lessons || []) totalByRoute.set(l.route_id, (totalByRoute.get(l.route_id) ?? 0) + 1);
+
+  // Avance del usuario por ruta: mejor estrella por nodo aprobado + última actividad
+  const bestByRouteNode = new Map<string, Map<string, number>>();
+  const lastActivity = new Map<string, string>();
+  for (const a of attempts || []) {
+    if (a.created_at && (!lastActivity.has(a.route_id) || a.created_at > lastActivity.get(a.route_id)!)) {
+      lastActivity.set(a.route_id, a.created_at);
+    }
+    if (!a.passed) continue;
+    if (!bestByRouteNode.has(a.route_id)) bestByRouteNode.set(a.route_id, new Map());
+    const nodes = bestByRouteNode.get(a.route_id)!;
+    nodes.set(a.node_id, Math.max(nodes.get(a.node_id) ?? 0, a.stars));
+  }
+
+  const result: AdminStudyRoute[] = (routes || []).map(r => {
+    const nodes = bestByRouteNode.get(r.id);
+    const completedNodes = nodes?.size ?? 0;
+    const total = totalByRoute.get(r.id) ?? 0;
+    const bests = nodes ? [...nodes.values()] : [];
+    const o = ownerMap.get(r.owner_id);
+    return {
+      routeId: r.id,
+      topic: r.topic,
+      coverUrl: r.cover_path ? sb.storage.from(COVER_BUCKET).getPublicUrl(r.cover_path).data.publicUrl : null,
+      ownerName: o?.display_name || (o?.username ? `@${o.username}` : o?.email) || "—",
+      totalNodes: total,
+      completedNodes,
+      completionPct: total > 0 ? Math.min(100, Math.round((completedNodes / total) * 100)) : 0,
+      avgStars: bests.length ? Math.round((bests.reduce((a, b) => a + b, 0) / bests.length) * 10) / 10 : null,
+      startedAt: startedMap.get(r.id) ?? null,
+      lastActivityAt: lastActivity.get(r.id) ?? null,
+      status: r.status || "ready",
+      blocked: Boolean(r.blocked),
+      visibility: r.visibility === "private" ? "private" : "public",
+    };
+  });
+
+  // Orden: actividad más reciente primero; si nunca avanzó, por fecha de inicio.
+  result.sort((a, b) => {
+    const ka = a.lastActivityAt || a.startedAt || "";
+    const kb = b.lastActivityAt || b.startedAt || "";
+    return kb.localeCompare(ka);
+  });
+
+  return {
+    user: {
+      id: profile.id, email: profile.email, username: profile.username ?? null,
+      displayName: profile.display_name ?? null,
+      avatarUrl: profile.avatar_path ? sb.storage.from(AVATAR_BUCKET).getPublicUrl(profile.avatar_path).data.publicUrl : null,
+      plan: profile.plan || "free", role: profile.role || "user", createdAt: profile.created_at ?? null,
+      routesCompleted: profile.routes_completed ?? 0, avgStars: profile.avg_stars ?? 0,
+    },
+    routes: result,
+  };
+}
+
+// ──────────────────────────────────────────────────
 //  Moderación de cursos. El admin ve TODAS las rutas (de cualquier usuario)
 //  y puede: ponerlas en privado, sacarlas del aire (blocked, reversible) o
 //  borrarlas para siempre.

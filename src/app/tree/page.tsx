@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home, Info, Wand2, X, Compass } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { useRouteRealtime } from "@/lib/useRouteRealtime";
-import { getRoute, retryLesson, resumeRoute, regenerateLesson } from "../routeActions";
+import { getRoute, retryLesson, resumeRoute, regenerateLesson, markRouteStarted } from "../routeActions";
 import type { RouteDetail, TreeNode, NodeState } from "@/lib/types";
 import { EXPLORER_RANKS } from "@/lib/reputation";
 import TutorChat from "./TutorChat";
@@ -84,6 +84,12 @@ function KnowledgeTree() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Matrícula implícita: registra que el usuario comenzó a estudiar esta ruta
+  // (aunque aún no complete ninguna lección). Idempotente; una vez por apertura.
+  useEffect(() => {
+    if (token && routeId) markRouteStarted(token, routeId);
+  }, [token, routeId]);
 
   // Websocket: cada lección del lote aparece en su placeholder al completarse
   useRouteRealtime(routeId, load);
