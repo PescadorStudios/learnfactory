@@ -230,12 +230,30 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta forma exacta:
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
+    // Mismo patrón que el resto del pipeline: JSON sin tope de maxOutputTokens.
+    // gemini-2.5-flash "piensa" antes de responder y ese razonamiento consume el
+    // presupuesto; un tope bajo dejaría el JSON vacío o truncado.
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
-      generationConfig: { responseMimeType: "application/json", maxOutputTokens: 1200 },
+      generationConfig: { responseMimeType: "application/json" },
     });
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
+
+    // Lee con cuidado: si lo bloquearon o se quedó sin tokens, text() puede lanzar.
+    const finishReason = result.response.candidates?.[0]?.finishReason;
+    const blockReason = result.response.promptFeedback?.blockReason;
+    let text = "";
+    try {
+      text = result.response.text();
+    } catch {
+      text = "";
+    }
+    if (!text.trim()) {
+      console.warn("[UserCampaigns] Gemini devolvió vacío:", { finishReason, blockReason });
+      if (blockReason) return { ok: false, error: `Gemini bloqueó el contenido (${blockReason}). Cambia el enfoque del prompt.` };
+      return { ok: false, error: "Gemini no devolvió texto. Reintenta o reformula el prompt." };
+    }
+
     let parsed: { subject?: string; body?: string };
     try {
       parsed = JSON.parse(text);
@@ -248,7 +266,8 @@ Devuelve EXCLUSIVAMENTE un objeto JSON válido con esta forma exacta:
     return { ok: true, subject, body };
   } catch (e) {
     console.warn("[UserCampaigns] Gemini falló:", e);
-    return { ok: false, error: "No se pudo generar con Gemini. Reintenta en un momento." };
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `No se pudo generar con Gemini: ${msg.slice(0, 160)}` };
   }
 }
 
