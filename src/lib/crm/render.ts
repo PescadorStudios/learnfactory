@@ -33,3 +33,27 @@ export const DEFAULT_FOLLOWUP_TEMPLATE =
 export function isValidEmail(email: string | null | undefined): boolean {
   return !!email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
 }
+
+// ── Campañas a usuarios registrados ───────────────────────────────────────────
+// Merge fields de los correos de re-enganche (invitar a terminar el curso que el
+// usuario empezó y no completó). Módulo PURO: se usa en el cliente para el
+// preview en vivo y en el servidor al enviar, igual que renderTemplate().
+
+export interface UserMergeVars {
+  nombre: string;   // nombre visible del usuario (display_name / @username / local del email)
+  curso: string;    // tema del curso que dejó a medias
+  progreso: string; // porcentaje de avance, ej. "35%"
+  enlace: string;   // URL absoluta para retomar el curso
+}
+
+/** Reemplaza {{nombre}}, {{curso}}, {{progreso}}, {{enlace}} en una plantilla. */
+export function renderUserTemplate(tpl: string, vars: UserMergeVars): string {
+  return (tpl || "")
+    .replace(/\{\{\s*nombre\s*\}\}/g, vars.nombre ?? "")
+    .replace(/\{\{\s*curso\s*\}\}/g, vars.curso ?? "")
+    .replace(/\{\{\s*progreso\s*\}\}/g, vars.progreso ?? "")
+    .replace(/\{\{\s*enlace\s*\}\}/g, vars.enlace ?? "");
+}
+
+/** Campos de merge disponibles para las campañas a usuarios (para hints en UI). */
+export const USER_MERGE_FIELDS = ["{{nombre}}", "{{curso}}", "{{progreso}}", "{{enlace}}"] as const;
