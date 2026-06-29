@@ -24,9 +24,14 @@ export interface GenerarVideosResult {
  * SOLO el creador. Es GRATIS (valor agregado): no consume créditos. La
  * generación corre OFFLINE en cola (el scroll nunca la dispara).
  */
-export async function generarVideosRuta(token: string, routeId: string): Promise<GenerarVideosResult> {
+export async function generarVideosRuta(
+  token: string,
+  routeId: string,
+  opts?: { regenerar?: boolean }
+): Promise<GenerarVideosResult> {
   const user = await getUserFromToken(token);
   if (!user) return { ok: false, error: "Sesión inválida" };
+  const regenerar = Boolean(opts?.regenerar);
 
   const sb = supabaseAdmin();
   const { data: route } = await sb
@@ -38,9 +43,10 @@ export async function generarVideosRuta(token: string, routeId: string): Promise
   if (route.owner_id !== user.id) return { ok: false, error: "Solo el creador puede generar los videos." };
 
   const estado = (route.videos_estado as VideosEstado) ?? "sin_videos";
-  if (estado === "listo") return { ok: true, cost: 0 }; // nada que regenerar de cero
-  // 'generando' NO retorna: re-dispara el worker (útil si el kick previo se
-  // perdió, p.ej. en previews sin cron). No recobra (alreadyCharged lo cubre).
+  // En modo normal, si ya está 'listo' no hay nada que hacer. En modo REGENERAR
+  // (botón "Regenerar videos") rehacemos TODO, incluso si estaba 'listo'.
+  if (!regenerar && estado === "listo") return { ok: true, cost: 0 };
+  // 'generando' NO retorna: re-dispara el worker (útil si el kick previo se perdió).
 
   // Solo hay cortos si hay lecciones con audio listo.
   const { count: audioLessons } = await sb
@@ -53,13 +59,23 @@ export async function generarVideosRuta(token: string, routeId: string): Promise
     return { ok: false, error: "Esta ruta aún no tiene lecciones con audio listas." };
   }
 
-  // Reintento: re-marca como pendientes los timelines NO terminados (los 'ready'
-  // se conservan → re-correr no toca las lecciones ya hechas).
-  await sb
-    .from("lessons")
-    .update({ timeline_status: "pending", timeline_error: null })
-    .eq("route_id", routeId)
-    .in("timeline_status", ["error", "generating"]);
+  if (regenerar) {
+    // Rehacer TODO: también los 'ready' vuelven a 'pending' (con la última versión
+    // del Director) y se reinician los intentos.
+    await sb
+      .from("lessons")
+      .update({ timeline_status: "pending", timeline_attempts: 0, timeline_error: null })
+      .eq("route_id", routeId)
+      .eq("status", "ready")
+      .not("audio_path", "is", null);
+  } else {
+    // Reintento: solo los timelines NO terminados (los 'ready' se conservan).
+    await sb
+      .from("lessons")
+      .update({ timeline_status: "pending", timeline_error: null })
+      .eq("route_id", routeId)
+      .in("timeline_status", ["error", "generating"]);
+  }
 
   await sb.from("routes").update({ videos_estado: "generando" }).eq("id", routeId);
 

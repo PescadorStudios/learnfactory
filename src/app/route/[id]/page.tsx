@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X, Share2, Check, Pencil, GraduationCap, EyeOff, Film } from "lucide-react";
+import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X, Share2, Check, Pencil, GraduationCap, EyeOff, Film, RefreshCw } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility, updateRouteInfo, getRouteStudents } from "@/app/socialActions";
 import { setRouteCategory, deleteRoute } from "@/app/routeActions";
@@ -171,6 +171,20 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
       setGenError("Te quedaste sin créditos para generar los videos de esta ruta.");
     } else {
       setGenError(res.error || "No se pudo iniciar la generación.");
+    }
+  };
+
+  const handleRegenerarVideos = async () => {
+    if (!token || genVideos) return;
+    setGenVideos(true);
+    setGenError("");
+    const res = await generarVideosRuta(token, id, { regenerar: true });
+    setGenVideos(false);
+    if (res.ok) {
+      setVideosEstado("generando");
+      setJobProgress(null);
+    } else {
+      setGenError(res.error || "No se pudo regenerar.");
     }
   };
 
@@ -427,9 +441,20 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
                     <Film className="w-4 h-4 text-fuchsia-400" /> Modo Scroll
                   </p>
                   {videosEstado === "listo" ? (
-                    <p className="inline-flex items-center gap-2 text-sm font-bold text-emerald-400">
-                      <Check className="w-4 h-4" /> Cortos listos
-                    </p>
+                    <div>
+                      <p className="inline-flex items-center gap-2 text-sm font-bold text-emerald-400 mb-2">
+                        <Check className="w-4 h-4" /> Cortos listos
+                      </p>
+                      <button
+                        onClick={handleRegenerarVideos}
+                        disabled={genVideos}
+                        className="inline-flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-fuchsia-300 border border-zinc-700 rounded-xl px-4 py-2 text-sm font-bold transition-all disabled:opacity-60"
+                      >
+                        {genVideos ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                        Regenerar videos
+                      </button>
+                      <p className="text-zinc-600 text-[11px] mt-1">Gratis. Rehace todos los cortos con la última versión del Director.</p>
+                    </div>
                   ) : videosEstado === "generando" ? (
                     <div>
                       <div className="flex items-center gap-2 text-sm text-fuchsia-300 font-bold mb-2">
