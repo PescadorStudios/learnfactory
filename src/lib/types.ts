@@ -400,6 +400,8 @@ export interface ProfileStats {
   podcastSeconds: number;
   /** Lecciones/estaciones del Túnel completadas en total. */
   tunnelLessons: number;
+  /** Tiempo total visto en Modo Scroll (segundos). */
+  scrollSeconds: number;
 }
 
 export interface PublicProfile {

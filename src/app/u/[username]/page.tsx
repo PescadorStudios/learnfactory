@@ -3,12 +3,12 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle, Crown, Plus, Lock, EyeOff, Hammer, X, GraduationCap, Headphones, Orbit } from "lucide-react";
+import { Loader2, Users, Star, BookOpen, Settings, AlertTriangle, Crown, Plus, Lock, EyeOff, Hammer, X, GraduationCap, Headphones, Orbit, Film } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getProfileByUsername, getPlan } from "@/app/socialActions";
 import type { PublicProfile, PlanState } from "@/lib/types";
 import { explorerRank, creatorRank, explorerProgress, creatorProgress } from "@/lib/reputation";
-import { levelFor, PODCAST_LEVELS, TUNNEL_LEVELS, formatListened, type LevelProgress } from "@/lib/listeningLevels";
+import { levelFor, PODCAST_LEVELS, TUNNEL_LEVELS, SCROLL_LEVELS, formatListened, type LevelProgress } from "@/lib/listeningLevels";
 import AppHeader from "@/components/AppHeader";
 import RouteCard from "@/components/RouteCard";
 import FollowButton from "@/components/FollowButton";
@@ -210,8 +210,8 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
           <Stat icon={<Users className="w-4 h-4 text-zinc-400" />} label="Seguidores" value={s.followers} />
         </div>
 
-        {/* Niveles de escucha (Podcast) y recorrido (Túnel) — evolución del usuario */}
-        <div className="grid md:grid-cols-2 gap-4 mb-10">
+        {/* Niveles de escucha (Podcast), recorrido (Túnel) y Modo Scroll — evolución del usuario */}
+        <div className="grid md:grid-cols-3 gap-4 mb-10">
           <LevelCard
             icon={<Headphones className="w-4 h-4 text-primary" />}
             label="Podcast"
@@ -225,6 +225,13 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
             prog={levelFor(s.tunnelLessons, TUNNEL_LEVELS)}
             valueLabel={`${s.tunnelLessons} ${s.tunnelLessons === 1 ? "lección recorrida" : "lecciones recorridas"}`}
             barClass="bg-gradient-to-r from-secondary to-primary"
+          />
+          <LevelCard
+            icon={<Film className="w-4 h-4 text-fuchsia-400" />}
+            label="Modo Scroll"
+            prog={levelFor(s.scrollSeconds, SCROLL_LEVELS)}
+            valueLabel={`${formatListened(s.scrollSeconds)} vistos`}
+            barClass="bg-gradient-to-r from-fuchsia-500 to-violet-500"
           />
         </div>
 

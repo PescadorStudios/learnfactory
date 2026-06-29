@@ -10,7 +10,11 @@ import { useRouter } from "next/navigation";
 import { Heart, Bookmark, ArrowUpRight, Volume2, VolumeX, Play, X } from "lucide-react";
 import type { ScrollCorto } from "@/app/scrollActions";
 import { registrarCortoEvento } from "@/app/scrollActions";
+import { addScrollWatching } from "@/app/gamificationActions";
 import CueRenderer, { activeCueIndex } from "./CueRenderer";
+
+const WATCH_FLUSH_THRESHOLD = 15; // s acumulados antes de mandar al servidor
+const MAX_SANE_DELTA = 2; // ignora saltos (seeks) al contar tiempo visto
 
 const keyOf = (c: ScrollCorto) => `${c.routeId}:${c.nodeId}`;
 
@@ -20,6 +24,9 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
   const slideRefs = useRef<(HTMLElement | null)[]>([]);
   const activeRef = useRef(0);
   const maxPctRef = useRef(0);
+  // Gamificación: tiempo visto (s) que aún no se ha mandado al servidor.
+  const unsavedSecondsRef = useRef(0);
+  const watchLastRef = useRef(0);
 
   const [active, setActive] = useState(0);
   const [started, setStarted] = useState(false);
@@ -44,6 +51,14 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
     },
     [cortos, emit]
   );
+
+  /** Manda al servidor el tiempo visto acumulado (medidor global del usuario). */
+  const flushWatch = useCallback(() => {
+    const secs = Math.floor(unsavedSecondsRef.current);
+    if (secs <= 0 || !token) return;
+    unsavedSecondsRef.current -= secs; // conserva el resto fraccional
+    addScrollWatching(token, secs).catch(() => {});
+  }, [token]);
 
   // Detectar el corto activo por intersección.
   useEffect(() => {
@@ -70,6 +85,7 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
     }
     activeRef.current = active;
     setCurrentMs(0);
+    watchLastRef.current = 0;
 
     const a = audioRef.current;
     const c = cortos[active];
@@ -93,17 +109,27 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
       const a = audioRef.current;
       const c = cortos[active];
       if (a && c) {
-        setCurrentMs(a.currentTime * 1000);
+        const t = a.currentTime;
+        setCurrentMs(t * 1000);
         if (c.durationSeconds > 0) {
-          const pct = Math.min(100, (a.currentTime / c.durationSeconds) * 100);
+          const pct = Math.min(100, (t / c.durationSeconds) * 100);
           if (pct > maxPctRef.current) maxPctRef.current = pct;
         }
+        // Tiempo visto: solo el avance normal del audio (ignora seeks/saltos).
+        if (!a.paused) {
+          const delta = t - watchLastRef.current;
+          if (delta > 0 && delta <= MAX_SANE_DELTA) {
+            unsavedSecondsRef.current += delta;
+            if (unsavedSecondsRef.current >= WATCH_FLUSH_THRESHOLD) flushWatch();
+          }
+        }
+        watchLastRef.current = t;
       }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [active, cortos]);
+  }, [active, cortos, flushWatch]);
 
   // Al terminar el audio, avanzar al siguiente corto.
   useEffect(() => {
@@ -114,8 +140,18 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
     return () => a.removeEventListener("ended", onEnded);
   }, []);
 
-  // Flush al desmontar.
-  useEffect(() => () => flushView(activeRef.current), [flushView]);
+  // Flush (% visto + tiempo visto) al ocultar/cerrar la pestaña o desmontar.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === "hidden") { flushView(activeRef.current); flushWatch(); } };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flushWatch);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flushWatch);
+      flushView(activeRef.current);
+      flushWatch();
+    };
+  }, [flushView, flushWatch]);
 
   const start = () => {
     setStarted(true);

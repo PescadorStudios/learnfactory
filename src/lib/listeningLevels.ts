@@ -36,6 +36,16 @@ export const TUNNEL_LEVELS: LevelDef[] = [
   { level: 6, name: "Leyenda del túnel", tier: "legend", min: 250 },
 ];
 
+/** Tiempo visto en Modo Scroll → nivel. Umbrales en SEGUNDOS. */
+export const SCROLL_LEVELS: LevelDef[] = [
+  { level: 1, name: "Espectador", tier: "zinc", min: 0 },
+  { level: 2, name: "Scroller", tier: "zinc", min: 10 * 60 }, // 10 min
+  { level: 3, name: "Enganchado", tier: "bronze", min: 45 * 60 }, // 45 min
+  { level: 4, name: "Devorador", tier: "silver", min: 2 * 3600 }, // 2 h
+  { level: 5, name: "Maratón de cortos", tier: "gold", min: 6 * 3600 }, // 6 h
+  { level: 6, name: "Mente infinita", tier: "legend", min: 15 * 3600 }, // 15 h
+];
+
 export interface LevelProgress {
   current: LevelDef;
   /** Siguiente nivel, o null si ya es el máximo. */

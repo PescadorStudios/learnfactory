@@ -171,3 +171,8 @@ create unique index if not exists credito_transaccion_video_unico
 
 -- RLS: solo desde el servidor (service role). Sin políticas anónimas.
 alter table public.credito_transaccion enable row level security;
+
+-- ── Gamificación: tiempo visto en Modo Scroll (segundos, global por usuario) ──
+-- Igual que profiles.podcast_seconds (gamification-setup.sql). El nivel se deriva
+-- en el cliente (src/lib/listeningLevels.ts → SCROLL_LEVELS), no se guarda.
+alter table public.profiles add column if not exists scroll_seconds int not null default 0;

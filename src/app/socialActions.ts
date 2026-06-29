@@ -236,7 +236,7 @@ export async function getProfileByUsername(token: string, username: string): Pro
 
   const { data: profile } = await sb
     .from("profiles")
-    .select("id, username, display_name, bio, avatar_path, banner_path, plan, profile_public, routes_completed, avg_stars, graduates, podcast_seconds, tunnel_lessons")
+    .select("id, username, display_name, bio, avatar_path, banner_path, plan, profile_public, routes_completed, avg_stars, graduates, podcast_seconds, tunnel_lessons, scroll_seconds")
     .eq("username", username.toLowerCase())
     .maybeSingle();
   if (!profile) return null;
@@ -269,6 +269,7 @@ export async function getProfileByUsername(token: string, username: string): Pro
         graduates: profile.graduates ?? 0,
         podcastSeconds: profile.podcast_seconds ?? 0,
         tunnelLessons: profile.tunnel_lessons ?? 0,
+        scrollSeconds: profile.scroll_seconds ?? 0,
       },
       routes: [],
     };
@@ -317,6 +318,7 @@ export async function getProfileByUsername(token: string, username: string): Pro
       graduates: profile.graduates ?? 0,
       podcastSeconds: profile.podcast_seconds ?? 0,
       tunnelLessons: profile.tunnel_lessons ?? 0,
+      scrollSeconds: profile.scroll_seconds ?? 0,
     },
     routes,
   };

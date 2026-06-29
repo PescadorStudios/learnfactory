@@ -455,7 +455,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
                         {genVideos ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Film className="w-3.5 h-3.5" />}
                         Reanudar generación
                       </button>
-                      <p className="text-zinc-600 text-[11px] mt-1">¿Atascado? Vuelve a disparar el proceso (no cobra de nuevo).</p>
+                      <p className="text-zinc-600 text-[11px] mt-1">¿Atascado? Vuelve a disparar el proceso.</p>
                     </div>
                   ) : (
                     <>
@@ -468,7 +468,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
                         {videosEstado === "error" ? "Reintentar videos" : "Generar video"}
                       </button>
                       <p className="text-zinc-600 text-xs mt-2">
-                        Crea un corto vertical por lección para el feed estilo reels. Cuesta lo mismo que generar la ruta.
+                        Crea un corto vertical por lección para el feed estilo reels. Gratis, incluido para tu ruta.
                       </p>
                     </>
                   )}

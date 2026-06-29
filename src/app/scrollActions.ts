@@ -8,27 +8,21 @@ import { after } from "next/server";
 import { headers } from "next/headers";
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { enqueueScrollJob, kickScrollWorker } from "@/lib/scrollJobs";
-import { creditsFor, normalizeSize } from "@/lib/routeSize";
 import { AUDIO_BUCKET, COVER_BUCKET, flattenNodes } from "@/lib/routeGen";
 import { rankFeed, type RankCandidate, type UserSignal } from "@/lib/feedRanker";
 import type { VideosEstado, LessonTimeline, Tree } from "@/lib/types";
-
-const MOTIVO_VIDEO = "generar_video_modo_scroll";
 
 export interface GenerarVideosResult {
   ok: boolean;
   error?: string;
   quotaReached?: boolean;
-  /** Créditos cobrados por esta generación (0 si fue un reintento ya cobrado). */
   cost?: number;
 }
 
 /**
  * Genera los cortos del Modo Scroll de una ruta (uno por lección con audio).
- * SOLO el creador. Cuesta lo mismo que generar la ruta (creditsFor(size)),
- * registrado en credito_transaccion y contado contra profiles.route_quota. El
- * cobro es idempotente por ruta: reintentar tras un error NO vuelve a cobrar.
- * La generación corre OFFLINE en cola (el scroll nunca la dispara).
+ * SOLO el creador. Es GRATIS (valor agregado): no consume créditos. La
+ * generación corre OFFLINE en cola (el scroll nunca la dispara).
  */
 export async function generarVideosRuta(token: string, routeId: string): Promise<GenerarVideosResult> {
   const user = await getUserFromToken(token);
@@ -37,7 +31,7 @@ export async function generarVideosRuta(token: string, routeId: string): Promise
   const sb = supabaseAdmin();
   const { data: route } = await sb
     .from("routes")
-    .select("owner_id, size, videos_estado")
+    .select("owner_id, videos_estado")
     .eq("id", routeId)
     .single();
   if (!route) return { ok: false, error: "Ruta no encontrada." };
@@ -59,45 +53,6 @@ export async function generarVideosRuta(token: string, routeId: string): Promise
     return { ok: false, error: "Esta ruta aún no tiene lecciones con audio listas." };
   }
 
-  // ¿Ya se cobró antes (reintento tras error)? Entonces no se vuelve a cobrar.
-  const { data: prevTxn } = await sb
-    .from("credito_transaccion")
-    .select("id")
-    .eq("route_id", routeId)
-    .eq("motivo", MOTIVO_VIDEO)
-    .maybeSingle();
-  const alreadyCharged = Boolean(prevTxn);
-
-  const cost = creditsFor(normalizeSize(route.size));
-
-  if (!alreadyCharged) {
-    // Cupo: mismo criterio que createRoute, ampliado con los gastos registrados
-    // en credito_transaccion. quota = balance; usado = Σ routes.credits + Σ txns.
-    const [{ data: profile }, { data: ownRoutes }, { data: txns }] = await Promise.all([
-      sb.from("profiles").select("route_quota").eq("id", user.id).single(),
-      sb.from("routes").select("credits").eq("owner_id", user.id),
-      sb.from("credito_transaccion").select("monto").eq("usuario_id", user.id),
-    ]);
-    const quota = profile?.route_quota ?? 1;
-    const routeCredits = (ownRoutes ?? []).reduce((s, r) => s + ((r as { credits: number | null }).credits ?? 1), 0);
-    const txnCredits = (txns ?? []).reduce((s, t) => s + ((t as { monto: number | null }).monto ?? 0), 0);
-    if (routeCredits + txnCredits + cost > quota) {
-      return { ok: false, error: "quota", quotaReached: true };
-    }
-
-    // El índice único (route_id, motivo) protege contra doble cobro en carreras.
-    const { error: txnErr } = await sb.from("credito_transaccion").insert({
-      usuario_id: user.id,
-      route_id: routeId,
-      monto: cost,
-      motivo: MOTIVO_VIDEO,
-    });
-    if (txnErr && !/duplicate|unique/i.test(txnErr.message)) {
-      console.error("[Scroll] Error registrando transacción de crédito:", txnErr);
-      return { ok: false, error: "No se pudo descontar los créditos." };
-    }
-  }
-
   // Reintento: re-marca como pendientes los timelines NO terminados (los 'ready'
   // se conservan → re-correr no toca las lecciones ya hechas).
   await sb
@@ -117,8 +72,8 @@ export async function generarVideosRuta(token: string, routeId: string): Promise
   const origin = host ? `${proto}://${host}` : undefined;
   after(() => kickScrollWorker(origin));
 
-  console.log(`[Scroll] ✓ Videos encolados para ruta ${routeId} (${alreadyCharged ? "reintento, sin cobro" : `${cost} créditos`}).`);
-  return { ok: true, cost: alreadyCharged ? 0 : cost };
+  console.log(`[Scroll] ✓ Videos encolados para ruta ${routeId} (gratis).`);
+  return { ok: true, cost: 0 };
 }
 
 export interface ScrollJobStatus {
