@@ -176,6 +176,8 @@ export interface LessonTimeline {
   aspect: "9:16";
   audio_url: string;
   cues: TimelineCue[];
+  /** Motor que produjo el timeline (diagnóstico de sincronía). */
+  motor?: "multimodal" | "texto";
 }
 
 export interface MicroLessonData {

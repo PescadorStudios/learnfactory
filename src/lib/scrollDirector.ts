@@ -126,6 +126,17 @@ function normalizeTimedCues(raw: unknown, durMs: number): TimelineCue[] {
 
   if (valid.length === 0) return [];
 
+  // Auto-detección de UNIDADES: si los tiempos parecen SEGUNDOS (mucho menores
+  // que la duración en ms), reescalar ×1000. El modelo a veces devuelve segundos
+  // pese a pedir ms, y eso amontona todos los cues al inicio (se ve "estático").
+  const maxRaw = Math.max(...valid.map(c => Math.max(c.start_ms, c.end_ms)));
+  if (maxRaw > 0 && maxRaw <= durMs / 10) {
+    for (const c of valid) {
+      c.start_ms = Math.round(c.start_ms * 1000);
+      c.end_ms = Math.round(c.end_ms * 1000);
+    }
+  }
+
   const cues: TimelineCue[] = [];
   let prevEnd = 0;
   for (let i = 0; i < valid.length; i++) {
@@ -165,7 +176,12 @@ function distributeByWeight(beats: RawBeat[], durMs: number): TimelineCue[] {
   return cues;
 }
 
-function build(lesson: TimelineLessonInput, durMs: number, cues: TimelineCue[]): LessonTimeline {
+function build(
+  lesson: TimelineLessonInput,
+  durMs: number,
+  cues: TimelineCue[],
+  motor: "multimodal" | "texto"
+): LessonTimeline {
   return {
     leccion_id: lesson.nodeId,
     ruta_id: lesson.routeId,
@@ -173,6 +189,7 @@ function build(lesson: TimelineLessonInput, durMs: number, cues: TimelineCue[]):
     aspect: "9:16",
     audio_url: lesson.audioUrl,
     cues,
+    motor,
   };
 }
 
@@ -210,6 +227,7 @@ ${VOCAB_GUIDE}
 
 PARÁMETROS:
 - El audio dura ${durMs} ms. Los cues van EN ORDEN, sin solaparse, cubriendo de 0 a ${durMs} ms (el primero empieza en 0; el último termina en ${durMs}).
+- ⚠️ Los tiempos van en MILISEGUNDOS, NO en segundos. Ej.: si una idea se dice entre el segundo 12 y el 18, usa start_ms: 12000, end_ms: 18000 (NO 12 y 18). Los valores deben acercarse a ${durMs} hacia el final.
 - Crea TANTOS cues como ideas distintas se digan (apunta a ~${Math.max(MIN_BEATS, Math.min(MAX_BEATS, Math.round(lesson.audioDurationSeconds / 7)))}, más si hay mucha densidad). Mejor un cue por idea que un cue largo y vago.
 - "componente": el del vocabulario que MEJOR codifica esa idea concreta (doble codificación). "props": textos concisos en español que parafrasean fielmente lo dicho (títulos ≤6 palabras, puntos ≤8 palabras).
 
@@ -229,7 +247,7 @@ Devuelve SOLO este JSON, sin markdown:
       );
       const parsed = parseJsonResponse(result.response.text()) as { cues?: RawTimedCue[] };
       const cues = normalizeTimedCues(parsed?.cues, durMs);
-      if (cues.length > 0) return build(lesson, durMs, cues);
+      if (cues.length > 0) return build(lesson, durMs, cues, "multimodal");
       console.warn(`[ScrollDirector] Multimodal sin cues válidos (${lesson.routeId}/${lesson.nodeId}); usando fallback por texto.`);
     } catch (e) {
       console.warn(`[ScrollDirector] Multimodal falló (${lesson.routeId}/${lesson.nodeId}): ${e instanceof Error ? e.message : e}. Fallback por texto.`);
@@ -262,5 +280,5 @@ Devuelve SOLO este JSON, sin markdown:
   const parsed = parseJsonResponse(result.response.text()) as { beats?: RawBeat[] };
   const cues = distributeByWeight(Array.isArray(parsed?.beats) ? parsed.beats : [], durMs);
   if (cues.length === 0) return null;
-  return build(lesson, durMs, cues);
+  return build(lesson, durMs, cues, "texto");
 }
