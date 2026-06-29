@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plane, Ear, Timer, MessageCircleQuestion, PartyPopper, Mic } from "lucide-react";
-import type { CopilotData } from "@/lib/types";
+import type { CopilotData, LessonTimeline } from "@/lib/types";
 import { EqBars, AudioControls, GameHeader, GameBriefing, GameResults } from "./shared";
+import CueRenderer from "@/components/scroll/CueRenderer";
 
 interface Props {
   nodeTitle: string;
@@ -13,6 +14,7 @@ interface Props {
   durationSeconds: number;
   onFinish: (correct: number, total: number) => void;
   onExit: () => void;
+  timeline?: LessonTimeline | null;
 }
 
 type Phase = "briefing" | "playing" | "results";
@@ -25,7 +27,7 @@ const CORRECTION_MS = 3800;
  * El narrador duda en 6 momentos y pausa: el oyente decide en 5 segundos.
  * Si acierta, el vuelo sigue fluido; si falla, el narrador corrige y retoma.
  */
-export default function CopilotGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit }: Props) {
+export default function CopilotGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit, timeline }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const rafRef = useRef(0);
 
@@ -195,8 +197,15 @@ export default function CopilotGame({ nodeTitle, audioSrc, data, durationSeconds
             </span>
           </div>
 
-          <div className="flex-1 flex items-center justify-center">
-            <EqBars paused={isPaused || activeIdx !== null || Boolean(correction)} />
+          <div className="flex-1 flex items-center justify-center min-h-0">
+            {timeline && timeline.cues.length > 0 ? (
+              // El corto sigue el currentTime: al pausar el audio en un checkpoint, se congela solo.
+              <div className="relative w-full h-full min-h-[240px]">
+                <CueRenderer cues={timeline.cues} currentTimeMs={currentTime * 1000} />
+              </div>
+            ) : (
+              <EqBars paused={isPaused || activeIdx !== null || Boolean(correction)} />
+            )}
           </div>
 
           {/* Zona de decisión / corrección */}

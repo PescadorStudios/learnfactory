@@ -34,6 +34,12 @@ create index if not exists lessons_timeline_status_idx
 alter table public.routes add column if not exists videos_estado text not null default 'sin_videos'
   check (videos_estado in ('sin_videos','generando','listo','error'));
 
+-- Opt-in del creador: cuando es true, el estudio normal de la lección ("ruta
+-- completa") muestra el corto sincronizado durante el audio (además del Modo
+-- Scroll). Migrar una ruta existente es solo encender este flag (los timelines
+-- ya existen). Solo aplica a lecciones con audio (theory/practice).
+alter table public.routes add column if not exists cortos_integrados boolean not null default false;
+
 -- ── Tabla de jobs (uno por ruta a "videar"), espejo de route_jobs ────────────
 create table if not exists public.scroll_jobs (
   id          uuid primary key default gen_random_uuid(),

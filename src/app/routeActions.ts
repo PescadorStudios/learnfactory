@@ -36,6 +36,7 @@ import type {
   LessonGenStatus,
   BossExamData,
   AttentionData,
+  LessonTimeline,
   RouteCategory,
   DiscoveredSource,
   MicroLessonProgress,
@@ -744,7 +745,7 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
 
   const sb = supabaseAdmin();
   const [{ data: route }, { data: lesson }] = await Promise.all([
-    sb.from("routes").select("topic, sintesis, owner_id, visibility, blocked").eq("id", routeId).single(),
+    sb.from("routes").select("topic, sintesis, owner_id, visibility, blocked, cortos_integrados").eq("id", routeId).single(),
     sb.from("lessons").select("*").eq("route_id", routeId).eq("node_id", nodeId).single(),
   ]);
   // Acceso: dueño siempre; cualquiera si la ruta es pública. Bloqueada → nadie.
@@ -783,6 +784,11 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
     audioDurationSeconds: lesson.audio_duration ?? null,
     topic: route.topic,
     sintesis: route.sintesis as Sintesis,
+    // Corto integrado: solo si el creador lo activó y este timeline está listo.
+    timeline:
+      route.cortos_integrados && lesson.timeline_status === "ready" && lesson.timeline_json
+        ? (lesson.timeline_json as LessonTimeline)
+        : null,
   };
 }
 

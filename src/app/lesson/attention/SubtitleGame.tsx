@@ -3,8 +3,9 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ScanLine, Ear, AlertTriangle, Fingerprint, PartyPopper, ShieldCheck } from "lucide-react";
-import type { SubtitlesData } from "@/lib/types";
+import type { SubtitlesData, LessonTimeline } from "@/lib/types";
 import { AudioControls, GameHeader, GameBriefing, GameResults } from "./shared";
+import CueRenderer from "@/components/scroll/CueRenderer";
 
 interface Props {
   nodeTitle: string;
@@ -13,6 +14,7 @@ interface Props {
   durationSeconds: number;
   onFinish: (correct: number, total: number) => void;
   onExit: () => void;
+  timeline?: LessonTimeline | null;
 }
 
 type Phase = "briefing" | "playing" | "results";
@@ -184,7 +186,7 @@ function computeCueTimeline(buf: AudioBuffer, weights: number[]): number[] | nul
  * Los subtítulos acompañan al audio, pero N de ellos contradicen lo narrado.
  * El detector debe tocar el subtítulo en el momento de la discrepancia.
  */
-export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit }: Props) {
+export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit, timeline: corto }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const rafRef = useRef(0);
 
@@ -313,9 +315,21 @@ export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSecond
   const prevCue = prevIndex >= 0 ? data.cues[prevIndex] : null;
 
   return (
-    <main className="h-[100dvh] bg-zinc-950 flex flex-col overflow-hidden">
+    <main className="relative h-[100dvh] bg-zinc-950 flex flex-col overflow-hidden">
       <audio ref={audioRef} src={audioSrc} onEnded={() => setPhase("results")} preload="auto" />
-      <GameHeader onExit={onExit} />
+
+      {/* Corto integrado: fondo atenuado durante la escucha; las tarjetas de
+          subtítulos van encima (z-10). pointer-events-none para no robar toques. */}
+      {phase === "playing" && corto && corto.cues.length > 0 && (
+        <div className="absolute inset-0 z-0 pointer-events-none">
+          <div className="absolute inset-0 opacity-50">
+            <CueRenderer cues={corto.cues} currentTimeMs={currentTime * 1000} />
+          </div>
+          <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-black/35 to-black/70" />
+        </div>
+      )}
+
+      <div className="relative z-10"><GameHeader onExit={onExit} /></div>
 
       {phase === "briefing" && (
         <GameBriefing
@@ -335,7 +349,7 @@ export default function SubtitleGame({ nodeTitle, audioSrc, data, durationSecond
       )}
 
       {phase === "playing" && (
-        <div className="flex-1 flex flex-col max-w-2xl w-full mx-auto p-6">
+        <div className="relative z-10 flex-1 flex flex-col max-w-2xl w-full mx-auto p-6">
           {/* HUD */}
           <div className="flex items-center justify-between mb-4">
             <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 rounded-full px-3 py-1.5">

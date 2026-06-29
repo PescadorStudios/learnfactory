@@ -104,6 +104,7 @@ export default function MicroLesson({ routeId, token, lesson, audioSrc, onComple
         audioSrc={audioSrc}
         attention={lesson.attention}
         durationSeconds={lesson.audioDurationSeconds}
+        timeline={lesson.timeline}
         onFinish={(correct, total) => {
           attention.current = { correct, total };
           xpTotal.current += XP.audioFocusPass;

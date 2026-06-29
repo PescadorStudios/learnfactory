@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Eye, Crosshair, Ear, ListChecks, PartyPopper, Radar } from "lucide-react";
-import type { SpyData } from "@/lib/types";
+import type { SpyData, LessonTimeline } from "@/lib/types";
 import { EqBars, AudioControls, GameHeader, GameBriefing, GameResults } from "./shared";
+import CueRenderer from "@/components/scroll/CueRenderer";
 
 interface Props {
   nodeTitle: string;
@@ -13,6 +14,7 @@ interface Props {
   durationSeconds: number;
   onFinish: (correct: number, total: number) => void;
   onExit: () => void;
+  timeline?: LessonTimeline | null;
 }
 
 type Phase = "briefing" | "playing" | "questions" | "results";
@@ -22,7 +24,7 @@ type Phase = "briefing" | "playing" | "questions" | "results";
  * Las misiones se revelan ANTES del audio; el agente escucha con objetivos
  * concretos y responde el interrogatorio al final.
  */
-export default function SpyGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit }: Props) {
+export default function SpyGame({ nodeTitle, audioSrc, data, durationSeconds, onFinish, onExit, timeline }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [phase, setPhase] = useState<Phase>("briefing");
   const [isPaused, setIsPaused] = useState(false);
@@ -137,8 +139,14 @@ export default function SpyGame({ nodeTitle, audioSrc, data, durationSeconds, on
             </span>
           </div>
 
-          <div className="flex-1 flex items-center justify-center">
-            <EqBars paused={isPaused} />
+          <div className="flex-1 flex items-center justify-center min-h-0">
+            {timeline && timeline.cues.length > 0 ? (
+              <div className="relative w-full h-full min-h-[280px]">
+                <CueRenderer cues={timeline.cues} currentTimeMs={currentTime * 1000} />
+              </div>
+            ) : (
+              <EqBars paused={isPaused} />
+            )}
           </div>
 
           {/* Recordatorio de misiones durante la escucha */}

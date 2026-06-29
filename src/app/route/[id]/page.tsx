@@ -7,7 +7,7 @@ import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, Im
 import { useAuth } from "@/lib/useAuth";
 import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility, updateRouteInfo, getRouteStudents } from "@/app/socialActions";
 import { setRouteCategory, deleteRoute } from "@/app/routeActions";
-import { generarVideosRuta, getScrollJobStatus } from "@/app/scrollActions";
+import { generarVideosRuta, getScrollJobStatus, integrarCortos } from "@/app/scrollActions";
 import { ROUTE_CATEGORIES, categoryLabel, type RouteLanding, type RouteStudent } from "@/lib/types";
 import { explorerRank, creatorRank as creatorRankOf } from "@/lib/reputation";
 import { trackMeta } from "@/lib/meta/pixel";
@@ -45,6 +45,8 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
   const [genVideos, setGenVideos] = useState(false);
   const [genError, setGenError] = useState("");
   const [jobProgress, setJobProgress] = useState<{ total: number; completed: number } | null>(null);
+  const [cortosIntegrados, setCortosIntegrados] = useState(false);
+  const [integrating, setIntegrating] = useState(false);
 
   // edición de info (solo dueño)
   const [editingInfo, setEditingInfo] = useState(false);
@@ -69,6 +71,7 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
       setTopicDraft(d.topic);
       setDescDraft(d.description || "");
       setVideosEstado(d.videosEstado);
+      setCortosIntegrados(d.cortosIntegrados);
     });
     getRouteStudents(token, id).then(setStudents);
   }, [token, id, loading]);
@@ -172,6 +175,16 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
     } else {
       setGenError(res.error || "No se pudo iniciar la generación.");
     }
+  };
+
+  const handleIntegrarCortos = async (integrar: boolean) => {
+    if (!token || integrating) return;
+    setIntegrating(true);
+    setGenError("");
+    const res = await integrarCortos(token, id, integrar);
+    setIntegrating(false);
+    if (res.ok) setCortosIntegrados(integrar);
+    else setGenError(res.error || "No se pudo integrar.");
   };
 
   const handleRegenerarVideos = async () => {
@@ -454,6 +467,37 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
                         Regenerar videos
                       </button>
                       <p className="text-zinc-600 text-[11px] mt-1">Gratis. Rehace todos los cortos con la última versión del Director.</p>
+
+                      {/* Integrar cortos en el estudio de la lección (ruta completa) */}
+                      <div className="mt-4 pt-4 border-t border-zinc-800">
+                        {cortosIntegrados ? (
+                          <>
+                            <p className="inline-flex items-center gap-2 text-sm font-bold text-emerald-400 mb-2">
+                              <Check className="w-4 h-4" /> Cortos integrados en las lecciones
+                            </p>
+                            <button
+                              onClick={() => handleIntegrarCortos(false)}
+                              disabled={integrating}
+                              className="block text-xs font-bold text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-60"
+                            >
+                              {integrating ? "Quitando…" : "Quitar de las lecciones"}
+                            </button>
+                            <p className="text-zinc-600 text-[11px] mt-1">Al estudiar la ruta, el corto acompaña el audio de cada lección.</p>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleIntegrarCortos(true)}
+                              disabled={integrating}
+                              className="inline-flex items-center gap-2 bg-fuchsia-600/15 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-600/25 rounded-xl px-4 py-2 text-sm font-bold transition-all disabled:opacity-60"
+                            >
+                              {integrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Film className="w-4 h-4" />}
+                              Integrar cortos a las lecciones
+                            </button>
+                            <p className="text-zinc-600 text-[11px] mt-1">Muestra el corto durante el audio al estudiar la ruta (además del Modo Scroll).</p>
+                          </>
+                        )}
+                      </div>
                     </div>
                   ) : videosEstado === "generando" ? (
                     <div>

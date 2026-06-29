@@ -461,6 +461,8 @@ export interface RouteLanding {
   myCompletedNodes: number;
   /** Estado de los cortos del Modo Scroll de esta ruta. */
   videosEstado: VideosEstado;
+  /** true si el creador integró los cortos en el estudio de la lección. */
+  cortosIntegrados: boolean;
 }
 
 export interface NodeState {
@@ -510,6 +512,9 @@ export interface LessonData {
   audioDurationSeconds: number | null;
   topic: string;
   sintesis: Sintesis; // para debate y evaluaciones
+  /** Corto del Modo Scroll, presente solo si la ruta tiene los cortos
+   *  integrados (routes.cortos_integrados) y este timeline está listo. */
+  timeline: LessonTimeline | null;
 }
 
 // ── Intentos y puntuación ──

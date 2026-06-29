@@ -92,6 +92,31 @@ export async function generarVideosRuta(
   return { ok: true, cost: 0 };
 }
 
+/**
+ * Integra (o quita) los cortos en el estudio normal de la lección ("ruta
+ * completa"). SOLO el creador. Es un flag instantáneo: como los timelines ya
+ * existen, encender migra al toque. Para integrar, los videos deben estar listos.
+ */
+export async function integrarCortos(
+  token: string,
+  routeId: string,
+  integrar: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { ok: false, error: "Sesión inválida" };
+
+  const sb = supabaseAdmin();
+  const { data: route } = await sb.from("routes").select("owner_id, videos_estado").eq("id", routeId).single();
+  if (!route) return { ok: false, error: "Ruta no encontrada." };
+  if (route.owner_id !== user.id) return { ok: false, error: "Solo el creador puede integrar los cortos." };
+  if (integrar && route.videos_estado !== "listo") {
+    return { ok: false, error: "Primero genera los videos de la ruta." };
+  }
+
+  await sb.from("routes").update({ cortos_integrados: integrar }).eq("id", routeId);
+  return { ok: true };
+}
+
 export interface ScrollJobStatus {
   estado: VideosEstado;
   total: number;
