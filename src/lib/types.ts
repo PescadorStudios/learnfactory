@@ -130,6 +130,54 @@ export interface CopilotData {
 
 export type AttentionData = SpyData | SubtitlesData | CopilotData;
 
+// ── Modo Scroll (feed vertical estilo reels) ──
+// El "corto" de una lección NO es un MP4: es un timeline declarativo que el
+// Director (Gemini) produce UNA vez offline y el reproductor vertical renderiza
+// EN VIVO sincronizado al audio TTS existente. Doble codificación (Paivio): cada
+// cue codifica visualmente el MISMO significado que narra el audio.
+
+/** Estado global de los videos del Modo Scroll de una ruta (routes.videos_estado). */
+export type VideosEstado = "sin_videos" | "generando" | "listo" | "error";
+
+/**
+ * Vocabulario VISUAL CERRADO. El Director SOLO puede elegir de esta lista; nunca
+ * inventa un componente. Cada entrada existe como componente React (render en
+ * vivo) con la misma firma de props que produce el Director.
+ */
+export const COMPONENTES_SCROLL = [
+  "TermCallout",  // un término/definición destacado
+  "BuildList",    // lista que se construye ítem a ítem
+  "VersusSplit",  // comparación a dos columnas (A vs B)
+  "Timeline",     // secuencia temporal / hitos
+  "NodeGraph",    // jerarquía o grafo de relaciones
+  "Counter",      // una cantidad que cuenta hasta un valor
+  "StepFlow",     // proceso de pasos secuenciales
+  "QuoteBeat",    // cita textual destacada
+  "KeyImage",     // imagen/idea ancla con rótulo
+  "ProgressBar",  // avance/proporción
+] as const;
+
+export type ComponenteScroll = (typeof COMPONENTES_SCROLL)[number];
+
+/** Una aparición visual del corto, anclada a tiempos del audio (ms). */
+export interface TimelineCue {
+  start_ms: number;
+  end_ms: number;
+  componente: ComponenteScroll;
+  /** Solo los datos que ese componente necesita (textos, ítems, valores). */
+  props: Record<string, unknown>;
+}
+
+/** Contrato de salida del Director — el "corto" declarativo de una lección. */
+export interface LessonTimeline {
+  leccion_id: string;
+  ruta_id: string;
+  duracion_ms: number;
+  aspect: "9:16";
+  audio_url: string;
+  cues: TimelineCue[];
+}
+
 export interface MicroLessonData {
   attention: AttentionData | null; // null = sin audio o lección antigua
   steps: LessonStep[];
@@ -407,6 +455,8 @@ export interface RouteLanding {
   isFavorite: boolean;
   isOwner: boolean;
   myCompletedNodes: number;
+  /** Estado de los cortos del Modo Scroll de esta ruta. */
+  videosEstado: VideosEstado;
 }
 
 export interface NodeState {

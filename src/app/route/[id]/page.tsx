@@ -3,10 +3,11 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X, Share2, Check, Pencil, GraduationCap, EyeOff } from "lucide-react";
+import { Loader2, Play, Users, Star, Heart, BarChart3, BookOpen, Globe, Lock, ImageIcon, AlertTriangle, Trash2, Tag, X, Share2, Check, Pencil, GraduationCap, EyeOff, Film } from "lucide-react";
 import { useAuth } from "@/lib/useAuth";
 import { getRouteLanding, rateRoute, toggleFavorite, setRouteVisibility, updateRouteInfo, getRouteStudents } from "@/app/socialActions";
 import { setRouteCategory, deleteRoute } from "@/app/routeActions";
+import { generarVideosRuta, getScrollJobStatus } from "@/app/scrollActions";
 import { ROUTE_CATEGORIES, categoryLabel, type RouteLanding, type RouteStudent } from "@/lib/types";
 import { explorerRank, creatorRank as creatorRankOf } from "@/lib/reputation";
 import { trackMeta } from "@/lib/meta/pixel";
@@ -39,6 +40,12 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
   const [deleteError, setDeleteError] = useState("");
   const [linkCopied, setLinkCopied] = useState(false);
 
+  // Modo Scroll: estado de los cortos (solo dueño)
+  const [videosEstado, setVideosEstado] = useState<RouteLanding["videosEstado"]>("sin_videos");
+  const [genVideos, setGenVideos] = useState(false);
+  const [genError, setGenError] = useState("");
+  const [jobProgress, setJobProgress] = useState<{ total: number; completed: number } | null>(null);
+
   // edición de info (solo dueño)
   const [editingInfo, setEditingInfo] = useState(false);
   const [topicDraft, setTopicDraft] = useState("");
@@ -61,9 +68,25 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
       setCategory(d.category);
       setTopicDraft(d.topic);
       setDescDraft(d.description || "");
+      setVideosEstado(d.videosEstado);
     });
     getRouteStudents(token, id).then(setStudents);
   }, [token, id, loading]);
+
+  // Mientras los cortos se generan, sondear el progreso del job.
+  useEffect(() => {
+    if (!token || videosEstado !== "generando") return;
+    let active = true;
+    const tick = async () => {
+      const st = await getScrollJobStatus(token, id);
+      if (!active || !st) return;
+      setJobProgress({ total: st.total, completed: st.completed });
+      if (st.estado !== "generando") setVideosEstado(st.estado);
+    };
+    tick();
+    const iv = setInterval(tick, 4000);
+    return () => { active = false; clearInterval(iv); };
+  }, [token, id, videosEstado]);
 
   // Acciones que requieren cuenta: el anónimo va a registrarse y vuelve aquí
   const requireLogin = (next: string) => {
@@ -133,6 +156,22 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
     if (!token) return;
     setCategory(cat);
     await setRouteCategory(token, id, cat);
+  };
+
+  const handleGenerarVideos = async () => {
+    if (!token || genVideos) return;
+    setGenVideos(true);
+    setGenError("");
+    const res = await generarVideosRuta(token, id);
+    setGenVideos(false);
+    if (res.ok) {
+      setVideosEstado("generando");
+      setJobProgress(null);
+    } else if (res.quotaReached) {
+      setGenError("Te quedaste sin créditos para generar los videos de esta ruta.");
+    } else {
+      setGenError(res.error || "No se pudo iniciar la generación.");
+    }
   };
 
   const handleDelete = async () => {
@@ -325,6 +364,14 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
                 {linkCopied ? <Check className="w-5 h-5" /> : <Share2 className="w-5 h-5" />}
                 {linkCopied ? "¡Copiado!" : "Compartir"}
               </button>
+              {videosEstado === "listo" && (
+                <button
+                  onClick={() => router.push(`/scroll?route=${id}`)}
+                  className="inline-flex items-center gap-2 rounded-2xl px-5 py-3.5 font-bold transition-all bg-fuchsia-600/15 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-600/25"
+                >
+                  <Film className="w-5 h-5" /> Modo Scroll
+                </button>
+              )}
             </div>
 
             {!session && (
@@ -373,6 +420,50 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
                       <option key={c.id} value={c.id}>{c.label}</option>
                     ))}
                   </select>
+                </div>
+
+                <div className="pt-3 border-t border-zinc-800">
+                  <p className="text-sm text-zinc-400 mb-2 flex items-center gap-2">
+                    <Film className="w-4 h-4 text-fuchsia-400" /> Modo Scroll
+                  </p>
+                  {videosEstado === "listo" ? (
+                    <p className="inline-flex items-center gap-2 text-sm font-bold text-emerald-400">
+                      <Check className="w-4 h-4" /> Cortos listos
+                    </p>
+                  ) : videosEstado === "generando" ? (
+                    <div>
+                      <div className="flex items-center gap-2 text-sm text-fuchsia-300 font-bold mb-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Generando cortos
+                        {jobProgress && jobProgress.total > 0 && (
+                          <span className="text-zinc-500 font-normal">{jobProgress.completed}/{jobProgress.total}</span>
+                        )}
+                      </div>
+                      {jobProgress && jobProgress.total > 0 && (
+                        <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-fuchsia-500 to-violet-500 transition-all"
+                            style={{ width: `${Math.round((jobProgress.completed / jobProgress.total) * 100)}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleGenerarVideos}
+                        disabled={genVideos}
+                        className="inline-flex items-center gap-2 bg-fuchsia-600/15 text-fuchsia-300 border border-fuchsia-500/40 hover:bg-fuchsia-600/25 rounded-xl px-4 py-2.5 text-sm font-bold transition-all disabled:opacity-60"
+                      >
+                        {genVideos ? <Loader2 className="w-4 h-4 animate-spin" /> : <Film className="w-4 h-4" />}
+                        {videosEstado === "error" ? "Reintentar videos" : "Generar video"}
+                      </button>
+                      <p className="text-zinc-600 text-xs mt-2">
+                        Crea un corto vertical por lección para el feed estilo reels. Cuesta lo mismo que generar la ruta.
+                      </p>
+                    </>
+                  )}
+                  {genError && <p className="text-rose-400 text-xs mt-2">{genError}</p>}
                 </div>
 
                 <div className="pt-3 border-t border-zinc-800">

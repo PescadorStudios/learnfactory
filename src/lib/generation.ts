@@ -137,7 +137,7 @@ async function waitForFileProcessing(fileName: string): Promise<void> {
   }
 }
 
-function getJsonModel(maxOutputTokens?: number) {
+export function getJsonModel(maxOutputTokens?: number) {
   return genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     generationConfig: {
@@ -147,7 +147,7 @@ function getJsonModel(maxOutputTokens?: number) {
   });
 }
 
-function parseJsonResponse(text: string) {
+export function parseJsonResponse(text: string) {
   try {
     return JSON.parse(text);
   } catch {
@@ -156,7 +156,7 @@ function parseJsonResponse(text: string) {
   }
 }
 
-function sintesisBlock(sintesis: Sintesis): string {
+export function sintesisBlock(sintesis: Sintesis): string {
   return `
 SÍNTESIS MAESTRA del material de estudio (tu ÚNICA fuente de verdad):
 ${JSON.stringify(sintesis)}

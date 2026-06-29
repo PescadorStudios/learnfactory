@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones } from "lucide-react";
+import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones, Film } from "lucide-react";
 import { useAuth, useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
 import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
@@ -292,6 +292,41 @@ function HomeContent() {
                   </p>
                   <span className="inline-flex items-center gap-2 bg-white/5 border border-primary/40 text-white rounded-full px-7 py-3.5 font-bold transition-all group-hover:bg-primary/10 group-hover:border-primary group-hover:shadow-[0_0_35px_rgba(139,92,246,0.35)]">
                     Empezar a escuchar
+                    <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </div>
+              </button>
+            </motion.div>
+
+            {/* ── Modo Scroll: feed vertical estilo reels (cortos por lección) ── */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+              className="mb-12"
+            >
+              <button
+                type="button"
+                onClick={() => router.push("/scroll")}
+                aria-label="Entrar al Modo Scroll"
+                className="group relative w-full text-left rounded-[2rem] overflow-hidden border border-fuchsia-500/25 hover:border-fuchsia-400/50 bg-[#0b0610] transition-colors"
+              >
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_15%_50%,rgba(217,70,239,0.22),transparent_55%),radial-gradient(circle_at_90%_50%,rgba(139,92,246,0.20),transparent_50%)] pointer-events-none" />
+                <div className="relative z-10 px-8 md:px-14 py-9 md:py-11 max-w-2xl">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-fuchsia-300/90 mb-3">
+                    <Film className="w-3.5 h-3.5" /> Nuevo · Feed de cortos
+                  </span>
+                  <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-fuchsia-200 to-violet-300">
+                      Modo Scroll
+                    </span>
+                  </h2>
+                  <p className="text-zinc-400 text-base md:text-lg mb-6 max-w-lg">
+                    Un feed vertical estilo reels: cortos que no decoran, codifican el
+                    significado de cada lección. Siéntate, scrollea y aprende.
+                  </p>
+                  <span className="inline-flex items-center gap-2 bg-white/5 border border-fuchsia-400/40 text-white rounded-full px-7 py-3.5 font-bold transition-all group-hover:bg-fuchsia-400/10 group-hover:border-fuchsia-300 group-hover:shadow-[0_0_35px_rgba(217,70,239,0.35)]">
+                    Abrir el feed
                     <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-0.5" />
                   </span>
                 </div>

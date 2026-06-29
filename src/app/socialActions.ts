@@ -497,7 +497,7 @@ export async function getRouteLanding(token: string | null, routeId: string): Pr
   const { data: r } = await sb
     .from("routes")
     .select(
-      "id, topic, description, cover_path, cover_prompt, visibility, blocked, category, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status"
+      "id, topic, description, cover_path, cover_prompt, visibility, blocked, category, rating_sum, rating_count, student_count, favorite_count, owner_id, created_at, status, videos_estado"
     )
     .eq("id", routeId)
     .maybeSingle();
@@ -559,6 +559,7 @@ export async function getRouteLanding(token: string | null, routeId: string): Pr
     isFavorite: Boolean(myFavRow),
     isOwner,
     myCompletedNodes,
+    videosEstado: (r.videos_estado as RouteLanding["videosEstado"]) ?? "sin_videos",
   };
 }
 
