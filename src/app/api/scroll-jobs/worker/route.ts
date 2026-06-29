@@ -25,7 +25,7 @@ export const maxDuration = 300; // Vercel Pro
 
 const LEASE_SECONDS = 300;
 const TIME_BUDGET_MS = 200_000;
-const BATCH = 5;            // timelines generados en paralelo por lote (solo JSON)
+const BATCH = 3;            // timelines en paralelo por lote (el Director escucha audio: más pesado)
 const MAX_ATTEMPTS = 3;     // reintentos por lección antes de rendirse
 
 function safeEqual(a: string, b: string): boolean {
