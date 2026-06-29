@@ -187,34 +187,35 @@ async function runJob(sb: SupabaseClient, job: JobRow, startedAt: number) {
     return { jobId: job.id, remaining, chained: counts.pending > 0 };
   }
 
-  if (counts.error > 0) {
-    await sb.from("routes").update({ videos_estado: "error" }).eq("id", routeId);
-    await sb.from("scroll_jobs").update({
-      status: "error", lease_until: null,
-      last_error: `${counts.error} corto(s) en error tras ${MAX_ATTEMPTS} intentos.`,
-      completed: counts.ready, updated_at: new Date().toISOString(),
-    }).eq("id", job.id);
-    return { jobId: job.id, status: "error", errored: counts.error };
-  }
+  // La ruta es USABLE si quedó al menos un corto: los que fallaron simplemente
+  // no aparecen en el feed (se pueden reintentar luego). Solo 'error' si NINGUNO
+  // salió. (Mismo criterio que la generación de rutas: usable aunque falten.)
+  const usable = counts.ready > 0;
+  await sb.from("routes").update({ videos_estado: usable ? "listo" : "error" }).eq("id", routeId);
 
-  // Éxito total → videos listos + correo (idempotente vía notified_at).
-  await sb.from("routes").update({ videos_estado: "listo" }).eq("id", routeId);
   await sb.from("scroll_jobs").update({
-    status: "done", lease_until: null, completed: counts.ready, updated_at: new Date().toISOString(),
+    status: counts.error > 0 ? "error" : "done",
+    lease_until: null,
+    completed: counts.ready,
+    last_error: counts.error > 0 ? `${counts.error} corto(s) en error tras ${MAX_ATTEMPTS} intentos.` : null,
+    updated_at: new Date().toISOString(),
   }).eq("id", job.id);
 
-  const { data: notifyClaim } = await sb.from("scroll_jobs")
-    .update({ notified_at: new Date().toISOString() })
-    .eq("id", job.id).is("notified_at", null)
-    .select("id");
-  if (notifyClaim && notifyClaim.length > 0 && job.owner_email) {
-    const routeUrl = `${getBaseUrl()}/route/${routeId}`;
-    const res = await sendVideosReadyEmail(job.owner_email, { topic, routeUrl, videosCount: counts.ready });
-    if (!res.ok) console.error(`[ScrollWorker] Correo "videos listos" falló (ruta ${routeId}):`, res.error);
-    else console.log(`[ScrollWorker] ✓ Correo "videos listos" enviado a ${job.owner_email}.`);
+  // Correo "videos listos" si hay al menos un corto (idempotente vía notified_at).
+  if (usable) {
+    const { data: notifyClaim } = await sb.from("scroll_jobs")
+      .update({ notified_at: new Date().toISOString() })
+      .eq("id", job.id).is("notified_at", null)
+      .select("id");
+    if (notifyClaim && notifyClaim.length > 0 && job.owner_email) {
+      const routeUrl = `${getBaseUrl()}/route/${routeId}`;
+      const res = await sendVideosReadyEmail(job.owner_email, { topic, routeUrl, videosCount: counts.ready });
+      if (!res.ok) console.error(`[ScrollWorker] Correo "videos listos" falló (ruta ${routeId}):`, res.error);
+      else console.log(`[ScrollWorker] ✓ Correo "videos listos" enviado a ${job.owner_email}.`);
+    }
   }
 
-  return { jobId: job.id, status: "done", videos: counts.ready };
+  return { jobId: job.id, status: counts.error > 0 ? "error" : "done", videos: counts.ready };
 }
 
 async function handle(req: Request) {
