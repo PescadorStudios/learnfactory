@@ -447,6 +447,15 @@ export default function RouteLandingPage({ params }: { params: Promise<{ id: str
                           />
                         </div>
                       )}
+                      <button
+                        onClick={handleGenerarVideos}
+                        disabled={genVideos}
+                        className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-fuchsia-300/80 hover:text-fuchsia-200 disabled:opacity-50"
+                      >
+                        {genVideos ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Film className="w-3.5 h-3.5" />}
+                        Reanudar generación
+                      </button>
+                      <p className="text-zinc-600 text-[11px] mt-1">¿Atascado? Vuelve a disparar el proceso (no cobra de nuevo).</p>
                     </div>
                   ) : (
                     <>

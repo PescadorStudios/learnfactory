@@ -5,6 +5,7 @@
 // Toda consulta verifica el access token; el acceso a Postgres usa el service role.
 
 import { after } from "next/server";
+import { headers } from "next/headers";
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { enqueueScrollJob, kickScrollWorker } from "@/lib/scrollJobs";
 import { creditsFor, normalizeSize } from "@/lib/routeSize";
@@ -43,8 +44,9 @@ export async function generarVideosRuta(token: string, routeId: string): Promise
   if (route.owner_id !== user.id) return { ok: false, error: "Solo el creador puede generar los videos." };
 
   const estado = (route.videos_estado as VideosEstado) ?? "sin_videos";
-  if (estado === "generando") return { ok: true, cost: 0 }; // ya en curso: idempotente
   if (estado === "listo") return { ok: true, cost: 0 }; // nada que regenerar de cero
+  // 'generando' NO retorna: re-dispara el worker (útil si el kick previo se
+  // perdió, p.ej. en previews sin cron). No recobra (alreadyCharged lo cubre).
 
   // Solo hay cortos si hay lecciones con audio listo.
   const { count: audioLessons } = await sb
@@ -107,7 +109,13 @@ export async function generarVideosRuta(token: string, routeId: string): Promise
   await sb.from("routes").update({ videos_estado: "generando" }).eq("id", routeId);
 
   await enqueueScrollJob(routeId);
-  after(() => kickScrollWorker());
+  // Origin del deployment actual (para que el kick llegue a ESTE deploy, no a
+  // producción vía NEXT_PUBLIC_SITE_URL — clave en previews sin cron).
+  const h = await headers();
+  const host = h.get("x-forwarded-host") || h.get("host");
+  const proto = h.get("x-forwarded-proto") || "https";
+  const origin = host ? `${proto}://${host}` : undefined;
+  after(() => kickScrollWorker(origin));
 
   console.log(`[Scroll] ✓ Videos encolados para ruta ${routeId} (${alreadyCharged ? "reintento, sin cobro" : `${cost} créditos`}).`);
   return { ok: true, cost: alreadyCharged ? 0 : cost };

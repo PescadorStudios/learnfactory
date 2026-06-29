@@ -51,13 +51,17 @@ export async function enqueueScrollJob(routeId: string): Promise<void> {
  * el cron). No bloquea la respuesta al usuario: llamar dentro de `after(...)`. Si
  * falla, el cron de Vercel recoge el job igualmente en ≤1 min.
  */
-export async function kickScrollWorker(): Promise<void> {
+export async function kickScrollWorker(baseUrlOverride?: string): Promise<void> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     console.warn("[ScrollJobs] CRON_SECRET no configurado: el cron de Vercel recogerá el job.");
     return;
   }
-  const url = `${getBaseUrl()}/api/scroll-jobs/worker`;
+  // Preferimos el origin del deployment actual (lo pasa el call site desde los
+  // headers de la request): así en previews el POST llega a ESTE deploy —que sí
+  // tiene el código del Modo Scroll— y no a producción vía NEXT_PUBLIC_SITE_URL.
+  const base = baseUrlOverride?.trim().replace(/\/$/, "") || getBaseUrl();
+  const url = `${base}/api/scroll-jobs/worker`;
   try {
     await fetch(url, {
       method: "POST",
