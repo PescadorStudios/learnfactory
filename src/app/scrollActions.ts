@@ -216,24 +216,45 @@ export async function getRouteScrollFeed(
  * de baja calidad global. Hereda visibilidad: un corto es público solo si su ruta
  * lo es. El ranker decide solo el ORDEN; el contenido del corto no cambia.
  */
+export interface ScrollFeedFilters {
+  /** Intereses: solo estas categorías. */
+  categories?: string[];
+  /** Rutas específicas: solo estos ids de ruta. */
+  routeIds?: string[];
+  /** Aleatorio con exclusiones: descarta estas categorías. */
+  excludeCategories?: string[];
+  /** Aleatorio con exclusiones: descarta estas rutas. */
+  excludeRouteIds?: string[];
+  limit?: number;
+}
+
 export async function getGlobalScrollFeed(
   token: string | null,
-  opts?: { category?: string; limit?: number }
+  opts?: ScrollFeedFilters
 ): Promise<ScrollCorto[]> {
   const sb = supabaseAdmin();
   const limit = Math.min(Math.max(opts?.limit ?? 60, 1), 120);
   const user = token ? await getUserFromToken(token) : null;
 
-  // 1) Rutas públicas con videos listos.
+  // 1) Rutas públicas con videos listos (con filtros de inclusión).
   let routeQ = sb
     .from("routes")
     .select("id, topic, cover_path, category")
     .eq("visibility", "public")
     .eq("blocked", false)
     .eq("videos_estado", "listo");
-  if (opts?.category) routeQ = routeQ.eq("category", opts.category);
-  const { data: routes } = await routeQ.limit(80);
-  if (!routes || routes.length === 0) return [];
+  if (opts?.categories?.length) routeQ = routeQ.in("category", opts.categories);
+  if (opts?.routeIds?.length) routeQ = routeQ.in("id", opts.routeIds);
+  const { data: routesRaw } = await routeQ.limit(120);
+  if (!routesRaw || routesRaw.length === 0) return [];
+
+  // Exclusiones (aleatorio): se aplican en memoria.
+  const exclCats = new Set(opts?.excludeCategories ?? []);
+  const exclRoutes = new Set(opts?.excludeRouteIds ?? []);
+  const routes = routesRaw.filter(
+    r => !exclRoutes.has(r.id) && !exclCats.has((r.category as string) || "otros")
+  );
+  if (routes.length === 0) return [];
 
   const routeIds = routes.map(r => r.id);
   const rmeta = new Map(
@@ -356,4 +377,56 @@ export async function registrarCortoEvento(token: string, ev: CortoEventoInput):
     abrir_ruta: Boolean(ev.abrirRuta),
   });
   return { ok: true };
+}
+
+// ──────────────────────────────────────────────────
+//  FUENTES — para configurar la experiencia del feed (lobby)
+// ──────────────────────────────────────────────────
+
+export interface ScrollSourceRoute {
+  routeId: string;
+  topic: string;
+  category: string;
+  coverUrl: string | null;
+}
+
+export interface ScrollSources {
+  /** Rutas (públicas o propias) con cortos listos, para elegir/excluir. */
+  routes: ScrollSourceRoute[];
+  /** Categorías presentes en esas rutas (para los chips de intereses). */
+  categories: string[];
+}
+
+/**
+ * Catálogo de fuentes para el lobby del Modo Scroll: las rutas que YA tienen
+ * cortos listos y son visibles para el usuario (públicas + las propias), con su
+ * categoría y portada. Alimenta los 3 modos: intereses, rutas específicas y
+ * aleatorio (con exclusiones).
+ */
+export async function getScrollSources(token: string | null): Promise<ScrollSources> {
+  const user = token ? await getUserFromToken(token) : null;
+  const sb = supabaseAdmin();
+
+  // Públicas con videos listos…
+  const orFilter = user
+    ? `visibility.eq.public,owner_id.eq.${user.id}` // …y además las propias del usuario
+    : `visibility.eq.public`;
+  const { data: routes } = await sb
+    .from("routes")
+    .select("id, topic, cover_path, category, videos_estado, blocked, visibility, owner_id")
+    .eq("videos_estado", "listo")
+    .eq("blocked", false)
+    .or(orFilter)
+    .limit(200);
+
+  const list: ScrollSourceRoute[] = (routes || []).map(r => ({
+    routeId: r.id as string,
+    topic: r.topic as string,
+    category: (r.category as string) || "otros",
+    coverUrl: coverUrlFor(r.cover_path as string | null),
+  }));
+  list.sort((a, b) => a.topic.localeCompare(b.topic));
+
+  const categories = [...new Set(list.map(r => r.category))].sort();
+  return { routes: list, categories };
 }
