@@ -137,12 +137,14 @@ async function waitForFileProcessing(fileName: string): Promise<void> {
   }
 }
 
-export function getJsonModel(maxOutputTokens?: number) {
+export function getJsonModel(maxOutputTokens?: number, temperature?: number) {
   return genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     generationConfig: {
       responseMimeType: "application/json",
       ...(maxOutputTokens ? { maxOutputTokens } : {}),
+      // temperature baja = salida más fiel/consistente (menos "deriva" entre runs).
+      ...(temperature !== undefined ? { temperature } : {}),
     },
   });
 }

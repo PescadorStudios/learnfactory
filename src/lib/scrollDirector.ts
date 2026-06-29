@@ -194,27 +194,34 @@ export async function generateTimeline(
   const audioPart = await fetchAudioPart(lesson.audioUrl);
   if (audioPart) {
     try {
-      const prompt = `Eres el "Director" visual de Learn Factory. Vas a ESCUCHAR el audio adjunto: la narración (en español) de una microlección. Construyes un CORTO vertical estilo reel cuyos visuales aparecen SINCRONIZADOS con lo que se dice.
+      const prompt = `Eres el "Director" visual de Learn Factory. Tu ÚNICA fuente de verdad es el AUDIO adjunto (narración en español de una microlección). Tu trabajo NO es resumir el tema: es MANIFESTAR EN PANTALLA, momento a momento, EXACTAMENTE lo que se está diciendo en el audio, perfectamente sincronizado.
 
-${sintesisBlock(sintesis)}
+MÉTODO OBLIGATORIO:
+1. Escucha el audio COMPLETO y transcríbelo mentalmente con sus tiempos.
+2. Recórrelo EN ORDEN y pártelo en segmentos consecutivos según las frases/ideas que se DICEN.
+3. Por cada segmento crea UN cue cuyo visual representa la idea LITERAL de ESE segmento —lo que se oye entre su start_ms y su end_ms—, usando las MISMAS palabras clave que se pronuncian ahí.
 
-LECCIÓN: "${lesson.title}"
-CONTENIDO DE REFERENCIA (apóyate en él, pero MANDA lo que realmente se narra en el audio):
-${contenido || "(usa la síntesis)"}
+REGLAS DE FIDELIDAD (lo más importante):
+- El contenido de cada cue debe salir de lo que se ESCUCHA en su intervalo, no del tema en general. Si en [start,end] se habla de X, el cue muestra X (no Y, no algo "relacionado", no un resumen global).
+- PROHIBIDO: inventar datos, adelantar ideas que aún no se han dicho, repetir el título, o poner contenido genérico/decorativo que no corresponda a ese instante.
+- start_ms/end_ms = el momento EXACTO en que esa idea se narra. Si no estás seguro del tiempo, ubícalo lo más cerca posible de cuando se oye.
 
 ${VOCAB_GUIDE}
 
-TU TAREA (lo más importante: SINCRONÍA):
-- El audio dura ${durMs} ms. Escúchalo y divídelo en cues consecutivos.
-- Para CADA idea que se narra, crea un cue con "start_ms" y "end_ms" EXACTOS = el momento en que esa idea se está diciendo en el audio. El visual de un cue debe coincidir con lo que se escucha en ese intervalo.
-- Elige el "componente" del vocabulario que codifica esa idea (doble codificación) y "props" con datos concisos en español (títulos ≤6 palabras, puntos ≤8 palabras).
-- Los cues van EN ORDEN, sin solaparse, cubriendo de 0 a ${durMs} ms. Apunta a ${Math.max(MIN_BEATS, Math.min(MAX_BEATS, Math.round(lesson.audioDurationSeconds / 8)))} cues (±3), más donde hay más densidad de ideas.
-- Sé fiel a la síntesis: no inventes datos.
+PARÁMETROS:
+- El audio dura ${durMs} ms. Los cues van EN ORDEN, sin solaparse, cubriendo de 0 a ${durMs} ms (el primero empieza en 0; el último termina en ${durMs}).
+- Crea TANTOS cues como ideas distintas se digan (apunta a ~${Math.max(MIN_BEATS, Math.min(MAX_BEATS, Math.round(lesson.audioDurationSeconds / 7)))}, más si hay mucha densidad). Mejor un cue por idea que un cue largo y vago.
+- "componente": el del vocabulario que MEJOR codifica esa idea concreta (doble codificación). "props": textos concisos en español que parafrasean fielmente lo dicho (títulos ≤6 palabras, puntos ≤8 palabras).
+
+APOYO (NO es contenido, solo para escribir BIEN los nombres/términos; el contenido lo manda el audio):
+Lección: "${lesson.title}".
+${sintesisBlock(sintesis)}
+${contenido ? `Texto de referencia (mismas grafías de términos):\n${contenido}` : ""}
 
 Devuelve SOLO este JSON, sin markdown:
 { "cues": [ { "start_ms": 0, "end_ms": 0, "componente": "TermCallout", "props": { } } ] }`;
 
-      const model = getJsonModel(8192);
+      const model = getJsonModel(8192, 0.25); // temp baja = fiel al audio, sin deriva
       const result = await withTimeout(
         model.generateContent([audioPart, { text: prompt }]),
         AUDIO_TIMEOUT_MS,
@@ -250,7 +257,7 @@ INSTRUCCIONES:
 Devuelve SOLO este JSON, sin markdown:
 { "beats": [ { "componente": "VersusSplit", "props": { }, "peso": 3 } ] }`;
 
-  const model = getJsonModel(8192);
+  const model = getJsonModel(8192, 0.3);
   const result = await withTimeout(model.generateContent([{ text: prompt }]), TEXT_TIMEOUT_MS, "Director del Modo Scroll");
   const parsed = parseJsonResponse(result.response.text()) as { beats?: RawBeat[] };
   const cues = distributeByWeight(Array.isArray(parsed?.beats) ? parsed.beats : [], durMs);
