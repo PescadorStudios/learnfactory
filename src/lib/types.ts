@@ -178,6 +178,9 @@ export interface LessonTimeline {
   cues: TimelineCue[];
   /** Motor que produjo el timeline (diagnóstico de sincronía). */
   motor?: "multimodal" | "texto";
+  /** Primeras palabras que el modelo dice haber ESCUCHADO (diagnóstico: si está
+   *  vacío en motor=multimodal, el audio no se leyó bien). */
+  transcript?: string;
 }
 
 export interface MicroLessonData {

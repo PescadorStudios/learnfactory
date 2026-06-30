@@ -137,6 +137,32 @@ async function waitForFileProcessing(fileName: string): Promise<void> {
   }
 }
 
+/**
+ * Sube un buffer de AUDIO a la File API de Gemini (camino fiable para audio, a
+ * diferencia de inlineData base64) y espera a que esté ACTIVE. Devuelve la
+ * referencia fileData ({mimeType, uri}) o null si no se pudo.
+ */
+export async function uploadAudioToGemini(
+  buffer: Buffer,
+  mimeType: string,
+  displayName: string
+): Promise<{ mimeType: string; uri: string } | null> {
+  if (!fileManager) return null;
+  const ext = mimeType.includes("mp3") ? "mp3" : "wav";
+  const tempFilePath = path.join(os.tmpdir(), `lf_corto_${displayName}_${Date.now()}.${ext}`);
+  try {
+    fs.writeFileSync(tempFilePath, buffer);
+    const up = await fileManager.uploadFile(tempFilePath, { mimeType, displayName });
+    await waitForFileProcessing(up.file.name);
+    return { mimeType: up.file.mimeType, uri: up.file.uri };
+  } catch (e) {
+    console.error("[Gemini] uploadAudioToGemini falló:", e);
+    return null;
+  } finally {
+    try { fs.unlinkSync(tempFilePath); } catch {}
+  }
+}
+
 export function getJsonModel(maxOutputTokens?: number, temperature?: number) {
   return genAI.getGenerativeModel({
     model: "gemini-2.5-flash",

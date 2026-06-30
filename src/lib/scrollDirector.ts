@@ -4,13 +4,15 @@
 // VOCABULARIO CERRADO y lo codifica con props. Doble codificación (Paivio): cada
 // cue representa visualmente el MISMO significado que narra el audio.
 //
-// MULTIMODAL: le pasamos el AUDIO ya generado a Gemini para que lo "escuche" y
-// ubique cada cue con start_ms/end_ms reales según CUÁNDO se dice en el audio.
-// Así la sincronización audio-visual es de verdad (el concepto aparece cuando se
-// narra), sin WhisperX. Si el audio no se puede leer, caemos al método por texto
-// (beats con peso repartidos proporcionalmente).
+// MULTIMODAL: el AUDIO se sube a la File API de Gemini (camino fiable, no
+// base64 inline) y es la ÚNICA fuente de verdad: el modelo lo "escucha" y ubica
+// cada cue con start_ms/end_ms reales. NO le damos la síntesis global de la ruta
+// como contenido (eso causaba que, cuando no lograba oír el audio, el corto
+// hablara del tema de la RUTA y no de la lección). Pedimos además un "transcript"
+// como prueba de que sí escuchó: si viene vacío, descartamos el resultado.
+// Si no hay audio legible, caemos al método por texto (los pasos de ESTA lección).
 import "server-only";
-import { getJsonModel, parseJsonResponse, sintesisBlock } from "@/lib/generation";
+import { getJsonModel, parseJsonResponse, uploadAudioToGemini } from "@/lib/generation";
 import {
   COMPONENTES_SCROLL,
   type ComponenteScroll,
@@ -25,14 +27,13 @@ const MAX_BEATS = 16;
 const MIN_BEATS = 3;
 const TEXT_TIMEOUT_MS = 60_000;
 const AUDIO_TIMEOUT_MS = 120_000; // escuchar + razonar sobre ~3 min de audio
-const MAX_AUDIO_BYTES = 18 * 1024 * 1024; // límite seguro para inlineData
 const MIN_CUE_MS = 600;
 
 export interface TimelineLessonInput {
   routeId: string;
   nodeId: string;
   title: string;
-  /** Pasos de la lección (referencia semántica del significado). */
+  /** Pasos de la lección (referencia semántica; fallback si no hay audio). */
   steps: LessonStep[] | null;
   conceptIds: string[];
   audioUrl: string;
@@ -73,6 +74,14 @@ function stepsToText(steps: LessonStep[] | null): string {
   return parts.join("\n\n");
 }
 
+/** Nombres de los conceptos que cubre ESTA lección (apoyo ortográfico, no global). */
+function lessonConceptsText(sintesis: Sintesis, conceptIds: string[]): string {
+  if (!sintesis?.conceptos?.length || !conceptIds?.length) return "";
+  const set = new Set(conceptIds);
+  const names = sintesis.conceptos.filter(c => set.has(c.id)).map(c => `- ${c.nombre}`);
+  return names.join("\n");
+}
+
 const VOCAB_GUIDE = `VOCABULARIO VISUAL CERRADO (elige SOLO de esta lista; nunca inventes un componente):
 - "TermCallout": un término clave + su definición breve. props: { "termino": string, "definicion": string }
 - "BuildList": una lista que se construye ítem a ítem. props: { "titulo"?: string, "items": string[] }
@@ -91,15 +100,17 @@ REGLA DE DOBLE CODIFICACIÓN (obligatoria): cada cue debe CODIFICAR el significa
 - una idea-lista → BuildList · una cita → QuoteBeat · una proporción/avance → ProgressBar · una idea ancla → KeyImage
 PROHIBIDO el visual decorativo que no representa la idea.`;
 
-/** Descarga el audio como inlineData para Gemini. null si no se pudo / muy grande. */
-async function fetchAudioPart(audioUrl: string): Promise<{ inlineData: { mimeType: string; data: string } } | null> {
+/** Sube el audio a la File API de Gemini y devuelve la parte fileData. null si falla. */
+async function fetchAudioPart(audioUrl: string, displayName: string): Promise<{ fileData: { mimeType: string; fileUri: string } } | null> {
   try {
     const res = await fetch(audioUrl);
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length === 0 || buf.length > MAX_AUDIO_BYTES) return null;
+    if (buf.length === 0) return null;
     const mimeType = audioUrl.toLowerCase().endsWith(".mp3") ? "audio/mp3" : "audio/wav";
-    return { inlineData: { mimeType, data: buf.toString("base64") } };
+    const file = await uploadAudioToGemini(buf, mimeType, displayName);
+    if (!file) return null;
+    return { fileData: { mimeType: file.mimeType, fileUri: file.uri } };
   } catch {
     return null;
   }
@@ -127,8 +138,7 @@ function normalizeTimedCues(raw: unknown, durMs: number): TimelineCue[] {
   if (valid.length === 0) return [];
 
   // Auto-detección de UNIDADES: si los tiempos parecen SEGUNDOS (mucho menores
-  // que la duración en ms), reescalar ×1000. El modelo a veces devuelve segundos
-  // pese a pedir ms, y eso amontona todos los cues al inicio (se ve "estático").
+  // que la duración en ms), reescalar ×1000 (el modelo a veces devuelve segundos).
   const maxRaw = Math.max(...valid.map(c => Math.max(c.start_ms, c.end_ms)));
   if (maxRaw > 0 && maxRaw <= durMs / 10) {
     for (const c of valid) {
@@ -143,15 +153,13 @@ function normalizeTimedCues(raw: unknown, durMs: number): TimelineCue[] {
     const c = valid[i];
     const start = Math.max(0, Math.min(c.start_ms, durMs - MIN_CUE_MS), prevEnd);
     const nextStart = i < valid.length - 1 ? valid[i + 1].start_ms : durMs;
-    // El fin: lo que dijo el modelo, pero al menos MIN_CUE_MS y sin pisar el siguiente.
     let end = Math.max(c.end_ms, start + MIN_CUE_MS);
     end = Math.min(end, durMs, Math.max(start + MIN_CUE_MS, nextStart));
-    if (i === valid.length - 1) end = durMs; // el último cierra el audio
+    if (i === valid.length - 1) end = durMs;
     if (end <= start) continue;
     cues.push({ start_ms: start, end_ms: end, componente: c.componente, props: c.props });
     prevEnd = end;
   }
-  // Primer cue arranca en 0 para no dejar el inicio en negro.
   if (cues.length) cues[0].start_ms = 0;
   return cues;
 }
@@ -180,7 +188,8 @@ function build(
   lesson: TimelineLessonInput,
   durMs: number,
   cues: TimelineCue[],
-  motor: "multimodal" | "texto"
+  motor: "multimodal" | "texto",
+  transcript = ""
 ): LessonTimeline {
   return {
     leccion_id: lesson.nodeId,
@@ -190,13 +199,15 @@ function build(
     audio_url: lesson.audioUrl,
     cues,
     motor,
+    transcript,
   };
 }
 
 /**
- * Genera el timeline declarativo (corto) de una lección. Intenta el Director
- * MULTIMODAL (escucha el audio → tiempos reales); si no hay audio legible, cae
- * al método por texto. Devuelve null si no hay material suficiente.
+ * Genera el timeline (corto) de una lección. Intenta el Director MULTIMODAL
+ * (escucha el audio → tiempos reales y contenido fiel); si el audio no se pudo
+ * oír (transcript vacío o sin cues), cae al método por texto con los pasos de
+ * ESTA lección (nunca con la síntesis global de la ruta). null si no hay material.
  */
 export async function generateTimeline(
   lesson: TimelineLessonInput,
@@ -206,38 +217,34 @@ export async function generateTimeline(
   if (durMs <= 0) return null;
 
   const contenido = stepsToText(lesson.steps);
+  const conceptos = lessonConceptsText(sintesis, lesson.conceptIds);
 
-  // ── 1) Director MULTIMODAL: Gemini escucha el audio y cronometra los cues ──
-  const audioPart = await fetchAudioPart(lesson.audioUrl);
+  // ── 1) Director MULTIMODAL: Gemini escucha el audio (File API) ──
+  const audioPart = await fetchAudioPart(lesson.audioUrl, `${lesson.routeId}_${lesson.nodeId}`);
   if (audioPart) {
     try {
-      const prompt = `Eres el "Director" visual de Learn Factory. Tu ÚNICA fuente de verdad es el AUDIO adjunto (narración en español de una microlección). Tu trabajo NO es resumir el tema: es MANIFESTAR EN PANTALLA, momento a momento, EXACTAMENTE lo que se está diciendo en el audio, perfectamente sincronizado.
+      const prompt = `Eres el "Director" visual de Learn Factory. Tu ÚNICA fuente de verdad es el AUDIO adjunto (narración en español de una microlección). Tu trabajo NO es resumir el tema del curso: es MANIFESTAR EN PANTALLA, momento a momento, EXACTAMENTE lo que se DICE en ESTE audio, perfectamente sincronizado.
 
 MÉTODO OBLIGATORIO:
-1. Escucha el audio COMPLETO y transcríbelo mentalmente con sus tiempos.
+1. Escucha el audio COMPLETO. Si NO puedes oírlo, devuelve "transcript": "" y "cues": [].
 2. Recórrelo EN ORDEN y pártelo en segmentos consecutivos según las frases/ideas que se DICEN.
 3. Por cada segmento crea UN cue cuyo visual representa la idea LITERAL de ESE segmento —lo que se oye entre su start_ms y su end_ms—, usando las MISMAS palabras clave que se pronuncian ahí.
 
 REGLAS DE FIDELIDAD (lo más importante):
-- El contenido de cada cue debe salir de lo que se ESCUCHA en su intervalo, no del tema en general. Si en [start,end] se habla de X, el cue muestra X (no Y, no algo "relacionado", no un resumen global).
-- PROHIBIDO: inventar datos, adelantar ideas que aún no se han dicho, repetir el título, o poner contenido genérico/decorativo que no corresponda a ese instante.
-- start_ms/end_ms = el momento EXACTO en que esa idea se narra. Si no estás seguro del tiempo, ubícalo lo más cerca posible de cuando se oye.
+- El contenido de cada cue SALE de lo que se ESCUCHA en su intervalo. PROHIBIDO hablar del tema "en general", del curso, o de ideas que no se dicen en este audio.
+- PROHIBIDO inventar datos, adelantar ideas que aún no se han dicho, o poner contenido genérico/decorativo.
+- start_ms/end_ms = el momento EXACTO en que esa idea se narra.
 
 ${VOCAB_GUIDE}
 
 PARÁMETROS:
-- El audio dura ${durMs} ms. Los cues van EN ORDEN, sin solaparse, cubriendo de 0 a ${durMs} ms (el primero empieza en 0; el último termina en ${durMs}).
-- ⚠️ Los tiempos van en MILISEGUNDOS, NO en segundos. Ej.: si una idea se dice entre el segundo 12 y el 18, usa start_ms: 12000, end_ms: 18000 (NO 12 y 18). Los valores deben acercarse a ${durMs} hacia el final.
-- Crea TANTOS cues como ideas distintas se digan (apunta a ~${Math.max(MIN_BEATS, Math.min(MAX_BEATS, Math.round(lesson.audioDurationSeconds / 7)))}, más si hay mucha densidad). Mejor un cue por idea que un cue largo y vago.
-- "componente": el del vocabulario que MEJOR codifica esa idea concreta (doble codificación). "props": textos concisos en español que parafrasean fielmente lo dicho (títulos ≤6 palabras, puntos ≤8 palabras).
-
-APOYO (NO es contenido, solo para escribir BIEN los nombres/términos; el contenido lo manda el audio):
-Lección: "${lesson.title}".
-${sintesisBlock(sintesis)}
-${contenido ? `Texto de referencia (mismas grafías de términos):\n${contenido}` : ""}
-
+- El audio dura ${durMs} ms. Los cues van EN ORDEN, sin solaparse, cubriendo de 0 a ${durMs} ms (el primero en 0; el último termina en ${durMs}).
+- ⚠️ Tiempos en MILISEGUNDOS, NO en segundos. Ej.: del segundo 12 al 18 → start_ms: 12000, end_ms: 18000. Los valores deben acercarse a ${durMs} hacia el final.
+- Apunta a ~${Math.max(MIN_BEATS, Math.min(MAX_BEATS, Math.round(lesson.audioDurationSeconds / 7)))} cues (más si hay densidad de ideas). "props": textos concisos en español fieles a lo dicho (títulos ≤6 palabras, puntos ≤8 palabras).
+- "transcript": OBLIGATORIO. Escribe las primeras ~12 palabras EXACTAS (textuales) que oyes al inicio del audio. Es la prueba de que escuchaste; si está vacío, tu respuesta se descarta.
+${conceptos ? `\nAPOYO ORTOGRÁFICO (solo para escribir bien nombres/términos de ESTA lección; NO es el contenido):\nLección: "${lesson.title}"\nTérminos:\n${conceptos}\n` : `\nLección: "${lesson.title}"\n`}
 Devuelve SOLO este JSON, sin markdown:
-{ "cues": [ { "start_ms": 0, "end_ms": 0, "componente": "TermCallout", "props": { } } ] }`;
+{ "transcript": "...", "cues": [ { "start_ms": 0, "end_ms": 0, "componente": "TermCallout", "props": { } } ] }`;
 
       const model = getJsonModel(8192, 0.25); // temp baja = fiel al audio, sin deriva
       const result = await withTimeout(
@@ -245,32 +252,36 @@ Devuelve SOLO este JSON, sin markdown:
         AUDIO_TIMEOUT_MS,
         "Director multimodal del Modo Scroll"
       );
-      const parsed = parseJsonResponse(result.response.text()) as { cues?: RawTimedCue[] };
+      const parsed = parseJsonResponse(result.response.text()) as { transcript?: string; cues?: RawTimedCue[] };
+      const transcript = typeof parsed?.transcript === "string" ? parsed.transcript.trim() : "";
       const cues = normalizeTimedCues(parsed?.cues, durMs);
-      if (cues.length > 0) return build(lesson, durMs, cues, "multimodal");
-      console.warn(`[ScrollDirector] Multimodal sin cues válidos (${lesson.routeId}/${lesson.nodeId}); usando fallback por texto.`);
+      // GUARD: sin transcript = el modelo NO oyó el audio → no guardamos un corto
+      // que hablaría de otra cosa; mejor caer al fallback por texto de la lección.
+      if (transcript.length >= 8 && cues.length > 0) {
+        return build(lesson, durMs, cues, "multimodal", transcript);
+      }
+      console.warn(`[ScrollDirector] Multimodal sin transcript/cues (${lesson.routeId}/${lesson.nodeId}); el audio no se leyó → fallback por texto.`);
     } catch (e) {
       console.warn(`[ScrollDirector] Multimodal falló (${lesson.routeId}/${lesson.nodeId}): ${e instanceof Error ? e.message : e}. Fallback por texto.`);
     }
   }
 
-  // ── 2) Fallback por TEXTO: beats con peso repartidos proporcionalmente ──
+  // ── 2) Fallback por TEXTO: usa los pasos de ESTA lección (nunca la síntesis
+  // global de la ruta, para no derivar al tema del curso). ──
   if (!contenido.trim()) return null;
   const targetBeats = Math.max(MIN_BEATS, Math.min(MAX_BEATS, Math.round(lesson.audioDurationSeconds / 9)));
-  const prompt = `Eres el "Director" visual de Learn Factory. Conviertes una lección en un CORTO vertical: una secuencia de "beats" visuales.
-
-${sintesisBlock(sintesis)}
+  const prompt = `Eres el "Director" visual de Learn Factory. Conviertes UNA microlección en un CORTO vertical: una secuencia de "beats" visuales fieles al contenido de ESTA lección (no del curso en general).
 
 LECCIÓN: "${lesson.title}"
-CONTENIDO DE LA LECCIÓN:
+CONTENIDO DE LA LECCIÓN (tu ÚNICA fuente):
 ${contenido}
-
+${conceptos ? `\nTérminos de esta lección (para ortografía):\n${conceptos}\n` : ""}
 ${VOCAB_GUIDE}
 
 INSTRUCCIONES:
 - Produce ${targetBeats} beats (±2) que recorran la lección EN ORDEN, del inicio al final.
 - Cada beat: "componente" (uno EXACTO del vocabulario), "props" (datos concisos en español: títulos ≤6 palabras, puntos ≤8 palabras) y "peso" (entero 1-5 = duración relativa).
-- Varía los componentes según el tipo de idea. Sé fiel a la síntesis. NO incluyas tiempos.
+- Fiel al contenido de arriba. PROHIBIDO contenido genérico del tema. NO incluyas tiempos.
 
 Devuelve SOLO este JSON, sin markdown:
 { "beats": [ { "componente": "VersusSplit", "props": { }, "peso": 3 } ] }`;
