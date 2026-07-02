@@ -43,6 +43,21 @@ create index if not exists idx_ucs_user    on public.user_campaign_sends (user_i
 create index if not exists idx_ucs_sent_ok on public.user_campaign_sends (sent_at)
   where status = 'sent';
 
+-- ── Ruta objetivo opcional de la campaña ─────────────────────────────────────
+-- Cuando target_route_id != null, los merge fields ({{curso}}, {{progreso}},
+-- {{enlace}}) se resuelven contra ESA ruta para sus estudiantes (no el curso a
+-- medias auto-detectado). El contenido de valor lo hornea la IA en el cuerpo.
+-- Null = comportamiento original (curso a medias del propio usuario).
+alter table public.user_campaigns
+  add column if not exists target_route_id uuid references public.routes (id) on delete set null;
+
+create index if not exists idx_user_campaigns_target on public.user_campaigns (target_route_id);
+
+-- Acelera el cálculo de la audiencia por ruta (quién estudia la ruta X, su
+-- avance y si pasó nodos). Complementan los índices ya existentes de attempts.
+create index if not exists idx_attempts_route_passed on public.attempts (route_id, passed);
+create index if not exists idx_route_starts_route    on public.route_starts (route_id);
+
 -- RLS: estas tablas se tocan SOLO desde el servidor (service role, salta RLS).
 -- No publicamos políticas anónimas → nadie con la anon key puede leer/escribir.
 alter table public.user_campaigns      enable row level security;
