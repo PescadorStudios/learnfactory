@@ -44,6 +44,8 @@ import type {
 import { ROUTE_CATEGORIES, SOURCE_TYPES } from "@/lib/types";
 import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
 import { creditsFor, normalizeSize, type RouteSize } from "@/lib/routeSize";
+import { isRetoParticipant } from "@/lib/retoAccess";
+import { evaluateRetoCompletion } from "@/lib/retoFulfillment";
 
 // AUDIO_BUCKET, COVER_BUCKET, STALE_GENERATING_MS y los helpers de portada/síntesis
 // viven en @/lib/routeGen (compartidos con el worker).
@@ -620,7 +622,9 @@ export async function markRouteStarted(token: string, routeId: string): Promise<
     .maybeSingle();
   if (!route || route.blocked) return { ok: false };
   if (route.owner_id === user.id) return { ok: true }; // el dueño no es su propio estudiante
-  if (route.visibility !== "public") return { ok: false };
+  if (route.visibility !== "public" && !(await isRetoParticipant(sb, user.id, routeId))) {
+    return { ok: false };
+  }
 
   // onConflict do nothing: si ya estaba registrado, no se altera started_at.
   const { error } = await sb
@@ -660,7 +664,9 @@ export async function getRoute(token: string, routeId: string): Promise<RouteDet
   if (!route) return null;
   if (route.blocked) return null;
   const isOwner = route.owner_id === user.id;
-  if (!isOwner && route.visibility !== "public") return null;
+  if (!isOwner && route.visibility !== "public" && !(await isRetoParticipant(sb, user.id, routeId))) {
+    return null;
+  }
 
   const [{ data: lessons }, { data: attempts }, { data: mastery }, { data: allUserAttempts }, { data: myProfile }] = await Promise.all([
     sb.from("lessons").select("node_id, status, error, generating_at").eq("route_id", routeId),
@@ -751,7 +757,9 @@ export async function getLesson(token: string, routeId: string, nodeId: string):
   // Acceso: dueño siempre; cualquiera si la ruta es pública. Bloqueada → nadie.
   if (!route || !lesson) return null;
   if (route.blocked) return null;
-  if (route.owner_id !== user.id && route.visibility !== "public") return null;
+  if (route.owner_id !== user.id && route.visibility !== "public" && !(await isRetoParticipant(sb, user.id, routeId))) {
+    return null;
+  }
 
   let audioUrl: string | null = null;
   if (lesson.audio_path) {
@@ -827,7 +835,9 @@ export async function getRouteAudioStations(
       .eq("status", "ready"),
   ]);
   if (!route || route.blocked) return null;
-  if (route.owner_id !== user.id && route.visibility !== "public") return null;
+  if (route.owner_id !== user.id && route.visibility !== "public" && !(await isRetoParticipant(sb, user.id, routeId))) {
+    return null;
+  }
 
   // Index por nodo (solo los que tienen WAV + una mecánica válida {mode:...}).
   const byNode = new Map<string, RouteAudioStation>();
@@ -1057,6 +1067,15 @@ export async function saveAttempt(
       explorerRankUp = await updateReputation(user.id, routeId);
     } catch (e) {
       console.warn("[Reputation] No se pudo actualizar la reputación:", e);
+    }
+    // Academia de Retos: si la ruta pertenece a un reto y este intento cerró el
+    // 100% verificado, registra la finalización (timestamp inmutable) y asigna
+    // premios. Inline (no diferido) para que el timestamp sea el del intento
+    // decisivo. Para rutas sin reto cuesta una sola query indexada.
+    try {
+      await evaluateRetoCompletion(user.id, routeId);
+    } catch (e) {
+      console.warn("[Reto] No se pudo evaluar la finalización del reto:", e);
     }
   }
 

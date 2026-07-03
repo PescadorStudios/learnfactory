@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X, CreditCard, Copy, Webhook, RefreshCw, Mail, UserPlus, Megaphone } from "lucide-react";
+import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X, CreditCard, Copy, Webhook, RefreshCw, Mail, UserPlus, Megaphone, Wallet as Wallet2 } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import {
   checkIsAdmin, adminListUsers, adminSetUserQuota, adminSetBatchEnabled, type AdminUserRow,
@@ -14,12 +14,13 @@ import AppHeader from "@/components/AppHeader";
 import EmailsTab from "@/components/EmailsTab";
 import CreatorsTab from "@/components/CreatorsTab";
 import UserCampaignsTab from "@/components/UserCampaignsTab";
+import WalletsTab from "@/components/WalletsTab";
 
 export default function AdminPage() {
   const router = useRouter();
   const { token, loading, session } = useRequireAuth();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"users" | "routes" | "pagos" | "correos" | "creadores" | "campanas">("users");
+  const [tab, setTab] = useState<"users" | "routes" | "pagos" | "correos" | "creadores" | "campanas" | "billeteras">("users");
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [search, setSearch] = useState("");
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -238,6 +239,12 @@ export default function AdminPage() {
             className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${tab === "campanas" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
           >
             <Megaphone className="w-4 h-4" /> Campañas
+          </button>
+          <button
+            onClick={() => setTab("billeteras")}
+            className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${tab === "billeteras" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
+          >
+            <Wallet2 className="w-4 h-4" /> Billeteras
           </button>
         </div>
 
@@ -560,6 +567,8 @@ export default function AdminPage() {
         {tab === "creadores" && <CreatorsTab token={token} />}
 
         {tab === "campanas" && <UserCampaignsTab token={token} />}
+
+        {tab === "billeteras" && token && <WalletsTab token={token} />}
       </div>
 
       {/* Confirmar borrado de curso */}

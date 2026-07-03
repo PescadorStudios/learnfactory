@@ -485,3 +485,138 @@ export async function adminActivatePremium(
   console.log(`[Admin] ✓ Premium activado a mano para ${userId}${orderId ? ` (orden ${orderId})` : ""}.`);
   return { ok: true };
 }
+
+// ──────────────────────────────────────────────────
+//  BILLETERAS DE CREADORES (Academia de Retos)
+// ──────────────────────────────────────────────────
+
+export interface AdminWalletMovimiento {
+  id: string;
+  creadorEmail: string;
+  creadorNombre: string | null;
+  retoTitulo: string;
+  montoBruto: number;
+  montoCreador: number;
+  montoPlataforma: number;
+  moneda: string;
+  estado: "disponible" | "liquidado";
+  fecha: string;
+}
+
+export interface AdminWalletCreador {
+  creadorId: string;
+  email: string;
+  nombre: string | null;
+  saldoDisponible: number;
+  totalAcreditado: number;
+  moneda: string;
+  movimientos: AdminWalletMovimiento[];
+  /** Datos bancarios de payout (SENSIBLES: solo se muestran aquí, al admin). */
+  banca: { titular: string; documento: string; banco: string; tipoCuenta: string; numero: string } | null;
+}
+
+/** Wallets de todos los creadores con movimientos, agrupadas por creador. */
+export async function adminListWallets(token: string): Promise<AdminWalletCreador[]> {
+  const admin = await requireAdmin(token);
+  if (!admin) return [];
+  const sb = supabaseAdmin();
+
+  const { data: movs } = await sb
+    .from("wallet_movimientos")
+    .select("id, creador_id, reto_id, monto_bruto, monto_creador, monto_plataforma, moneda, estado, created_at")
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (!movs?.length) return [];
+
+  const creadorIds = [...new Set(movs.map(m => m.creador_id as string))];
+  const retoIds = [...new Set(movs.map(m => m.reto_id as string))];
+  const [{ data: profs }, { data: retos }, { data: bancas }] = await Promise.all([
+    sb.from("profiles").select("id, email, username, display_name").in("id", creadorIds),
+    sb.from("retos").select("id, titulo").in("id", retoIds),
+    sb.from("creador_datos_bancarios").select("creador_id, titular, documento, banco, tipo_cuenta, numero").in("creador_id", creadorIds),
+  ]);
+  const profDe = new Map((profs || []).map(p => [p.id as string, p]));
+  const tituloDe = new Map((retos || []).map(r => [r.id as string, r.titulo as string]));
+  const bancaDe = new Map((bancas || []).map(b => [b.creador_id as string, b]));
+
+  const porCreador = new Map<string, AdminWalletCreador>();
+  for (const m of movs) {
+    const cid = m.creador_id as string;
+    if (!porCreador.has(cid)) {
+      const prof = profDe.get(cid);
+      const banca = bancaDe.get(cid);
+      porCreador.set(cid, {
+        creadorId: cid,
+        email: (prof?.email as string) ?? "",
+        nombre: (prof?.display_name as string) || (prof?.username as string) || null,
+        saldoDisponible: 0,
+        totalAcreditado: 0,
+        moneda: (m.moneda as string) || "COP",
+        movimientos: [],
+        banca: banca
+          ? {
+              titular: (banca.titular as string) ?? "",
+              documento: (banca.documento as string) ?? "",
+              banco: (banca.banco as string) ?? "",
+              tipoCuenta: (banca.tipo_cuenta as string) ?? "ahorros",
+              numero: (banca.numero as string) ?? "",
+            }
+          : null,
+      });
+    }
+    const w = porCreador.get(cid)!;
+    const monto = Number(m.monto_creador);
+    w.totalAcreditado += monto;
+    if (m.estado === "disponible") w.saldoDisponible += monto;
+    w.movimientos.push({
+      id: m.id as string,
+      creadorEmail: w.email,
+      creadorNombre: w.nombre,
+      retoTitulo: tituloDe.get(m.reto_id as string) ?? "Reto",
+      montoBruto: Number(m.monto_bruto),
+      montoCreador: monto,
+      montoPlataforma: Number(m.monto_plataforma),
+      moneda: (m.moneda as string) || "COP",
+      estado: m.estado as AdminWalletMovimiento["estado"],
+      fecha: m.created_at as string,
+    });
+  }
+  return [...porCreador.values()].sort((a, b) => b.saldoDisponible - a.saldoDisponible);
+}
+
+/** Marca un movimiento como liquidado (payout manual hecho por fuera). */
+export async function adminMarkMovimientoLiquidado(
+  token: string,
+  movimientoId: string,
+  liquidado: boolean
+): Promise<{ ok: boolean }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false };
+  const sb = supabaseAdmin();
+  const { error } = await sb
+    .from("wallet_movimientos")
+    .update(
+      liquidado
+        ? { estado: "liquidado", liquidado_at: new Date().toISOString() }
+        : { estado: "disponible", liquidado_at: null }
+    )
+    .eq("id", movimientoId);
+  if (error) {
+    console.error("[Admin] no se pudo actualizar el movimiento:", error.message);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/** Marca TODOS los movimientos disponibles de un creador como liquidados. */
+export async function adminLiquidarCreador(token: string, creadorId: string): Promise<{ ok: boolean }> {
+  const admin = await requireAdmin(token);
+  if (!admin) return { ok: false };
+  const sb = supabaseAdmin();
+  const { error } = await sb
+    .from("wallet_movimientos")
+    .update({ estado: "liquidado", liquidado_at: new Date().toISOString() })
+    .eq("creador_id", creadorId)
+    .eq("estado", "disponible");
+  return { ok: !error };
+}

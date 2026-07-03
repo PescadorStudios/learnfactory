@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { activatePremiumByOrder } from "@/lib/premium";
+import { fulfillRetoOrder } from "@/lib/retoFulfillment";
 
 // ============================================================================
 // WEBHOOK DE CONFIRMACIÓN DE BOLD
@@ -133,6 +134,12 @@ export async function POST(request: Request) {
     if (isApproved && orderRef) {
       const res = await activatePremiumByOrder(sb, orderRef, amountTotal);
       console.log(`[Bold] orden ${orderRef}: ${res.reason}${res.userId ? ` (user ${res.userId})` : ""}.`);
+      // Entradas a retos: activatePremiumByOrder ya marcó la orden 'paid'
+      // (candado pending→paid); el fulfillment es no-op para órdenes que no
+      // sean purpose='reto' e idempotente ante reintentos del webhook.
+      if (res.reason === "non-premium-purpose" || res.reason === "already-paid") {
+        await fulfillRetoOrder(sb, orderRef);
+      }
     } else if (isApproved && !orderRef) {
       console.warn(`[Bold] pago aprobado SIN referencia de orden; no se puede activar. payment_id=${paymentId}`);
     }

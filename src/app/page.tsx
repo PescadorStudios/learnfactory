@@ -3,11 +3,12 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones, Film } from "lucide-react";
+import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones, Film, Trophy } from "lucide-react";
 import { useAuth, useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
 import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
-import type { RouteSummary, LibrarySection, FeaturedCreator, RouteCard as RouteCardData, PlanState } from "@/lib/types";
+import { getMisRetosParticipando } from "./retoActions";
+import type { RouteSummary, LibrarySection, FeaturedCreator, RouteCard as RouteCardData, PlanState, RetoParticipando } from "@/lib/types";
 import AppHeader from "@/components/AppHeader";
 import RouteRow from "@/components/RouteRow";
 import RouteCard from "@/components/RouteCard";
@@ -23,6 +24,7 @@ function HomeContent() {
   const { session, loading, token } = useRequireAuth();
 
   const [myRoutes, setMyRoutes] = useState<RouteSummary[] | null>(null);
+  const [misRetos, setMisRetos] = useState<RetoParticipando[]>([]);
   const [sections, setSections] = useState<LibrarySection[] | null>(null);
   const [creators, setCreators] = useState<FeaturedCreator[]>([]);
   const [results, setResults] = useState<RouteCardData[] | null>(null);
@@ -38,8 +40,15 @@ function HomeContent() {
 
   const loadHome = useCallback(async () => {
     if (!token) return;
-    const [routes, lib, feat, p] = await Promise.all([getMyRoutes(token), getLibrary(token), getFeaturedCreators(token), getPlan(token)]);
+    const [routes, retos, lib, feat, p] = await Promise.all([
+      getMyRoutes(token),
+      getMisRetosParticipando(token).catch(() => []),
+      getLibrary(token),
+      getFeaturedCreators(token),
+      getPlan(token),
+    ]);
     setMyRoutes(routes);
+    setMisRetos(retos);
     setSections(lib);
     setCreators(feat);
     setPlan(p);
@@ -373,6 +382,53 @@ function HomeContent() {
                       </button>
                     );
                   })}
+                </div>
+              </section>
+            )}
+
+            {/* Mis retos (participante: acceso permanente a la ruta del reto) */}
+            {misRetos.length > 0 && (
+              <section className="mb-10">
+                <h2 className="text-lg md:text-xl font-bold text-white mb-3 px-1 flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-primary" /> Mis retos
+                </h2>
+                <div className="flex gap-4 overflow-x-auto pb-3 -mx-1 px-1">
+                  {misRetos.map(r => (
+                    <button
+                      key={r.retoId}
+                      onClick={() => router.push(`/reto/${r.retoId}`)}
+                      className="group shrink-0 w-60 text-left"
+                    >
+                      <div className="relative aspect-video rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800 group-hover:border-primary/60 transition-colors">
+                        {r.imagenUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={r.imagenUrl} alt={r.titulo} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full bg-gradient-to-br from-primary/25 to-secondary/20" />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                        {r.premioPosicion != null && (
+                          <span className="absolute top-2 left-2 text-xs text-amber-300 bg-black/60 rounded-full px-2 py-0.5 flex items-center gap-1">
+                            <Crown className="w-3 h-3" /> Premio {r.premioPosicion}
+                          </span>
+                        )}
+                        {r.estadoEfectivo === "finalizado" && r.premioPosicion == null && (
+                          <span className="absolute top-2 left-2 text-xs text-zinc-300 bg-black/60 rounded-full px-2 py-0.5">
+                            Finalizado
+                          </span>
+                        )}
+                        <div className="absolute bottom-0 inset-x-0 p-3">
+                          <h3 className="font-bold text-white text-sm line-clamp-1">{r.titulo}</h3>
+                          <div className="mt-1.5 h-1 bg-zinc-700/60 rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-primary to-accent" style={{ width: `${r.completionPct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 mt-2 px-0.5 text-xs text-zinc-500">
+                        <span>{r.completionPct}% verificado</span>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </section>
             )}

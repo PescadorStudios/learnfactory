@@ -7,6 +7,7 @@
 import { after } from "next/server";
 import { headers } from "next/headers";
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
+import { isRetoParticipant } from "@/lib/retoAccess";
 import { enqueueScrollJob, kickScrollWorker } from "@/lib/scrollJobs";
 import { AUDIO_BUCKET, COVER_BUCKET, flattenNodes } from "@/lib/routeGen";
 import { rankFeed, type RankCandidate, type UserSignal } from "@/lib/feedRanker";
@@ -217,7 +218,13 @@ export async function getRouteScrollFeed(
       .eq("timeline_status", "ready"),
   ]);
   if (!route || route.blocked) return null;
-  if (route.owner_id !== user?.id && route.visibility !== "public") return null;
+  if (
+    route.owner_id !== user?.id &&
+    route.visibility !== "public" &&
+    !(user && (await isRetoParticipant(sb, user.id, routeId)))
+  ) {
+    return null;
+  }
 
   const cover = coverUrlFor(route.cover_path);
   const byNode = new Map<string, ScrollCorto>();

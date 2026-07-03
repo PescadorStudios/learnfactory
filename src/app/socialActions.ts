@@ -5,6 +5,7 @@
 // Todas verifican el access token; el acceso a datos usa el service role.
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
+import { isRetoParticipant } from "@/lib/retoAccess";
 import { generateCoverImage } from "@/lib/generation";
 import type {
   PlanState,
@@ -506,7 +507,13 @@ export async function getRouteLanding(token: string | null, routeId: string): Pr
   if (!r) return null;
   if (r.blocked) return null; // ruta fuera del aire por el admin
   const isOwner = user ? r.owner_id === user.id : false;
-  if (!isOwner && r.visibility !== "public") return null;
+  if (
+    !isOwner &&
+    r.visibility !== "public" &&
+    !(user && (await isRetoParticipant(sb, user.id, routeId)))
+  ) {
+    return null;
+  }
 
   const [{ data: creator }, { count: totalNodes }, myRatingRow, myFavRow, { data: passedAttempts }] =
     await Promise.all([
@@ -584,7 +591,13 @@ export async function getRouteStudents(token: string | null, routeId: string): P
     .maybeSingle();
   if (!route || route.blocked) return [];
   const isRouteOwner = viewer?.id === route.owner_id;
-  if (!isRouteOwner && route.visibility !== "public") return [];
+  if (
+    !isRouteOwner &&
+    route.visibility !== "public" &&
+    !(viewer && (await isRetoParticipant(sb, viewer.id, routeId)))
+  ) {
+    return [];
+  }
 
   const [{ count: totalLessons }, { data: passed }] = await Promise.all([
     sb.from("lessons").select("id", { count: "exact", head: true }).eq("route_id", routeId),

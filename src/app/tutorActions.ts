@@ -7,6 +7,7 @@
 // bloqueada → nadie. Escrituras solo por service role (RLS bloquea la anónima).
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
+import { isRetoParticipant } from "@/lib/retoAccess";
 import { tutorTurnCore } from "@/lib/generation";
 import type { Sintesis, Tree, TutorMessage, TutorThread } from "@/lib/types";
 
@@ -23,7 +24,13 @@ async function loadRouteForTutor(userId: string, routeId: string) {
     .eq("id", routeId)
     .single();
   if (!route || route.blocked) return null;
-  if (route.owner_id !== userId && route.visibility !== "public") return null;
+  if (
+    route.owner_id !== userId &&
+    route.visibility !== "public" &&
+    !(await isRetoParticipant(supabaseAdmin(), userId, routeId))
+  ) {
+    return null;
+  }
   return route;
 }
 

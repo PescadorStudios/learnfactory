@@ -561,3 +561,184 @@ export interface MicroLessonProgress {
   quizCorrect: boolean;
   masteryUpdates: Array<{ conceptId: string; delta: number }>;
 }
+
+// ── Academia de Retos Verificados ──
+// Un reto vive sobre una ruta PRIVADA creada junto a él. La audiencia entra
+// pagando (split 80/20 a la wallet del creador) o canjeando un cupo gratis;
+// todos conservan la ruta para siempre. Ganan los primeros en completar el
+// 100% de la ruta con verificación de atención aprobada.
+
+export type RetoEstado = "borrador" | "publicado" | "en_curso" | "finalizado";
+export type RetoMoneda = "COP" | "USD";
+export type RetoVia = "pago" | "cupo";
+
+/** Tipos de premio configurables por el creador. */
+export const PREMIO_TIPOS = [
+  { id: "mentoria", label: "Mentoría" },
+  { id: "colaboracion_canal", label: "Colaboración en el canal" },
+  { id: "acceso_exclusivo", label: "Acceso exclusivo" },
+  { id: "producto", label: "Producto" },
+  { id: "otro", label: "Otro" },
+] as const;
+
+export type PremioTipo = (typeof PREMIO_TIPOS)[number]["id"];
+
+export function premioTipoLabel(id: string): string {
+  return PREMIO_TIPOS.find(t => t.id === id)?.label ?? "Otro";
+}
+
+/** Premio de un reto. posicion 1 = premio mayor. Nº de premios = nº de ganadores. */
+export interface RetoPremio {
+  id: string;
+  posicion: number;
+  titulo: string;
+  descripcion: string | null;
+  tipo: PremioTipo;
+}
+
+/** Código de cupo gratis canjeable (máx. 10 por reto). */
+export interface RetoCupo {
+  id: string;
+  codigo: string;
+  estado: "disponible" | "canjeado";
+  /** Nombre visible de quien lo canjeó (null si sigue disponible). */
+  canjeadoPor: string | null;
+  fechaCanje: string | null;
+}
+
+/** Reto completo, vista del creador. */
+export interface Reto {
+  id: string;
+  rutaId: string;
+  titulo: string;
+  descripcion: string | null;
+  imagenUrl: string | null;
+  precioEntrada: number;
+  moneda: RetoMoneda;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  estado: RetoEstado;
+  /** Estado derivado de fechas (publicado + inicio pasado → en_curso, etc.). */
+  estadoEfectivo: RetoEstado;
+  reglas: string | null;
+  cuposGratisTotales: number;
+  cuposGratisUsados: number;
+  premios: RetoPremio[];
+  createdAt: string;
+  /** Estado de generación de la ruta asociada (generating | ready | error). */
+  rutaStatus: string;
+}
+
+/** Fila del leaderboard (pública y del dashboard del creador). */
+export interface RetoLeaderboardEntry {
+  /** Nombre visible: alias > displayName > username; "Explorador anónimo" si anonimo. */
+  nombre: string;
+  avatarUrl: string | null;
+  anonimo: boolean;
+  /** % de la ruta completado con verificación (0-100). */
+  completionPct: number;
+  /** Timestamp de finalización verificada (null = aún no termina). */
+  finalizadoAt: string | null;
+  /** Posición de premio ganada (null = sin premio). */
+  premioPosicion: number | null;
+  premioTitulo: string | null;
+  /** Solo visible para el creador en su dashboard. */
+  via?: RetoVia;
+  atencionScore: number | null;
+}
+
+/** Ficha pública del reto (página /reto/[id]). */
+export interface RetoPublicData {
+  id: string;
+  titulo: string;
+  descripcion: string | null;
+  imagenUrl: string | null;
+  precioEntrada: number;
+  moneda: RetoMoneda;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  estadoEfectivo: RetoEstado;
+  reglas: string | null;
+  premios: RetoPremio[];
+  /** Posiciones de premio aún sin ganador. */
+  premiosRestantes: number;
+  inscritos: number;
+  cuposGratisDisponibles: number;
+  totalLecciones: number;
+  creator: { username: string | null; displayName: string | null; avatarUrl: string | null };
+  rutaId: string;
+  leaderboard: RetoLeaderboardEntry[];
+  ganadores: RetoLeaderboardEntry[];
+  /** null si el viewer no está inscrito (o es anónimo). */
+  miProgreso: MyRetoProgress | null;
+  soyCreador: boolean;
+}
+
+/** Progreso del participante dentro del reto (urgencia real). */
+export interface MyRetoProgress {
+  completionPct: number;
+  /** Posición en el leaderboard (1-based) por avance. */
+  posicion: number;
+  finalizadoAt: string | null;
+  premioPosicion: number | null;
+  premioTitulo: string | null;
+  /** Premio que obtendría si termina AHORA (siguiente posición libre). */
+  premioSiTerminaAhora: RetoPremio | null;
+}
+
+/** Dashboard en vivo del reto para su creador. */
+export interface RetoDashboardData {
+  reto: Reto;
+  leaderboard: RetoLeaderboardEntry[];
+  inscritos: number;
+  inscritosPago: number;
+  inscritosCupo: number;
+  ingresoBruto: number;
+  ingresoCreador: number;
+  cupos: RetoCupo[];
+}
+
+/** Tarjeta de reto en el que el usuario participa (biblioteca personal). */
+export interface RetoParticipando {
+  retoId: string;
+  titulo: string;
+  imagenUrl: string | null;
+  rutaId: string;
+  estadoEfectivo: RetoEstado;
+  completionPct: number;
+  premioPosicion: number | null;
+}
+
+// ── Wallet del creador (contabilidad 80/20, payout manual) ──
+
+export interface WalletMovimiento {
+  id: string;
+  retoTitulo: string;
+  /** Nombre visible del participante (alias si lo eligió). */
+  participante: string | null;
+  montoBruto: number;
+  montoCreador: number;
+  montoPlataforma: number;
+  moneda: RetoMoneda;
+  estado: "disponible" | "liquidado";
+  fecha: string;
+}
+
+/** Datos bancarios de payout. SENSIBLES: solo el dueño (y el admin) los ven. */
+export interface DatosBancarios {
+  titular: string;
+  documento: string;
+  banco: string;
+  tipoCuenta: "ahorros" | "corriente";
+  numero: string;
+}
+
+export interface WalletResumen {
+  /** Suma del 80% de movimientos en estado 'disponible'. */
+  saldoDisponible: number;
+  /** Suma del 80% de TODOS los movimientos (histórico). */
+  totalAcreditado: number;
+  moneda: RetoMoneda;
+  movimientos: WalletMovimiento[];
+  datosBancarios: DatosBancarios | null;
+}
