@@ -5,10 +5,15 @@
 // La lógica vive en src/lib/sessionGate.ts; aquí solo está la frontera.
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
-import { getGateState, type GateState } from "@/lib/sessionGate";
-import { SESSION_BUDGET } from "@/lib/sessionGate";
+import { getGateState, SESSION_BUDGET } from "@/lib/sessionGate";
+import type { GateState } from "@/lib/types";
 
-export type { GateState };
+// OJO: aquí NO puede haber `export type { ... }`. Next intenta registrar CADA
+// export de un archivo "use server" como server action, y al re-exportar un tipo
+// importado emite una referencia en tiempo de ejecución a algo que no existe como
+// valor → "ReferenceError: GateState is not defined", que tumba las acciones de
+// la petición (síntoma: el árbol se quedaba en "Cargando tu ruta..."). El tipo se
+// importa desde @/lib/types, que es donde vive. `next build` NO lo detecta.
 
 /**
  * Estado del muro para pintar el medidor y la pantalla de bloqueo. No cobra
