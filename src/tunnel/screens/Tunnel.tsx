@@ -46,6 +46,7 @@ export function Tunnel() {
   const streak = useJourney((s) => s.streak);
   const tunnelLessons = useJourney((s) => s.tunnelLessons);
   const seedTunnelStats = useJourney((s) => s.seedTunnelStats);
+  const refreshGate = useJourney((s) => s.refreshGate);
   const muted = useJourney((s) => s.muted);
   const toggleMuted = useJourney((s) => s.toggleMuted);
   const toggleDebug = useJourney((s) => s.toggleDebug);
@@ -75,6 +76,8 @@ export function Tunnel() {
   // Nivel de recorrido global (gamificación). Se siembra al montar y celebra
   // (vía narrador) cuando sube de nivel al completar estaciones.
   useEffect(() => { seedTunnelStats(); }, [seedTunnelStats]);
+  // Estado del muro al entrar al túnel (para deshabilitar "Entrar" si está bloqueado).
+  useEffect(() => { refreshGate(); }, [refreshGate]);
   const tunnelLevel = levelFor(tunnelLessons, TUNNEL_LEVELS);
   const prevLevelRef = useRef<number | null>(null);
   useEffect(() => {

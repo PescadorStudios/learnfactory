@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ShieldCheck, ArrowLeft } from "lucide-react";
+import { MEMBERSHIP, type Region } from "@/lib/pricing";
 
 interface HashResponse {
   orderId: string;
@@ -11,15 +12,12 @@ interface HashResponse {
   integritySignature: string;
 }
 
-type Region = "CO" | "INTL";
-
-const REGIONS: { id: Region; flag: string; label: string; price: string }[] = [
-  { id: "CO", flag: "🇨🇴", label: "En Colombia", price: "$23.900 COP" },
-  { id: "INTL", flag: "🌎", label: "Fuera de Colombia", price: "USD 7" },
-];
+// Los precios NO se escriben a mano aquí: vienen de la misma fuente que usa el
+// servidor para cobrar (src/lib/pricing.ts), así el cartel nunca puede mentir.
+const REGIONS: Region[] = ["CO", "INTL"];
 
 /**
- * Botón de pago de Bold para el plan Premium. Pide la firma de integridad al
+ * Botón de pago de Bold para la membresía. Pide la firma de integridad al
  * servidor y monta el botón embebido de Bold. Tras pagar, Bold redirige a
  * /premium/gracias, que confirma el plan vía webhook.
  */
@@ -74,7 +72,7 @@ export default function PremiumCheckout({ token, email }: { token: string; email
     script.setAttribute("data-amount", String(data.amount));
     script.setAttribute("data-api-key", data.apiKey);
     script.setAttribute("data-integrity-signature", data.integritySignature);
-    script.setAttribute("data-description", "LearnFactory Premium");
+    script.setAttribute("data-description", "LearnFactory Membresía");
     script.setAttribute("data-redirection-url", `${window.location.origin}/premium/gracias?order=${data.orderId}`);
     if (email) script.setAttribute("data-customer-data", JSON.stringify({ email }));
     script.setAttribute("data-render-mode", "embedded");
@@ -85,19 +83,25 @@ export default function PremiumCheckout({ token, email }: { token: string; email
   if (!region) {
     return (
       <div className="space-y-3">
-        {REGIONS.map(r => (
-          <button
-            key={r.id}
-            onClick={() => setRegion(r.id)}
-            className="w-full flex items-center justify-between gap-3 rounded-2xl border border-zinc-700 bg-zinc-800/50 px-5 py-4 text-left transition-colors hover:border-amber-500/50 hover:bg-zinc-800"
-          >
-            <span className="flex items-center gap-3">
-              <span className="text-2xl">{r.flag}</span>
-              <span className="font-semibold text-white">{r.label}</span>
-            </span>
-            <span className="font-bold text-amber-400">{r.price}</span>
-          </button>
-        ))}
+        {REGIONS.map(id => {
+          const r = MEMBERSHIP[id];
+          return (
+            <button
+              key={id}
+              onClick={() => setRegion(id)}
+              className="w-full flex items-center justify-between gap-3 rounded-2xl border border-zinc-700 bg-zinc-800/50 px-5 py-4 text-left transition-colors hover:border-amber-500/50 hover:bg-zinc-800"
+            >
+              <span className="flex items-center gap-3">
+                <span className="text-2xl">{r.flag}</span>
+                <span className="font-semibold text-white">{r.label}</span>
+              </span>
+              <span className="font-bold text-amber-400">
+                {r.display}
+                <span className="text-zinc-500 font-medium"> /mes</span>
+              </span>
+            </button>
+          );
+        })}
         <p className="flex items-center justify-center gap-1.5 text-xs text-zinc-500 pt-1">
           <ShieldCheck className="w-3.5 h-3.5" /> Pago protegido por Bold
         </p>
@@ -139,7 +143,7 @@ export default function PremiumCheckout({ token, email }: { token: string; email
       <div ref={containerRef} className="flex justify-center min-h-[56px]" />
       {data && (
         <a
-          href={`https://checkout.bold.co/?order-id=${data.orderId}&amount=${data.amount}&currency=${data.currency}&api-key=${data.apiKey}&integrity-signature=${data.integritySignature}&description=LearnFactory%20Premium&redirection-url=${encodeURIComponent(`${typeof window !== "undefined" ? window.location.origin : ""}/premium/gracias?order=${data.orderId}`)}`}
+          href={`https://checkout.bold.co/?order-id=${data.orderId}&amount=${data.amount}&currency=${data.currency}&api-key=${data.apiKey}&integrity-signature=${data.integritySignature}&description=LearnFactory%20Membres%C3%ADa&redirection-url=${encodeURIComponent(`${typeof window !== "undefined" ? window.location.origin : ""}/premium/gracias?order=${data.orderId}`)}`}
           target="_blank"
           rel="noopener noreferrer"
           className="block text-center text-xs text-zinc-500 hover:text-zinc-300 transition-colors"

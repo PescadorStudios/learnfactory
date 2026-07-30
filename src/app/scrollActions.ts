@@ -11,7 +11,9 @@ import { isRetoParticipant } from "@/lib/retoAccess";
 import { enqueueScrollJob, kickScrollWorker } from "@/lib/scrollJobs";
 import { AUDIO_BUCKET, COVER_BUCKET, flattenNodes } from "@/lib/routeGen";
 import { rankFeed, type RankCandidate, type UserSignal } from "@/lib/feedRanker";
-import type { VideosEstado, LessonTimeline, Tree } from "@/lib/types";
+import type { VideosEstado, LessonTimeline, Tree, GateState } from "@/lib/types";
+import { consumeStudyUnit } from "@/lib/sessionGate";
+import { CORTO_MIN_PCT } from "@/lib/sessionBudget";
 
 export interface GenerarVideosResult {
   ok: boolean;
@@ -395,20 +397,38 @@ export interface CortoEventoInput {
 }
 
 /** Registra un evento de engagement de un corto (alimenta el ranker y el repaso). */
-export async function registrarCortoEvento(token: string, ev: CortoEventoInput): Promise<{ ok: boolean }> {
+export async function registrarCortoEvento(
+  token: string,
+  ev: CortoEventoInput
+): Promise<{ ok: boolean; gate?: GateState }> {
   const user = await getUserFromToken(token);
   if (!user) return { ok: false };
 
-  await supabaseAdmin().from("corto_evento").insert({
+  const pct = Math.max(0, Math.min(100, Math.round(ev.pctVisto ?? 0)));
+  const sb = supabaseAdmin();
+
+  await sb.from("corto_evento").insert({
     usuario_id: user.id,
     route_id: ev.routeId,
     leccion_node_id: ev.nodeId,
-    pct_visto: Math.max(0, Math.min(100, Math.round(ev.pctVisto ?? 0))),
+    pct_visto: pct,
     liked: Boolean(ev.liked),
     guardado: Boolean(ev.guardado),
     abrir_ruta: Boolean(ev.abrirRuta),
   });
-  return { ok: true };
+
+  // Muro de sesiones: SOLO cuenta como unidad si de verdad se vio el corto. Esta
+  // misma acción se dispara al dar like, guardar o abrir la ruta, así que sin el
+  // umbral un doble-tap quemaría la bolsa de la sesión.
+  let gate: GateState | undefined;
+  if (pct >= CORTO_MIN_PCT) {
+    try {
+      gate = await consumeStudyUnit(sb, user.id, "corto", `${ev.routeId}:${ev.nodeId}`, ev.routeId);
+    } catch (e) {
+      console.warn("[sessionGate] no se pudo cobrar la unidad del corto:", e);
+    }
+  }
+  return { ok: true, gate };
 }
 
 // ──────────────────────────────────────────────────

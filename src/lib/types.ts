@@ -355,6 +355,16 @@ export interface PlanState {
   premiumSince: string | null;
   /** Creación de rutas en lote: el admin la activa manualmente por usuario. */
   batchEnabled: boolean;
+  /** Vencimiento de la membresía mensual (null en fundadores y en free). */
+  premiumUntil: string | null;
+  /** Compró el Premium de pago único: acceso ilimitado de por vida. */
+  founder: boolean;
+  /**
+   * LA bandera que debe mirar la UI. `plan` se queda en 'premium' para siempre
+   * (así no se pierde la señal "fue miembro"), así que comparar `plan` haría que
+   * la corona siguiera mintiendo tras el vencimiento.
+   */
+  membershipActive: boolean;
 }
 
 /** Tarjeta de ruta para la biblioteca estilo Netflix. */
@@ -540,6 +550,24 @@ export interface AttemptInput {
   masteryUpdates: Array<{ conceptId: string; delta: number }>;
 }
 
+/**
+ * Estado del muro de sesiones (freemium). Vive aquí, y no en
+ * src/lib/sessionGate.ts, porque ese módulo es "server-only" y este tipo cruza la
+ * frontera de las server actions hasta los componentes de cliente.
+ */
+export interface GateState {
+  /** true = estudia sin límites (fundador o membresía vigente). */
+  unlimited: boolean;
+  reason: "founder" | "membership" | "free";
+  /** true = ahora mismo está bloqueado; no se debe servir más contenido. */
+  walled: boolean;
+  unitsUsed: number;
+  budget: number;
+  remaining: number;
+  /** ISO del momento en que se levanta el bloqueo, o null. */
+  lockedUntil: string | null;
+}
+
 export interface SaveAttemptResult {
   ok: boolean;
   xpGained: number;
@@ -547,6 +575,11 @@ export interface SaveAttemptResult {
   bestStars: number;
   /** Si este intento hizo subir el rango de explorador, el nuevo nivel (2-5). */
   explorerRankUp?: number;
+  /**
+   * Estado del muro DESPUÉS de contar esta lección. El intento siempre se
+   * guarda; esto solo le dice a la UI si toca mostrar el reloj.
+   */
+  gate?: GateState;
 }
 
 /** Borrador de progreso de una microlección, para reanudar donde se dejó.

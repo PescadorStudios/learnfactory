@@ -20,10 +20,15 @@ import { TrapSubtitlesGame } from "../games/TrapSubtitlesGame";
 import { AudioLessonStation } from "./AudioLessonStation";
 import type { RailNode } from "../types/rail";
 import type { Challenge } from "../types/contract";
+import SessionLockScreen from "@/components/gate/SessionLockScreen";
+import AnonSignupWall from "@/components/gate/AnonSignupWall";
 
 export function StationChallenge({ node }: { node: RailNode }) {
   const completeStation = useJourney((s) => s.completeStation);
   const exitStation = useJourney((s) => s.exitStation);
+  const gate = useJourney((s) => s.gate);
+  const anonWalled = useJourney((s) => s.anonWalled);
+  const refreshGate = useJourney((s) => s.refreshGate);
   const [result, setResult] = useState<ChallengeResult | null>(null);
 
   const pod = node.pod;
@@ -33,6 +38,14 @@ export function StationChallenge({ node }: { node: RailNode }) {
   useEffect(() => {
     if (!pod) completeStation(node.id, { success: false, score: 0, total: 0 });
   }, [pod, node.id, completeStation]);
+
+  // Muro de sesiones: se bloquea ENTRAR a la estación, no el viaje. El túnel se
+  // sigue pudiendo recorrer y mirar — solo no se puede jugar la estación. Este
+  // hueco ya es el que usa AudioLessonStation para tomar la pantalla completa.
+  if (gate?.walled) {
+    return <SessionLockScreen gate={gate} onElapsed={refreshGate} nextUp={pod?.title ?? null} />;
+  }
+  if (anonWalled) return <AnonSignupWall />;
 
   if (!pod) return null;
 

@@ -3,14 +3,7 @@ import crypto from "crypto";
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { effectiveEstado } from "@/lib/retoLogic";
 import type { RetoEstado } from "@/lib/types";
-
-// Precios del plan Premium (pago único). Bold exige montos sin decimales.
-// Bold procesa siempre en COP según la TRM; con USD el cliente solo ve el precio en dólares.
-const PRICING = {
-  CO: { amount: 23900, currency: "COP" }, // En Colombia
-  INTL: { amount: 7, currency: "USD" }, // Fuera de Colombia (USD 7)
-} as const;
-type Region = keyof typeof PRICING;
+import { MEMBERSHIP, regionFrom } from "@/lib/pricing";
 
 /**
  * Crea una orden de pago (Premium o entrada a un reto) y devuelve la firma de
@@ -84,12 +77,16 @@ export async function POST(request: Request) {
         anonimo: Boolean(m.anonimo),
       };
     } else {
-      // ── Premium (flujo original) ──
+      // ── Membresía (flujo original de Premium) ──
       // Región de pago: "CO" (COP) o "INTL" (USD). Default CO por retrocompatibilidad.
-      const selected: Region = region === "INTL" ? "INTL" : "CO";
-      ({ amount, currency } = PRICING[selected]);
+      // El precio es UNA sola fuente de verdad: src/lib/pricing.ts.
+      const price = MEMBERSHIP[regionFrom(region)];
+      amount = price.amount;
+      currency = price.currency;
       orderId = `LF-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      orderPurpose = "premium";
+      // 'membresia' es el propósito nuevo (mensual). El webhook sigue aceptando
+      // 'premium' para no romper órdenes pendientes creadas antes de este cambio.
+      orderPurpose = "membresia";
     }
 
     // Registrar la orden como pendiente (el webhook la marcará pagada)

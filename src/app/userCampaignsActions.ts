@@ -10,7 +10,7 @@
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { sendEmail, htmlFromText } from "@/lib/email/resend";
-import { DEFAULT_SIGNATURE } from "@/lib/email/signature";
+import { getSignature } from "@/lib/email/getSignature";
 import { renderUserTemplate, isValidEmail, type UserMergeVars } from "@/lib/crm/render";
 import { getBaseUrl } from "@/lib/routeJobs";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -29,7 +29,6 @@ async function requireAdmin(token: string): Promise<{ id: string } | null> {
 // son usuarios YA registrados (lista cálida), por eso es algo más alto que el de
 // creadores (25). Ajustable aquí.
 const DEFAULT_DAILY_CAP = 60;
-const SIG_KEY = "email_signature";
 const AVATAR_BUCKET = "avatars";
 
 // Umbral de "completado" para campañas (mismo criterio de graduación del sistema,
@@ -53,11 +52,8 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-async function getSignature(): Promise<string> {
-  const sb = supabaseAdmin();
-  const { data } = await sb.from("app_settings").select("value").eq("key", SIG_KEY).maybeSingle();
-  return (data?.value ?? "").trim() || DEFAULT_SIGNATURE;
-}
+// La firma la lee el módulo compartido src/lib/email/getSignature.ts (lo usan
+// también el CRM de creadores y los correos automáticos del muro de sesiones).
 
 async function sentTodayCount(): Promise<number> {
   const sb = supabaseAdmin();

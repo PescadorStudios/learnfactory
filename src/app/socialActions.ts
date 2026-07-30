@@ -7,6 +7,7 @@
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { isRetoParticipant } from "@/lib/retoAccess";
 import { generateCoverImage } from "@/lib/generation";
+import { isMembershipActive } from "@/lib/sessionBudget";
 import type {
   PlanState,
   PublicProfile,
@@ -107,11 +108,26 @@ export async function getPlan(token: string): Promise<PlanState | null> {
   const user = await getUserFromToken(token);
   if (!user) return null;
   const sb = supabaseAdmin();
-  const { data: profile } = await sb
+  // Las columnas de membresía son nuevas: si aún no se corrió
+  // scripts/session-wall-setup.sql el select falla, así que se reintenta sin
+  // ellas y el usuario se trata como antes (igual que en src/lib/premium.ts).
+  let profile: Record<string, unknown> | null = null;
+  const full = await sb
     .from("profiles")
-    .select("plan, route_quota, premium_since, batch_enabled")
+    .select("plan, route_quota, premium_since, batch_enabled, premium_until, founder")
     .eq("id", user.id)
-    .single();
+    .maybeSingle();
+  if (full.error) {
+    const basic = await sb
+      .from("profiles")
+      .select("plan, route_quota, premium_since, batch_enabled")
+      .eq("id", user.id)
+      .maybeSingle();
+    profile = (basic.data as Record<string, unknown>) ?? null;
+  } else {
+    profile = (full.data as Record<string, unknown>) ?? null;
+  }
+
   const { data: ownRoutes } = await sb
     .from("routes")
     .select("credits")
@@ -121,13 +137,21 @@ export async function getPlan(token: string): Promise<PlanState | null> {
     (sum, r) => sum + ((r as { credits: number | null }).credits ?? 1),
     0
   );
+
+  const plan = (profile?.plan as Plan) || "free";
+  const founder = Boolean(profile?.founder);
+  const premiumUntil = (profile?.premium_until as string | null) ?? null;
+
   return {
-    plan: (profile?.plan as Plan) || "free",
-    routeQuota: profile?.route_quota ?? 1,
+    plan,
+    routeQuota: (profile?.route_quota as number) ?? 1,
     routesUsed,
     creditsUsed,
-    premiumSince: profile?.premium_since ?? null,
+    premiumSince: (profile?.premium_since as string | null) ?? null,
     batchEnabled: Boolean(profile?.batch_enabled),
+    premiumUntil,
+    founder,
+    membershipActive: isMembershipActive({ plan, founder, premiumUntil }),
   };
 }
 

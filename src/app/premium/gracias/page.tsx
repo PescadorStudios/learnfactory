@@ -7,10 +7,19 @@ import { Loader2, Crown, Sparkles } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import { getPlan } from "@/app/socialActions";
 
+/** "12 de agosto de 2026" — fecha de renovación en claro. */
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("es-CO", { day: "numeric", month: "long", year: "numeric" });
+}
+
 function GraciasContent() {
   const router = useRouter();
   const { token, loading: authLoading, session } = useRequireAuth();
   const [confirmed, setConfirmed] = useState(false);
+  const [renewsAt, setRenewsAt] = useState<string | null>(null);
+  const [isFounder, setIsFounder] = useState(false);
   const [tries, setTries] = useState(0);
 
   useEffect(() => {
@@ -19,7 +28,11 @@ function GraciasContent() {
     const check = async () => {
       const plan = await getPlan(token);
       if (!active) return;
-      if (plan?.plan === "premium") {
+      // membershipActive, no `plan`: así un pago que no extendió el vencimiento
+      // no se confirma en falso.
+      if (plan?.membershipActive) {
+        setRenewsAt(plan.premiumUntil);
+        setIsFounder(plan.founder);
         setConfirmed(true);
       } else {
         setTries(t => t + 1);
@@ -55,16 +68,27 @@ function GraciasContent() {
             <Crown className="w-12 h-12 text-amber-400" />
           </div>
           <h1 className="text-4xl font-bold mb-3 flex items-center gap-2">
-            <Sparkles className="w-7 h-7 text-amber-400" /> ¡Ya eres Premium!
+            <Sparkles className="w-7 h-7 text-amber-400" /> ¡Ya eres miembro!
           </h1>
-          <p className="text-zinc-400 max-w-md mb-8">
-            Tu pago se confirmó. Ahora puedes crear hasta <span className="text-white font-semibold">3 rutas</span> de aprendizaje con IA.
+          <p className="text-zinc-400 max-w-md mb-2">
+            Tu pago se confirmó. Desde ahora estudias <span className="text-white font-semibold">sin límites</span>,
+            sin esperas de 4 horas, y sumaste <span className="text-white font-semibold">3 créditos</span> para crear rutas con IA.
+          </p>
+          <p className="text-zinc-500 text-sm max-w-md mb-8">
+            {isFounder
+              ? "Eres fundador: tu acceso ilimitado no vence nunca."
+              : renewsAt
+                ? `Tu membresía va hasta el ${formatDate(renewsAt)}. Te avisamos por correo antes de que venza.`
+                : "Te avisamos por correo antes de que venza."}
           </p>
           <button
-            onClick={() => router.push("/sources")}
+            onClick={() => router.push("/")}
             className="px-8 py-4 rounded-2xl font-bold text-lg bg-amber-500 text-amber-950 hover:bg-amber-400 transition-all"
           >
-            Crear una ruta nueva
+            Seguir estudiando
+          </button>
+          <button onClick={() => router.push("/sources")} className="mt-3 text-zinc-400 hover:text-white text-sm transition-colors">
+            O crear una ruta nueva
           </button>
           <button onClick={() => router.push("/")} className="mt-3 text-zinc-500 hover:text-white text-sm transition-colors">
             Volver al inicio

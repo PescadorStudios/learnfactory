@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X, CreditCard, Copy, Webhook, RefreshCw, Mail, UserPlus, Megaphone, Wallet as Wallet2 } from "lucide-react";
+import { Loader2, Shield, Search, Minus, Plus, Check, Crown, User as UserIcon, AlertTriangle, Layers, Users, BookOpen, Globe, Lock, EyeOff, Eye, Trash2, X, CreditCard, Copy, Webhook, RefreshCw, Mail, UserPlus, Megaphone, Wallet as Wallet2, Hourglass } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
 import {
   checkIsAdmin, adminListUsers, adminSetUserQuota, adminSetBatchEnabled, type AdminUserRow,
@@ -15,12 +15,13 @@ import EmailsTab from "@/components/EmailsTab";
 import CreatorsTab from "@/components/CreatorsTab";
 import UserCampaignsTab from "@/components/UserCampaignsTab";
 import WalletsTab from "@/components/WalletsTab";
+import GateTab from "@/components/GateTab";
 
 export default function AdminPage() {
   const router = useRouter();
   const { token, loading, session } = useRequireAuth();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"users" | "routes" | "pagos" | "correos" | "creadores" | "campanas" | "billeteras">("users");
+  const [tab, setTab] = useState<"users" | "routes" | "pagos" | "correos" | "creadores" | "campanas" | "billeteras" | "muro">("users");
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [search, setSearch] = useState("");
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -246,6 +247,12 @@ export default function AdminPage() {
           >
             <Wallet2 className="w-4 h-4" /> Billeteras
           </button>
+          <button
+            onClick={() => setTab("muro")}
+            className={`inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${tab === "muro" ? "bg-primary text-white" : "text-zinc-400 hover:text-white"}`}
+          >
+            <Hourglass className="w-4 h-4" /> Muro
+          </button>
         </div>
 
         {tab === "users" && (<>
@@ -297,7 +304,17 @@ export default function AdminPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-white truncate group-hover:text-primary transition-colors">{u.displayName || (u.username ? `@${u.username}` : u.email)}</span>
-                        {u.plan === "premium" && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                        {/* Corona sólida = membresía viva. Hueca = pagó alguna vez pero venció. */}
+                        {u.membershipActive && (
+                          <span className="shrink-0" title={u.founder ? "Fundador (de por vida)" : "Miembro activo"}>
+                            <Crown className={`w-3.5 h-3.5 ${u.founder ? "text-violet-400" : "text-amber-400"}`} />
+                          </span>
+                        )}
+                        {!u.membershipActive && u.plan === "premium" && (
+                          <span className="shrink-0" title="Membresía vencida">
+                            <Crown className="w-3.5 h-3.5 text-zinc-600" />
+                          </span>
+                        )}
                         {u.role === "admin" && <span className="text-[10px] uppercase font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded shrink-0">admin</span>}
                       </div>
                       <p className="text-xs text-zinc-500 truncate">{u.email}</p>
@@ -569,6 +586,7 @@ export default function AdminPage() {
         {tab === "campanas" && <UserCampaignsTab token={token} />}
 
         {tab === "billeteras" && token && <WalletsTab token={token} />}
+        {tab === "muro" && token && <GateTab token={token} />}
       </div>
 
       {/* Confirmar borrado de curso */}

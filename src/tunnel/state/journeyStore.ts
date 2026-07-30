@@ -19,7 +19,9 @@ import type { Rail } from "../types/rail";
 import { provider } from "../content";
 import { assembleRail } from "../rail/assembleRail";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { recordTunnelLesson, getListeningStats } from "@/app/gamificationActions";
+import { recordTunnelLesson, getListeningStats, getStudyGateState } from "@/app/gamificationActions";
+import { countAnonUnit, isAnonWalled } from "@/lib/anonGate";
+import type { GateState } from "@/lib/types";
 
 export type Phase = "lobby" | "tunnel";
 
@@ -169,6 +171,16 @@ interface JourneyState {
   tunnelLessons: number;
   /** Carga el conteo acumulado desde el perfil (para pintar el nivel al entrar). */
   seedTunnelStats: () => Promise<void>;
+
+  // --- Muro de sesiones (freemium) ---
+  // Se guarda aquí (zustand) y no en un contexto de React porque el Túnel ya vive
+  // en este store; es el mismo par que tunnelLessons/seedTunnelStats.
+  /** Estado del muro para usuarios con sesión. null = aún sin cargar / anónimo. */
+  gate: GateState | null;
+  /** Visitante sin cuenta que ya agotó sus unidades de prueba. */
+  anonWalled: boolean;
+  /** Relee el muro (al entrar y al cumplirse el bloqueo). */
+  refreshGate: () => Promise<void>;
 }
 
 const FRESH_TRAVERSAL = {
@@ -205,6 +217,8 @@ export const useJourney = create<JourneyState>((set, get) => ({
   debugView: false,
   muted: false,
   tunnelLessons: 0,
+  gate: null,
+  anonWalled: false,
 
   async loadCatalog() {
     if (get().catalogStatus === "loading") return;
@@ -441,7 +455,7 @@ export const useJourney = create<JourneyState>((set, get) => ({
 
     // Recorrido global: cada estación cuenta una sola vez (el guard de arriba
     // evita duplicados al re-entrar). Side-effect async (no bloquea el render).
-    recordTunnelProgress();
+    recordTunnelProgress(stationId);
   },
 
   narrate(text, tone) {
@@ -451,11 +465,27 @@ export const useJourney = create<JourneyState>((set, get) => ({
   async seedTunnelStats() {
     try {
       const token = await tunnelToken();
-      if (!token) return;
+      if (!token) {
+        set({ anonWalled: isAnonWalled() });
+        return;
+      }
       const { tunnelLessons } = await getListeningStats(token);
       set({ tunnelLessons });
     } catch {
       /* sin sesión / offline: el nivel queda en el valor por defecto */
+    }
+  },
+
+  async refreshGate() {
+    try {
+      const token = await tunnelToken();
+      if (!token) {
+        set({ gate: null, anonWalled: isAnonWalled() });
+        return;
+      }
+      set({ gate: await getStudyGateState(token), anonWalled: false });
+    } catch {
+      /* offline: no se bloquea a nadie por un fallo de red */
     }
   },
 }));
@@ -470,13 +500,21 @@ async function tunnelToken(): Promise<string | null> {
   }
 }
 
-/** Persiste +1 lección del Túnel y refleja el total en el store (para el HUD). */
-async function recordTunnelProgress() {
+/**
+ * Persiste +1 lección del Túnel y refleja el total en el store (para el HUD).
+ * `stationId` viaja al servidor como clave de idempotencia del muro de sesiones.
+ * Sin sesión, la cuenta la lleva el navegador (src/lib/anonGate.ts).
+ */
+async function recordTunnelProgress(stationId: string) {
   try {
     const token = await tunnelToken();
-    if (!token) return;
-    const { totalLessons } = await recordTunnelLesson(token);
-    useJourney.setState({ tunnelLessons: totalLessons });
+    if (!token) {
+      countAnonUnit(stationId);
+      useJourney.setState({ anonWalled: isAnonWalled() });
+      return;
+    }
+    const { totalLessons, gate } = await recordTunnelLesson(token, stationId);
+    useJourney.setState({ tunnelLessons: totalLessons, ...(gate ? { gate } : {}) });
   } catch {
     /* sin sesión / offline: el viaje sigue, no se persiste el conteo */
   }

@@ -22,7 +22,9 @@ export default function AppHeader({ initialQuery = "" }: { initialQuery?: string
   useEffect(() => {
     if (!token) return;
     getMyProfile(token).then(p => p && setProfile({ username: p.username, avatarUrl: p.avatarUrl }));
-    getPlan(token).then(p => setIsPremium(p?.plan === "premium"));
+    // membershipActive, no `plan`: `plan` se queda en 'premium' para siempre, así
+    // que compararlo dejaría la corona encendida tras vencer la membresía.
+    getPlan(token).then(p => setIsPremium(Boolean(p?.membershipActive)));
     checkIsAdmin(token).then(setIsAdmin);
   }, [token]);
 

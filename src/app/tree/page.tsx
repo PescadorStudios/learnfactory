@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Lock, CheckCircle2, Star, Trophy, Loader2, Sparkles, Flame, RefreshCw, Clock, AlertTriangle, Home, Info, Wand2, X, Compass } from "lucide-react";
 import { useRequireAuth } from "@/lib/useAuth";
+import { useSessionGate } from "@/lib/useSessionGate";
+import SessionMeter from "@/components/gate/SessionMeter";
 import { useRouteRealtime } from "@/lib/useRouteRealtime";
 import { getRoute, retryLesson, resumeRoute, regenerateLesson, markRouteStarted } from "../routeActions";
 import type { RouteDetail, TreeNode, NodeState } from "@/lib/types";
@@ -56,6 +58,7 @@ function KnowledgeTree() {
   const isNewBest = searchParams.get("best") === "1";
 
   const { token, loading: authLoading, session } = useRequireAuth();
+  const gate = useSessionGate(token);
   const [route, setRoute] = useState<RouteDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
@@ -275,6 +278,13 @@ function KnowledgeTree() {
               <Flame className={`w-4 h-4 ${route.streakDays > 0 ? "text-orange-500 fill-current" : "text-zinc-600"}`} />
               <span className="font-bold text-sm text-white">{route.streakDays} {route.streakDays === 1 ? "día" : "días"}</span>
             </div>
+            {/* Medidor de la sesión: el árbol es el hub al que se vuelve tras cada
+                lección, así que es donde ver bajar la bolsa surte más efecto. */}
+            {gate.state && !gate.state.unlimited && (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-2">
+                <SessionMeter gate={gate.state} />
+              </div>
+            )}
           </div>
 
           <motion.div

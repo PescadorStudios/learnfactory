@@ -6,6 +6,9 @@
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { categoryLabel } from "@/lib/types";
 import { upgradeProfileToPremium, activatePremiumByOrder, PREMIUM_QUOTA } from "@/lib/premium";
+import { isMembershipActive } from "@/lib/sessionBudget";
+import { MEMBERSHIP_DAYS } from "@/lib/pricing";
+import { SESSION_BUDGET } from "@/lib/sessionGate";
 
 const AVATAR_BUCKET = "avatars";
 const COVER_BUCKET = "route-covers";
@@ -35,6 +38,10 @@ export interface AdminUserRow {
   routeQuota: number;
   routesUsed: number;
   batchEnabled: boolean;
+  /** Membresía mensual vigente (o fundador). `plan` solo dice si alguna vez pagó. */
+  membershipActive: boolean;
+  founder: boolean;
+  premiumUntil: string | null;
 }
 
 export async function adminListUsers(token: string, search = ""): Promise<AdminUserRow[]> {
@@ -44,7 +51,7 @@ export async function adminListUsers(token: string, search = ""): Promise<AdminU
 
   let q = sb
     .from("profiles")
-    .select("id, email, username, display_name, avatar_path, plan, role, route_quota, batch_enabled, created_at")
+    .select("id, email, username, display_name, avatar_path, plan, role, route_quota, batch_enabled, created_at, premium_until, founder")
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -73,6 +80,13 @@ export async function adminListUsers(token: string, search = ""): Promise<AdminU
     routeQuota: r.route_quota ?? 1,
     routesUsed: counts.get(r.id) ?? 0,
     batchEnabled: Boolean(r.batch_enabled),
+    founder: Boolean(r.founder),
+    premiumUntil: (r.premium_until as string | null) ?? null,
+    membershipActive: isMembershipActive({
+      plan: r.plan || "free",
+      founder: Boolean(r.founder),
+      premiumUntil: (r.premium_until as string | null) ?? null,
+    }),
   }));
 }
 
@@ -464,7 +478,9 @@ export async function adminGetBoldOverview(token: string): Promise<BoldOverview 
 export async function adminActivatePremium(
   token: string,
   userId: string,
-  orderId?: string
+  orderId?: string,
+  /** Días de membresía a regalar en la activación manual (por defecto, un mes). */
+  grantDays?: number
 ): Promise<{ ok: boolean; error?: string }> {
   const admin = await requireAdmin(token);
   if (!admin) return { ok: false, error: "No autorizado" };
@@ -479,10 +495,14 @@ export async function adminActivatePremium(
 
   // Garantiza el plan aunque la orden ya estuviera 'paid' pero el perfil no se
   // hubiera subido (caso típico de remediación). Sin orden es activación manual
-  // pura → otorga la cuota premium; con orden la cuota ya la sumó el paso anterior.
-  const res = await upgradeProfileToPremium(sb, userId, { grantQuota: orderId ? 0 : PREMIUM_QUOTA });
+  // pura → otorga cuota y días; CON orden, cuota y días los sumó ya el paso
+  // anterior, así que aquí van en 0 para no acreditar el doble.
+  const res = await upgradeProfileToPremium(sb, userId, {
+    grantQuota: orderId ? 0 : PREMIUM_QUOTA,
+    grantDays: orderId ? 0 : (grantDays ?? MEMBERSHIP_DAYS),
+  });
   if (!res.ok) return { ok: false, error: res.error || "No se pudo activar Premium." };
-  console.log(`[Admin] ✓ Premium activado a mano para ${userId}${orderId ? ` (orden ${orderId})` : ""}.`);
+  console.log(`[Admin] ✓ Membresía activada a mano para ${userId}${orderId ? ` (orden ${orderId})` : ""}.`);
   return { ok: true };
 }
 
@@ -619,4 +639,148 @@ export async function adminLiquidarCreador(token: string, creadorId: string): Pr
     .eq("creador_id", creadorId)
     .eq("estado", "disponible");
   return { ok: !error };
+}
+
+// ──────────────────────────────────────────────────
+//  MURO DE SESIONES — métricas de conversión
+// ──────────────────────────────────────────────────
+
+export interface GateMetrics {
+  /** ¿Se corrió ya scripts/session-wall-setup.sql? */
+  tablesReady: boolean;
+  /** Tope de unidades por sesión vigente en el servidor. */
+  budget: number;
+  sessionsToday: number;
+  locksToday: number;
+  sessions30d: number;
+  locks30d: number;
+  /** Mediana de unidades consumidas por ventana (últimos 30 días). */
+  medianUnits: number;
+  /** Bloqueados ahora mismo (reloj corriendo). */
+  lockedNow: number;
+  /** Ventanas bloqueadas en 30d cuyo dueño pagó en las 48 h siguientes. */
+  locksConvertedIn48h: number;
+  /** % de conversión bloqueo → pago. */
+  conversionPct: number;
+  /** Unidades consumidas por modo (30 días). */
+  byKind: { kind: string; units: number }[];
+  membersActive: number;
+  founders: number;
+  expiringIn7d: number;
+  lapsed: number;
+}
+
+/**
+ * Métricas del muro. Agregados simples sobre study_sessions / study_units /
+ * payment_orders: sirven para decidir si 5 unidades y 4 horas son los números
+ * correctos, y para ver si el muro convierte de verdad.
+ */
+export async function adminGateMetrics(token: string): Promise<GateMetrics | null> {
+  const admin = await requireAdmin(token);
+  if (!admin) return null;
+  const sb = supabaseAdmin();
+
+  const empty: GateMetrics = {
+    tablesReady: false, budget: SESSION_BUDGET, sessionsToday: 0, locksToday: 0,
+    sessions30d: 0, locks30d: 0, medianUnits: 0, lockedNow: 0,
+    locksConvertedIn48h: 0, conversionPct: 0, byKind: [],
+    membersActive: 0, founders: 0, expiringIn7d: 0, lapsed: 0,
+  };
+
+  const probe = await sb.from("study_sessions").select("id", { count: "exact", head: true });
+  if (probe.error) return empty;
+
+  const now = new Date();
+  const startOfDay = new Date(now); startOfDay.setHours(0, 0, 0, 0);
+  const d30 = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+  const in7d = new Date(now.getTime() + 7 * 86_400_000).toISOString();
+  const nowIso = now.toISOString();
+
+  // Ventanas de los últimos 30 días (con su dueño y si se bloquearon).
+  const { data: sess } = await sb
+    .from("study_sessions")
+    .select("user_id, started_at, units_used, locked_at, locked_until")
+    .gte("started_at", d30)
+    .limit(5000);
+  const rows = sess ?? [];
+
+  const sessionsToday = rows.filter(r => new Date(r.started_at as string) >= startOfDay).length;
+  const locked = rows.filter(r => r.locked_at);
+  const locksToday = locked.filter(r => new Date(r.locked_at as string) >= startOfDay).length;
+  const lockedNow = rows.filter(
+    r => r.locked_until && new Date(r.locked_until as string) > now
+  ).length;
+
+  const units = rows.map(r => (r.units_used as number) ?? 0).sort((a, b) => a - b);
+  const medianUnits = units.length
+    ? units.length % 2
+      ? units[(units.length - 1) / 2]
+      : Math.round(((units[units.length / 2 - 1] + units[units.length / 2]) / 2) * 10) / 10
+    : 0;
+
+  // Bloqueo → pago en 48 h. Se cruza en memoria: son volúmenes pequeños y evita
+  // depender de una vista o de un RPC nuevo solo para el panel.
+  const { data: paid } = await sb
+    .from("payment_orders")
+    .select("user_id, paid_at")
+    .eq("status", "paid")
+    .gte("paid_at", d30)
+    .limit(5000);
+  const paysByUser = new Map<string, number[]>();
+  for (const p of paid ?? []) {
+    if (!p.paid_at) continue;
+    const arr = paysByUser.get(p.user_id as string) ?? [];
+    arr.push(new Date(p.paid_at as string).getTime());
+    paysByUser.set(p.user_id as string, arr);
+  }
+  let locksConvertedIn48h = 0;
+  for (const r of locked) {
+    const t = new Date(r.locked_at as string).getTime();
+    const pays = paysByUser.get(r.user_id as string);
+    if (pays?.some(p => p >= t && p - t <= 48 * 3_600_000)) locksConvertedIn48h++;
+  }
+
+  // Unidades por modo.
+  const { data: unitRows } = await sb
+    .from("study_units")
+    .select("kind")
+    .gte("consumed_at", d30)
+    .limit(20000);
+  const kindMap = new Map<string, number>();
+  for (const u of unitRows ?? []) {
+    kindMap.set(u.kind as string, (kindMap.get(u.kind as string) ?? 0) + 1);
+  }
+
+  // Estado de las membresías.
+  const [activeRes, foundersRes, expiringRes, lapsedRes] = await Promise.all([
+    sb.from("profiles").select("id", { count: "exact", head: true })
+      .eq("plan", "premium").gt("premium_until", nowIso),
+    sb.from("profiles").select("id", { count: "exact", head: true }).eq("founder", true),
+    sb.from("profiles").select("id", { count: "exact", head: true })
+      .gt("premium_until", nowIso).lte("premium_until", in7d).eq("founder", false),
+    sb.from("profiles").select("id", { count: "exact", head: true })
+      .lte("premium_until", nowIso).eq("founder", false),
+  ]);
+
+  return {
+    tablesReady: true,
+    budget: SESSION_BUDGET,
+    sessionsToday,
+    locksToday,
+    sessions30d: rows.length,
+    locks30d: locked.length,
+    medianUnits,
+    lockedNow,
+    locksConvertedIn48h,
+    conversionPct: locked.length
+      ? Math.round((locksConvertedIn48h / locked.length) * 1000) / 10
+      : 0,
+    byKind: [...kindMap.entries()]
+      .map(([kind, u]) => ({ kind, units: u }))
+      .sort((a, b) => b.units - a.units),
+    membersActive: activeRes.count ?? 0,
+    founders: foundersRes.count ?? 0,
+    expiringIn7d: expiringRes.count ?? 0,
+    lapsed: lapsedRes.count ?? 0,
+  };
 }

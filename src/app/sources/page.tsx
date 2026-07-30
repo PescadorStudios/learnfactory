@@ -716,15 +716,15 @@ function Sources() {
                 <div className="w-16 h-16 mx-auto bg-amber-500/10 border border-amber-500/40 rounded-2xl flex items-center justify-center mb-4">
                   <Crown className="w-8 h-8 text-amber-400" />
                 </div>
-                <h3 className="text-2xl font-bold mb-2">Hazte Premium</h3>
+                <h3 className="text-2xl font-bold mb-2">Hazte miembro</h3>
                 <p className="text-zinc-400 text-sm">
                   No te alcanzan los créditos para una ruta <span className="text-white font-semibold">{ROUTE_SIZE_SPEC[size].label}</span>{" "}
-                  ({creditsFor(size)} {creditsFor(size) === 1 ? "crédito" : "créditos"}). Con Premium sumas{" "}
-                  <span className="text-white font-semibold">3 créditos</span> para crear rutas más largas con IA.
-                  Estudiar la biblioteca siempre es gratis.
+                  ({creditsFor(size)} {creditsFor(size) === 1 ? "crédito" : "créditos"}). La membresía suma{" "}
+                  <span className="text-white font-semibold">3 créditos</span> para crear rutas con IA
+                  y te deja <span className="text-white font-semibold">estudiar sin límites</span>, sin la pausa de 4 horas.
                 </p>
                 <p className="mt-4 text-sm font-medium text-zinc-400">
-                  Pago único — elige tu país abajo
+                  Pago mensual — elige tu país abajo
                 </p>
               </div>
               <PremiumCheckout token={token} email={email} />

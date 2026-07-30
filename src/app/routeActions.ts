@@ -40,8 +40,10 @@ import type {
   RouteCategory,
   DiscoveredSource,
   MicroLessonProgress,
+  GateState,
 } from "@/lib/types";
 import { ROUTE_CATEGORIES, SOURCE_TYPES } from "@/lib/types";
+import { consumeStudyUnit } from "@/lib/sessionGate";
 import { explorerRank, GRADUATE_THRESHOLD } from "@/lib/reputation";
 import { creditsFor, normalizeSize, type RouteSize } from "@/lib/routeSize";
 import { isRetoParticipant } from "@/lib/retoAccess";
@@ -1079,6 +1081,19 @@ export async function saveAttempt(
     }
   }
 
+  // ── Muro de sesiones ──
+  // Se cobra AL FINAL y a propósito: el intento ya quedó guardado más arriba, así
+  // que agotar la bolsa nunca puede costarle al usuario el trabajo que acaba de
+  // hacer. La lección que agota la sesión SÍ se completa; el muro aparece
+  // después, al volver al árbol. Repetir el mismo nodo no vuelve a cobrar
+  // (idempotencia por (ventana, modo, item_key) en la RPC).
+  let gate: GateState | undefined;
+  try {
+    gate = await consumeStudyUnit(sb, user.id, "lesson", `${routeId}:${nodeId}`, routeId);
+  } catch (e) {
+    console.warn("[sessionGate] no se pudo cobrar la unidad de la lección:", e);
+  }
+
   const newBest = input.passed && (prevBest === null || stars > prevBest);
   return {
     ok: true,
@@ -1086,6 +1101,7 @@ export async function saveAttempt(
     newBest,
     bestStars: Math.max(prevBest ?? 0, input.passed ? stars : 0),
     explorerRankUp,
+    gate,
   };
 }
 

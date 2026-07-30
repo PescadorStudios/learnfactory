@@ -5,6 +5,8 @@
 // acumula el valor crudo en profiles. Patrón: verificar token + service role.
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
+import { consumeStudyUnit, getGateState } from "@/lib/sessionGate";
+import type { GateState } from "@/lib/types";
 
 /** Tope de delta por flush: ~10 min. Evita inflar el contador por bugs/abusos. */
 const MAX_PODCAST_DELTA = 600;
@@ -73,8 +75,17 @@ export async function addScrollWatching(
   return { totalSeconds: total };
 }
 
-/** Marca una lección/estación del Túnel y devuelve el total acumulado. */
-export async function recordTunnelLesson(token: string): Promise<{ totalLessons: number }> {
+/**
+ * Marca una lección/estación del Túnel y devuelve el total acumulado.
+ *
+ * `stationId` es obligatorio y sirve de clave de idempotencia del muro: los ids
+ * de estación son estables (`${lessonId}__${podId}`), así que volver a pasar por
+ * la misma estación no vuelve a cobrar unidad.
+ */
+export async function recordTunnelLesson(
+  token: string,
+  stationId: string
+): Promise<{ totalLessons: number; gate?: GateState }> {
   const user = await getUserFromToken(token);
   if (!user) return { totalLessons: 0 };
 
@@ -86,7 +97,49 @@ export async function recordTunnelLesson(token: string): Promise<{ totalLessons:
     .single();
   const total = ((prev?.tunnel_lessons as number) ?? 0) + 1;
   await sb.from("profiles").update({ tunnel_lessons: total }).eq("id", user.id);
-  return { totalLessons: total };
+
+  // El recorrido ya ocurrió: se cuenta igual y el muro solo decide si se puede
+  // ENTRAR a la siguiente estación.
+  let gate: GateState | undefined;
+  try {
+    gate = await consumeStudyUnit(sb, user.id, "tunel", stationId || "estacion");
+  } catch (e) {
+    console.warn("[sessionGate] no se pudo cobrar la unidad del túnel:", e);
+  }
+  return { totalLessons: total, gate };
+}
+
+/**
+ * Cobra un episodio de Podcast. No existe fila por episodio en la base y el
+ * catálogo entrega las URLs en lote, así que ESTA es la única señal de "empezó a
+ * escuchar un episodio". El cliente la respeta para no avanzar la cola.
+ *
+ * OJO: `addPodcastListening` NO puede cobrar (se dispara cada 30 s y vaciaría la
+ * bolsa en un solo episodio); por eso hay una acción aparte.
+ */
+export async function startPodcastEpisode(
+  token: string,
+  routeId: string,
+  nodeId: string
+): Promise<{ allowed: boolean; gate: GateState | null }> {
+  const user = await getUserFromToken(token);
+  if (!user) return { allowed: true, gate: null };
+
+  const r = await consumeStudyUnit(
+    supabaseAdmin(),
+    user.id,
+    "podcast",
+    `${routeId}:${nodeId}`,
+    routeId
+  );
+  return { allowed: r.allowed, gate: r };
+}
+
+/** Estado del muro para sembrar el reproductor/feed al montar. */
+export async function getStudyGateState(token: string): Promise<GateState | null> {
+  const user = await getUserFromToken(token);
+  if (!user) return null;
+  return getGateState(supabaseAdmin(), user.id);
 }
 
 /** Lee los contadores actuales (para pintar niveles al entrar). */

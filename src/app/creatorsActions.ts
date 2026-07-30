@@ -7,7 +7,7 @@
 
 import { supabaseAdmin, getUserFromToken } from "@/lib/supabase/admin";
 import { sendEmail, htmlFromText } from "@/lib/email/resend";
-import { DEFAULT_SIGNATURE } from "@/lib/email/signature";
+import { getSignature } from "@/lib/email/getSignature";
 import { renderTemplate, isValidEmail, DEFAULT_FOLLOWUP_TEMPLATE, type MergeVars } from "@/lib/crm/render";
 
 async function requireAdmin(token: string): Promise<{ id: string } | null> {
@@ -22,7 +22,6 @@ async function requireAdmin(token: string): Promise<{ id: string } | null> {
 // Default del tope diario de envíos y de los días para marcar seguimiento.
 const DEFAULT_DAILY_CAP = 25;
 const DEFAULT_FOLLOWUP_DAYS = 5;
-const SIG_KEY = "email_signature";
 const FOLLOWUP_TPL_KEY = "crm_followup_template";
 
 const STATUSES = [
@@ -40,11 +39,8 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-async function getSignature(): Promise<string> {
-  const sb = supabaseAdmin();
-  const { data } = await sb.from("app_settings").select("value").eq("key", SIG_KEY).maybeSingle();
-  return (data?.value ?? "").trim() || DEFAULT_SIGNATURE;
-}
+// La firma la lee el módulo compartido src/lib/email/getSignature.ts (lo usan
+// también las campañas a usuarios y los correos automáticos del muro).
 
 async function getFollowupTemplate(): Promise<string> {
   const sb = supabaseAdmin();

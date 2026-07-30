@@ -105,6 +105,13 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
             <div className="flex flex-wrap gap-2 mt-2">
               <RankPill track="explorer" rank={explorerRank(s.routesCompleted, s.avgStars)} />
               <RankPill track="creator" rank={creatorRank(s.graduates)} />
+              {/* Fundador: quien compró cuando esto era un pago único. Se le
+                  reconoce en público; su acceso ilimitado no vence nunca. */}
+              {profile.isOwner && plan?.founder && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/40">
+                  <Crown className="w-3.5 h-3.5" /> Fundador
+                </span>
+              )}
             </div>
             {profile.bio && <p className="text-zinc-300 mt-2 max-w-xl">{profile.bio}</p>}
           </div>
@@ -146,7 +153,9 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
         {/* Cuota de creación — privada (solo el dueño la ve) */}
         {profile.isOwner && plan && (() => {
           const atLimit = plan.routesUsed >= plan.routeQuota;
-          const isPremium = plan.plan === "premium";
+          // membershipActive, no `plan`: la membresía mensual vence.
+          const isPremium = plan.membershipActive;
+          const planLabel = plan.founder ? "Fundador" : isPremium ? "Miembro" : "Gratis";
           const pct = plan.routeQuota > 0 ? Math.min(100, Math.round((plan.routesUsed / plan.routeQuota) * 100)) : 0;
           return (
             <motion.div
@@ -162,7 +171,7 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
                 <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full ${
                   isPremium ? "bg-amber-500/15 text-amber-300 border border-amber-500/40" : "bg-zinc-800 text-zinc-300 border border-zinc-700"
                 }`}>
-                  {isPremium && <Crown className="w-3.5 h-3.5" />} Plan {isPremium ? "Premium" : "Gratis"}
+                  {isPremium && <Crown className="w-3.5 h-3.5" />} Plan {planLabel}
                 </span>
               </div>
 
@@ -175,8 +184,8 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
                 </div>
                 {atLimit ? (
                   !isPremium ? (
-                    <button onClick={() => router.push("/sources")} className="inline-flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-full bg-amber-500 text-amber-950 hover:bg-amber-400 transition-all">
-                      <Crown className="w-4 h-4" /> Hazte Premium
+                    <button onClick={() => router.push("/premium")} className="inline-flex items-center gap-2 text-sm font-bold px-4 py-2.5 rounded-full bg-amber-500 text-amber-950 hover:bg-amber-400 transition-all">
+                      <Crown className="w-4 h-4" /> Hazte miembro
                     </button>
                   ) : (
                     <span className="text-sm text-zinc-500">Cuota completa</span>
@@ -193,7 +202,9 @@ export default function ProfilePage({ params }: { params: Promise<{ username: st
               </div>
               {!isPremium && (
                 <p className="text-xs text-zinc-500 mt-2">
-                  {atLimit ? "Ya usaste tu ruta gratuita. Premium te da hasta 3 rutas." : "Plan gratuito: 1 ruta. Estudiar la biblioteca siempre es gratis."}
+                  {atLimit
+                    ? "Ya usaste tu ruta gratuita. La membresía te da 3 créditos por mes y estudio sin límites."
+                    : "Plan gratuito: 1 ruta y estudio por sesiones. Explorar la biblioteca siempre es gratis."}
                 </p>
               )}
             </motion.div>

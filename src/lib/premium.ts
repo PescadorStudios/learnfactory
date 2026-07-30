@@ -6,9 +6,14 @@
 // ============================================================================
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { extendMembership } from "./sessionBudget";
+import { MEMBERSHIP_DAYS } from "./pricing";
 
-/** Cuota de rutas que otorga Premium (pago único). Debe coincidir con generate-hash. */
+/** Créditos de creación de rutas que otorga cada pago. */
 export const PREMIUM_QUOTA = 3;
+
+/** Propósitos de orden que activan la membresía. 'premium' es el histórico. */
+const MEMBERSHIP_PURPOSES = new Set(["premium", "membresia"]);
 
 /**
  * Sube el perfil a Premium de forma idempotente y tolerante al esquema:
@@ -29,21 +34,28 @@ export const PREMIUM_QUOTA = 3;
 export async function upgradeProfileToPremium(
   sb: SupabaseClient,
   userId: string,
-  opts: { grantQuota?: number } = {}
+  opts: { grantQuota?: number; grantDays?: number } = {}
 ): Promise<{ ok: boolean; error?: string }> {
   const grant = Math.max(0, Math.round(opts.grantQuota ?? 0));
+  const days = Math.max(0, Math.round(opts.grantDays ?? MEMBERSHIP_DAYS));
 
   // 1) Lo esencial: plan (+ cuota sumada, si aplica). Un único update que falle
   //    NO debe dejar al usuario sin activar, así que si peta reintentamos solo
   //    con el plan. Para sumar la cuota leemos primero el tope actual.
   const update: Record<string, unknown> = { plan: "premium" };
-  if (grant > 0) {
+  let nextUntil: Date | null = null;
+  if (grant > 0 || days > 0) {
     const { data: prof } = await sb
       .from("profiles")
-      .select("route_quota")
+      .select("route_quota, premium_until")
       .eq("id", userId)
       .maybeSingle();
-    update.route_quota = (prof?.route_quota ?? 1) + grant;
+    if (grant > 0) update.route_quota = (prof?.route_quota ?? 1) + grant;
+    if (days > 0) {
+      // La membresía es MENSUAL de renovación manual y los días se ACUMULAN sobre
+      // lo que ya hubiera vigente: renovar temprano nunca pierde días.
+      nextUntil = extendMembership((prof?.premium_until as string | null) ?? null, days);
+    }
   }
 
   const { error: e1 } = await sb
@@ -70,7 +82,23 @@ export async function upgradeProfileToPremium(
     console.warn(`[premium] premium_since no se pudo escribir para ${userId} (¿columna ausente? corre scripts/bold-setup.sql):`, e2.message);
   }
 
-  console.log(`[premium] ✓ Usuario ${userId} activado como Premium.`);
+  // 3) Vencimiento de la membresía (columna nueva). Best-effort igual que arriba:
+  //    si falta la columna el usuario YA quedó activado y no se rompe el pago.
+  //    NOTA: no se toca `founder`; quien compró el pago único conserva su acceso
+  //    de por vida y `premium_until` le resulta irrelevante.
+  if (nextUntil) {
+    const { error: e3 } = await sb
+      .from("profiles")
+      .update({ premium_until: nextUntil.toISOString() })
+      .eq("id", userId);
+    if (e3) {
+      console.warn(`[premium] premium_until no se pudo escribir para ${userId} (¿falta correr scripts/session-wall-setup.sql?):`, e3.message);
+    } else {
+      console.log(`[premium] membresía de ${userId} vigente hasta ${nextUntil.toISOString()}.`);
+    }
+  }
+
+  console.log(`[premium] ✓ Usuario ${userId} activado como miembro.`);
   return { ok: true };
 }
 
@@ -124,10 +152,23 @@ export async function activatePremiumByOrder(
     await sb.from("payment_orders").update({ status: "paid" }).eq("order_id", orderRef);
   }
 
-  if (order.purpose === "premium") {
+  if (MEMBERSHIP_PURPOSES.has(String(order.purpose))) {
     // Idempotente por orden (el candado de status de arriba garantiza que esto
-    // corre una sola vez), así que aquí SÍ sumamos la cuota del paquete.
-    const res = await upgradeProfileToPremium(sb, order.user_id as string, { grantQuota: PREMIUM_QUOTA });
+    // corre una sola vez), así que aquí SÍ sumamos la cuota y los 30 días.
+    const res = await upgradeProfileToPremium(sb, order.user_id as string, {
+      grantQuota: PREMIUM_QUOTA,
+      grantDays: MEMBERSHIP_DAYS,
+    });
+
+    // Auditoría del periodo comprado. Best-effort: la columna es nueva.
+    const { error: pdErr } = await sb
+      .from("payment_orders")
+      .update({ period_days: MEMBERSHIP_DAYS })
+      .eq("order_id", orderRef);
+    if (pdErr) {
+      console.warn(`[premium] period_days no se pudo escribir en ${orderRef} (¿falta correr scripts/session-wall-setup.sql?):`, pdErr.message);
+    }
+
     return {
       activated: res.ok,
       reason: res.ok ? "activated" : "upgrade-failed",

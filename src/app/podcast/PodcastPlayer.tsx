@@ -4,9 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, Play, Pause, SkipBack, SkipForward, Headphones, ListMusic, Trophy } from "lucide-react";
 import { usePlaybackRate } from "@/app/lesson/attention/usePlaybackRate";
-import { addPodcastListening, getListeningStats } from "@/app/gamificationActions";
+import {
+  addPodcastListening,
+  getListeningStats,
+  startPodcastEpisode,
+  getStudyGateState,
+} from "@/app/gamificationActions";
 import { levelFor, PODCAST_LEVELS, formatListened, type LevelDef } from "@/lib/listeningLevels";
 import type { PodcastTrack } from "./types";
+import type { GateState } from "@/lib/types";
+import SessionLockScreen from "@/components/gate/SessionLockScreen";
+import SessionMeter from "@/components/gate/SessionMeter";
 
 function fmtTime(s: number): string {
   if (!isFinite(s) || s < 0) s = 0;
@@ -57,6 +65,21 @@ export default function PodcastPlayer({
   const unsavedRef = useRef(0); // tiempo de medios escuchado pendiente de guardar
   const lastTimeRef = useRef(0); // último currentTime visto (para el delta)
 
+  // ── Muro de sesiones ──
+  // El estado vive en un REF además del state porque la decisión de avanzar de
+  // pista tiene que ser SÍNCRONA (ver el comentario de playIndex): leerlo del
+  // state dentro del callback daría un valor viejo.
+  const [gate, setGate] = useState<GateState | null>(null);
+  const gateRef = useRef<GateState | null>(null);
+  const countedRef = useRef<Set<string>>(new Set()); // episodios ya cobrados (confirmados)
+  const inflightRef = useRef<Set<string>>(new Set()); // cobros en vuelo
+  const [walled, setWalled] = useState(false);
+
+  const applyGate = useCallback((g: GateState) => {
+    gateRef.current = g;
+    setGate(g);
+  }, []);
+
   useEffect(() => { queueRef.current = queue; }, [queue]);
 
   const current = queue[index];
@@ -86,14 +109,53 @@ export default function PodcastPlayer({
     const a = audioRef.current;
     const q = queueRef.current;
     if (!a || i < 0 || i >= q.length) return;
+    const t = q[i];
+    const key = `${t.routeId}:${t.nodeId}`;
+
+    // ── Muro: decisión SÍNCRONA, a propósito ──
+    // No se puede hacer `await` aquí. Este método es imperativo justamente para
+    // que iOS trate el cambio de pista como continuación de la reproducción y
+    // permita avanzar con la pantalla bloqueada; meter una promesa en medio
+    // rompería exactamente eso. Así que se decide contra el presupuesto que ya
+    // tenemos en memoria y el servidor confirma justo después. El coste máximo de
+    // esta apuesta es UN episodio de más en una carrera.
+    const g = gateRef.current;
+    const already = countedRef.current.has(key);
+    if (g && !g.unlimited && !already && (g.walled || g.remaining <= 0)) {
+      a.pause();
+      setIsPlaying(false);
+      setWalled(true);
+      return;
+    }
+
     indexRef.current = i;
     setIndex(i);
     lastTimeRef.current = 0;
     setCurrentTime(0);
-    a.src = srcFor(q[i]);
+    a.src = srcFor(t);
     updateMetadata(i);
     a.play().catch(() => setIsPlaying(false));
-  }, [updateMetadata]);
+
+    // Cobro real (fire-and-forget). El servidor es la autoridad: solo lo que él
+    // confirma entra en countedRef, para que un episodio negado no quede marcado
+    // como "ya pagado" y se convierta en un pase libre.
+    if (!already && !inflightRef.current.has(key)) {
+      inflightRef.current.add(key);
+      startPodcastEpisode(token, t.routeId, t.nodeId)
+        .then(r => {
+          inflightRef.current.delete(key);
+          if (r.gate) applyGate(r.gate);
+          if (r.allowed) {
+            countedRef.current.add(key);
+          } else {
+            audioRef.current?.pause();
+            setIsPlaying(false);
+            setWalled(true);
+          }
+        })
+        .catch(() => inflightRef.current.delete(key));
+    }
+  }, [updateMetadata, token, applyGate]);
 
   // Vaciado del tiempo escuchado al servidor (acumula nivel global).
   const flush = useCallback(async () => {
@@ -116,6 +178,16 @@ export default function PodcastPlayer({
       setPodcastSeconds(s);
     });
   }, [token]);
+
+  // Semilla del muro. La página ya comprueba el bloqueo antes de armar la cola,
+  // así que aquí solo hace falta para saber cuántas unidades quedan a mitad de
+  // sesión (y para el medidor).
+  useEffect(() => {
+    if (!token) return;
+    getStudyGateState(token).then(g => {
+      if (g) applyGate(g);
+    });
+  }, [token, applyGate]);
 
   // Arranque: fija la primera pista de forma imperativa (hay gesto del usuario en
   // la pila, desde el lobby) y conecta los listeners NATIVOS del <audio>.
@@ -225,12 +297,30 @@ export default function PodcastPlayer({
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
       />
 
+      {/* Muro de sesiones: la cola se detiene donde iba. */}
+      {walled && gate && (
+        <SessionLockScreen
+          gate={gate}
+          onElapsed={async () => {
+            const g = await getStudyGateState(token);
+            if (g) {
+              applyGate(g);
+              if (!g.walled) setWalled(false);
+            }
+          }}
+          nextUp={queueRef.current[indexRef.current]?.title ?? null}
+        />
+      )}
+
       {/* Cabecera */}
       <header className="flex items-center justify-between p-4 md:p-6 max-w-2xl w-full mx-auto">
         <button onClick={onExit} className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-white transition-colors">
           <ChevronLeft className="w-5 h-5" /> Salir
         </button>
-        <span className="text-xs text-zinc-500">{index + 1} / {queue.length}</span>
+        <div className="flex items-center gap-3">
+          <SessionMeter gate={gate} />
+          <span className="text-xs text-zinc-500">{index + 1} / {queue.length}</span>
+        </div>
       </header>
 
       {/* Now playing */}

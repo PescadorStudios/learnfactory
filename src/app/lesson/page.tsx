@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertTriangle, Mic, RefreshCw, Play, RotateCcw } from "lucide-react";
 import type { AttemptInput, LessonData, MicroLessonProgress } from "@/lib/types";
 import { useRequireAuth } from "@/lib/useAuth";
+import { useSessionGate } from "@/lib/useSessionGate";
+import SessionLockScreen from "@/components/gate/SessionLockScreen";
 import { useRouteRealtime } from "@/lib/useRouteRealtime";
 import { getLesson, saveAttempt, retryLesson, getLessonProgress, clearLessonProgress } from "../routeActions";
 import MicroLesson from "./MicroLesson";
@@ -79,6 +81,7 @@ function LessonDispatcher() {
   const nodeId = searchParams.get("node") || "";
 
   const { token, loading: authLoading, session } = useRequireAuth();
+  const gate = useSessionGate(token);
   const [lesson, setLesson] = useState<LessonData | null>(null);
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -157,6 +160,11 @@ function LessonDispatcher() {
     if (!token) return;
     setSaving(true);
     const result = await saveAttempt(token, routeId, nodeId, input);
+    // El muro NUNCA interrumpe una lección: el intento ya está guardado y el
+    // usuario se lleva su XP y su celebración en el árbol. El reloj aparece
+    // cuando intente abrir la SIGUIENTE lección, que es justo el momento en que
+    // ha expresado que quiere más.
+    gate.apply(result.gate);
     const params = new URLSearchParams({ route: routeId });
     if (input.passed) {
       params.set("completedNode", nodeId);
@@ -168,6 +176,19 @@ function LessonDispatcher() {
   };
 
   if (authLoading || !session) return <LessonLoading />;
+
+  // Muro de sesiones: se comprueba ANTES de servir la lección. La lección sí se
+  // carga en paralelo, y su título alimenta el cliffhanger del reloj ("cuando
+  // vuelvas te espera…"), que es el gancho para que regrese.
+  if (gate.state?.walled) {
+    return (
+      <SessionLockScreen
+        gate={gate.state}
+        onElapsed={gate.refresh}
+        nextUp={lesson?.title ?? null}
+      />
+    );
+  }
 
   if (notFound) {
     return (

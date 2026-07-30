@@ -12,6 +12,12 @@ import type { ScrollCorto } from "@/app/scrollActions";
 import { registrarCortoEvento } from "@/app/scrollActions";
 import { addScrollWatching } from "@/app/gamificationActions";
 import CueRenderer, { activeCueIndex } from "./CueRenderer";
+import { useSessionGate } from "@/lib/useSessionGate";
+import SessionLockScreen from "@/components/gate/SessionLockScreen";
+import SessionMeter from "@/components/gate/SessionMeter";
+import AnonSignupWall from "@/components/gate/AnonSignupWall";
+import { countAnonUnit, isAnonWalled } from "@/lib/anonGate";
+import { CORTO_MIN_PCT } from "@/lib/sessionBudget";
 
 const WATCH_FLUSH_THRESHOLD = 15; // s acumulados antes de mandar al servidor
 const MAX_SANE_DELTA = 2; // ignora saltos (seeks) al contar tiempo visto
@@ -35,6 +41,20 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
   const [liked, setLiked] = useState<Set<string>>(new Set());
   const [saved, setSaved] = useState<Set<string>>(new Set());
 
+  // Muro de sesiones. Con sesión lo lleva el servidor; sin sesión, el navegador.
+  const gate = useSessionGate(token);
+  const [anonWalled, setAnonWalled] = useState(false);
+  useEffect(() => {
+    if (!token) setAnonWalled(isAnonWalled());
+  }, [token]);
+
+  // Al caer el muro se corta el audio: dejarlo sonando detrás del reloj sería
+  // regalar justo lo que se acaba de bloquear.
+  const blocked = Boolean(gate.state?.walled) || (!token && anonWalled);
+  useEffect(() => {
+    if (blocked) audioRef.current?.pause();
+  }, [blocked]);
+
   const emit = useCallback(
     (c: ScrollCorto, fields: { pctVisto?: number; liked?: boolean; guardado?: boolean; abrirRuta?: boolean }) => {
       if (!token) return;
@@ -43,13 +63,29 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
     [token]
   );
 
-  /** Registra el % visto del corto que dejamos atrás. */
+  /**
+   * Registra el % visto del corto que dejamos atrás. Es también el punto donde se
+   * cobra la unidad del muro: solo cuenta si de verdad se vio (CORTO_MIN_PCT),
+   * nunca por un like o un guardado.
+   */
   const flushView = useCallback(
     (index: number) => {
       const c = cortos[index];
-      if (c && maxPctRef.current > 0) emit(c, { pctVisto: maxPctRef.current });
+      if (!c || maxPctRef.current <= 0) return;
+      const pct = maxPctRef.current;
+
+      if (token) {
+        // El servidor decide y devuelve el estado del muro ya actualizado.
+        registrarCortoEvento(token, { routeId: c.routeId, nodeId: c.nodeId, pctVisto: pct })
+          .then(r => gate.apply(r.gate))
+          .catch(() => {});
+      } else if (pct >= CORTO_MIN_PCT) {
+        // Sin cuenta: lo lleva el navegador (deduplicado por corto).
+        countAnonUnit(keyOf(c));
+        setAnonWalled(isAnonWalled());
+      }
     },
-    [cortos, emit]
+    [cortos, token, gate]
   );
 
   /** Manda al servidor el tiempo visto acumulado (medidor global del usuario). */
@@ -281,6 +317,19 @@ export default function ScrollFeed({ cortos, token }: { cortos: ScrollCorto[]; t
           </section>
         );
       })}
+
+      {/* Medidor de la sesión, flotando sobre el feed */}
+      {gate.state && !gate.state.unlimited && !gate.state.walled && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-30 bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-2 pointer-events-none">
+          <SessionMeter gate={gate.state} />
+        </div>
+      )}
+
+      {/* Muro de sesiones: z-50 para quedar POR ENCIMA del gate de arranque (z-40). */}
+      {gate.state?.walled && <SessionLockScreen gate={gate.state} onElapsed={gate.refresh} />}
+
+      {/* Visitante sin cuenta que ya gastó sus unidades de prueba */}
+      {!token && anonWalled && <AnonSignupWall />}
 
       {/* Gate de inicio: el navegador bloquea el autoplay con sonido hasta el 1er gesto */}
       {!started && (
