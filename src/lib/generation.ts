@@ -10,7 +10,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as cheerio from "cheerio";
-import { extractText, getDocumentProxy } from "unpdf";
+import { extractPdfText } from "./pdfText";
 import type {
   Sintesis,
   Tree,
@@ -580,7 +580,7 @@ async function processOneSource(source: string): Promise<SourcePiece> {
         if (!fileId) return { kind: "failed", name: source };
         const buffer = await downloadFromDrive(fileId);
         if (!buffer) return { kind: "failed", name: source };
-        const text = await extractPdfText(buffer);
+        const text = await extractPdfText(new Uint8Array(buffer));
         if (text.length >= PDF_MIN_TEXT_CHARS) {
           console.log(`[Drive] ✓ Texto extraído localmente (${fileId}): ${text.length} chars`);
           return { kind: "text", name: source, text: `\n--- DOCUMENTO (${source}) ---\n${text}\n---\n` };
@@ -717,19 +717,6 @@ async function downloadFromDrive(fileId: string): Promise<Buffer | null> {
   } catch (error) {
     console.error("[Drive] Error descargando archivo:", error);
     return null;
-  }
-}
-
-/** Extrae el texto de un PDF localmente (unpdf/pdfjs). "" si no tiene texto (escaneado). */
-async function extractPdfText(buffer: Buffer): Promise<string> {
-  try {
-    const pdf = await getDocumentProxy(new Uint8Array(buffer));
-    const { text } = await extractText(pdf, { mergePages: true });
-    const merged = Array.isArray(text) ? text.join("\n") : text;
-    return merged.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
-  } catch (e) {
-    console.error("[PDF] Error extrayendo texto:", e);
-    return "";
   }
 }
 

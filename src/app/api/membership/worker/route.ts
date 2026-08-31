@@ -67,6 +67,14 @@ function resumeUrlFor(
   if (kind === "corto") {
     return routeId ? `${base}/scroll?route=${encodeURIComponent(routeId)}` : `${base}/scroll`;
   }
+  if (kind === "lectura" && itemKey) {
+    // item_key = 'docId:sección', y last_route_id va null (un documento privado
+    // del usuario no es una ruta), así que el id sale del propio item_key.
+    const sep = itemKey.indexOf(":");
+    const docId = sep >= 0 ? itemKey.slice(0, sep) : itemKey;
+    if (docId) return `${base}/veloz?doc=${encodeURIComponent(docId)}`;
+    return `${base}/veloz`;
+  }
   if (kind === "podcast") return `${base}/podcast`;
   if (kind === "tunel") return `${base}/tunel`;
   return base;

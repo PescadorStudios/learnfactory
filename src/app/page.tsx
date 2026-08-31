@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones, Film, Trophy } from "lucide-react";
+import { Loader2, Plus, ChevronRight, Star, Crown, Users, Layers, Sparkles, Headphones, Film, Trophy, Zap } from "lucide-react";
 import { useAuth, useRequireAuth } from "@/lib/useAuth";
 import { getMyRoutes } from "./routeActions";
 import { getLibrary, getFeaturedCreators, searchPublicRoutes, getMyProfile, getPlan } from "./socialActions";
@@ -336,6 +336,44 @@ function HomeContent() {
                   </p>
                   <span className="inline-flex items-center gap-2 bg-white/5 border border-fuchsia-400/40 text-white rounded-full px-7 py-3.5 font-bold transition-all group-hover:bg-fuchsia-400/10 group-hover:border-fuchsia-300 group-hover:shadow-[0_0_35px_rgba(217,70,239,0.35)]">
                     Abrir el feed
+                    <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </div>
+              </button>
+            </motion.div>
+
+            {/* ── Lectura Veloz: RSVP sobre los documentos del propio usuario ──
+                Verde esmeralda porque es el complementario del rojo del pivote,
+                y porque los otros tres modos ya ocupan cian, violeta y fucsia. */}
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+              className="mb-12"
+            >
+              <button
+                type="button"
+                onClick={() => router.push("/veloz")}
+                aria-label="Entrar a Lectura Veloz"
+                className="group relative w-full text-left rounded-[2rem] overflow-hidden border border-emerald-500/25 hover:border-emerald-400/50 bg-[#040a08] transition-colors"
+              >
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_15%_50%,rgba(52,211,153,0.20),transparent_55%),radial-gradient(circle_at_90%_50%,rgba(190,242,100,0.14),transparent_50%)] pointer-events-none" />
+                <div className="relative z-10 px-8 md:px-14 py-9 md:py-11 max-w-2xl">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.18em] text-emerald-300/90 mb-3">
+                    <Zap className="w-3.5 h-3.5" /> Nuevo · Tus propios libros
+                  </span>
+                  <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-emerald-200 to-lime-200">
+                      Lectura Veloz
+                    </span>
+                  </h2>
+                  <p className="text-zinc-400 text-base md:text-lg mb-6 max-w-lg">
+                    Pega el texto de un libro o suelta un PDF y léelo palabra a palabra,
+                    con la letra clave en rojo y siempre en el mismo punto. Sin mover los
+                    ojos, al doble de velocidad. Privado: solo tú lo ves.
+                  </p>
+                  <span className="inline-flex items-center gap-2 bg-white/5 border border-emerald-400/40 text-white rounded-full px-7 py-3.5 font-bold transition-all group-hover:bg-emerald-400/10 group-hover:border-emerald-300 group-hover:shadow-[0_0_35px_rgba(52,211,153,0.35)]">
+                    Empezar a leer
                     <ChevronRight className="w-5 h-5 transition-transform group-hover:translate-x-0.5" />
                   </span>
                 </div>

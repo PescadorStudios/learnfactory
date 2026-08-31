@@ -13,6 +13,7 @@ const KIND_LABEL: Record<string, string> = {
   podcast: "Podcast",
   corto: "Modo Scroll",
   tunel: "Túnel",
+  lectura: "Lectura Veloz",
 };
 
 function Stat({

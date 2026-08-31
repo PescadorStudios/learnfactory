@@ -568,6 +568,52 @@ export interface GateState {
   lockedUntil: string | null;
 }
 
+// ── Modo Lectura Veloz ──────────────────────────────────────────────────────
+// Estos tipos viven aquí, y no en src/app/velozActions.ts, por lo mismo que
+// GateState: un archivo "use server" no admite `export type` (Next registra cada
+// export como server action y revienta en runtime; next build no lo detecta).
+
+/** Fila de la biblioteca privada. SIN el texto: solo metadatos y progreso. */
+export interface ReadingDocSummary {
+  id: string;
+  title: string;
+  author: string | null;
+  source: "pegado" | "pdf";
+  wordCount: number;
+  /** Índice de PALABRA donde se quedó (no de chunk: ver src/lib/rsvp.ts). */
+  cursorWord: number;
+  secondsRead: number;
+  lastReadAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+/** El documento abierto en el lector. */
+export interface ReadingDoc extends ReadingDocSummary {
+  content: string;
+}
+
+export interface ReadingPrefs {
+  wpm: number;
+  chunkSize: number;
+  fontSize: number;
+  dynamicPauses: boolean;
+  longWordBoost: boolean;
+  highlightStyle: "rojo" | "subrayado" | "negrita";
+  breakMinutes: number;
+  /** ISO en que aceptó el aviso de fotosensibilidad, o null si no lo ha visto. */
+  warningAckAt: string | null;
+}
+
+export interface ImportDocResult {
+  ok: boolean;
+  docId?: string;
+  /** true = ya tenías este mismo texto; se devuelve el documento original. */
+  duplicated?: boolean;
+  words?: number;
+  error?: string;
+}
+
 export interface SaveAttemptResult {
   ok: boolean;
   xpGained: number;

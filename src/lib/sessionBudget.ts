@@ -24,8 +24,20 @@ export const ANON_FREE_UNITS = 3;
  */
 export const CORTO_MIN_PCT = 60;
 
-/** Los 4 modos de consumo. */
-export type StudyKind = "lesson" | "podcast" | "corto" | "tunel";
+/**
+ * Palabras que forman UNA unidad en Lectura Veloz.
+ *
+ * A 300 ppm son 3 minutos: lo mismo que dura una microlección o un episodio de
+ * podcast, así que la bolsa de 5 unidades entrega el mismo tiempo de estudio en
+ * los cinco modos. "Un documento = 1 unidad" regalaría cinco libros por sesión;
+ * "una palabra" o "un minuto" no tienen clave estable que el ledger pueda
+ * repetir sin volver a cobrar. Y cobrar por PALABRAS y no por tiempo hace que
+ * subir la velocidad premie al lector, que es el propósito del modo.
+ */
+export const LECTURA_SECTION_WORDS = 900;
+
+/** Los 5 modos de consumo. */
+export type StudyKind = "lesson" | "podcast" | "corto" | "tunel" | "lectura";
 
 /** Lo que hace falta de `profiles` para decidir si hay acceso ilimitado. */
 export interface MembershipInfo {

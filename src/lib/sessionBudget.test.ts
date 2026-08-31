@@ -13,6 +13,8 @@ import {
   extendMembership,
   SESSION_BUDGET_DEFAULT,
   LOCK_HOURS,
+  LECTURA_SECTION_WORDS,
+  type StudyKind,
 } from "./sessionBudget";
 
 const NOW = new Date("2026-07-29T12:00:00.000Z");
@@ -197,5 +199,16 @@ describe("extendMembership", () => {
 
   it("desde una membresía vencida cuenta desde hoy, no desde la fecha vieja", () => {
     expect(extendMembership(iso(-20 * DAY), 30, NOW).toISOString()).toBe(iso(30 * DAY));
+  });
+});
+
+describe("modos de consumo", () => {
+  it("los cinco kinds son válidos (el SQL tiene que aceptar 'lectura')", () => {
+    const kinds: StudyKind[] = ["lesson", "podcast", "corto", "tunel", "lectura"];
+    expect(kinds).toHaveLength(5);
+  });
+
+  it("una unidad de Lectura Veloz son 3 minutos a 300 ppm, como una microlección", () => {
+    expect(LECTURA_SECTION_WORDS / 300).toBe(3);
   });
 });
